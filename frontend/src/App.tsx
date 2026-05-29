@@ -79,7 +79,7 @@ export default function App() {
     };
 
     checkHealth();
-    const interval = setInterval(checkHealth, 5000);
+    const interval = setInterval(checkHealth, 10000);
 
     return () => {
       active = false;
@@ -125,6 +125,22 @@ export default function App() {
       })
       .catch(console.error)
   }, [backendStatus])
+
+  // Processor scheduling — frontend triggers the backend processor on interval
+  useEffect(() => {
+    if (backendStatus !== 'connected') return;
+    if (!observerScreenActive && !observerCameraActive) return;
+
+    const intervalMs = observerProcessInterval * 1000;
+    const triggerProcessor = () => {
+      fetch('http://localhost:8000/api/processor/trigger', { method: 'POST' })
+        .catch(() => {});
+    };
+
+    triggerProcessor();
+    const timer = setInterval(triggerProcessor, intervalMs);
+    return () => clearInterval(timer);
+  }, [backendStatus, observerProcessInterval, observerScreenActive, observerCameraActive]);
 
   useEffect(() => {
     if (backendStatus !== 'connected') return;
@@ -748,6 +764,7 @@ export default function App() {
                         <img 
                           src={`http://localhost:8000/static/${cap.image_path}?t=${lastRefresh}`} 
                           alt="Desktop Capture" 
+                          loading="lazy"
                           className="w-full h-full object-cover transition-transform group-hover:scale-105 duration-500" 
                         />
                         <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-3">
@@ -810,6 +827,7 @@ export default function App() {
                         <img 
                           src={`http://localhost:8000/static/${cap.image_path}?t=${lastRefresh}`} 
                           alt="Camera Snapshot" 
+                          loading="lazy"
                           className="w-full h-full object-cover transition-transform group-hover:scale-105 duration-500" 
                         />
                         <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-3">

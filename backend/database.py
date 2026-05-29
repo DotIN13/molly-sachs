@@ -1,209 +1,260 @@
-import sqlite3
-import os
+import asyncio
 import datetime
-from typing import List
+import os
+from typing import Any, List, Optional
 
-DB_DIR = "data"
-SQLITE_PATH = os.path.join(DB_DIR, "app.db")
+import aiosqlite
+import chromadb
+from loguru import logger
 
-if not os.path.exists(DB_DIR):
-    os.makedirs(DB_DIR)
+DATA_DIR = os.path.join("..", "data")
+SQLITE_PATH = os.path.join(DATA_DIR, "app.db")
+CHROMA_PATH = os.path.join(DATA_DIR, "chroma.db")
 
-def init_sqlite():
-    conn = sqlite3.connect(SQLITE_PATH)
-    cursor = conn.cursor()
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS user_events (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            timestamp TEXT NOT NULL,
-            activity_summary TEXT NOT NULL,
-            raw_transcripts TEXT,
-            context TEXT
+os.makedirs(DATA_DIR, exist_ok=True)
+
+
+# ──────────────────────────────────────────────
+#  AppDB — async SQLite for all application data
+# ──────────────────────────────────────────────
+
+class AppDB:
+    """Async SQLite database for conversations, messages, observations, and
+    user-event metadata."""
+
+    def __init__(self, path: str = SQLITE_PATH):
+        self._path = path
+
+    # ── lifecycle ─────────────────────────────
+
+    async def init(self) -> None:
+        """Create tables and enable WAL mode."""
+        async with aiosqlite.connect(self._path) as db:
+            await db.execute("PRAGMA journal_mode=WAL")
+            await db.execute("PRAGMA busy_timeout=5000")
+            await db.executescript("""
+                CREATE TABLE IF NOT EXISTS user_events (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp   TEXT    NOT NULL,
+                    activity_summary TEXT NOT NULL,
+                    raw_transcripts  TEXT,
+                    context     TEXT
+                );
+                CREATE TABLE IF NOT EXISTS conversations (
+                    id          TEXT PRIMARY KEY,
+                    title       TEXT    NOT NULL,
+                    created_at  TEXT    NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS messages (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    conversation_id TEXT NOT NULL,
+                    role            TEXT NOT NULL,
+                    content         TEXT NOT NULL,
+                    created_at      TEXT NOT NULL,
+                    FOREIGN KEY (conversation_id)
+                        REFERENCES conversations(id) ON DELETE CASCADE
+                );
+                CREATE TABLE IF NOT EXISTS observations (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    type        TEXT    NOT NULL,
+                    image_path  TEXT    NOT NULL,
+                    timestamp   TEXT    NOT NULL,
+                    processed   INTEGER DEFAULT 0
+                );
+            """)
+
+    # ── user events ───────────────────────────
+
+    async def save_event(self, timestamp: str, summary: str,
+                         transcripts: str, context: str) -> int:
+        async with aiosqlite.connect(self._path) as db:
+            await db.execute("PRAGMA journal_mode=WAL")
+            cursor = await db.execute(
+                "INSERT INTO user_events (timestamp, activity_summary, "
+                "raw_transcripts, context) VALUES (?, ?, ?, ?)",
+                (timestamp, summary, transcripts, context),
+            )
+            await db.commit()
+            return cursor.lastrowid
+
+    async def get_insights(self, limit: int = 15) -> List[dict]:
+        async with aiosqlite.connect(self._path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT id, timestamp, activity_summary, raw_transcripts, "
+                "context FROM user_events ORDER BY id DESC LIMIT ?",
+                (limit,),
+            )
+            rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
+
+    # ── conversations ─────────────────────────
+
+    async def create_conversation(self, conv_id: str, title: str) -> None:
+        created = datetime.datetime.utcnow().isoformat()
+        async with aiosqlite.connect(self._path) as db:
+            await db.execute(
+                "INSERT OR IGNORE INTO conversations (id, title, created_at) "
+                "VALUES (?, ?, ?)",
+                (conv_id, title, created),
+            )
+            await db.commit()
+
+    async def get_conversations(self) -> List[dict]:
+        async with aiosqlite.connect(self._path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT id, title, created_at FROM conversations "
+                "ORDER BY created_at DESC",
+            )
+            rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
+
+    async def delete_conversation(self, conv_id: str) -> None:
+        async with aiosqlite.connect(self._path) as db:
+            await db.execute("DELETE FROM conversations WHERE id = ?", (conv_id,))
+            await db.execute(
+                "DELETE FROM messages WHERE conversation_id = ?", (conv_id,),
+            )
+            await db.commit()
+
+    # ── messages ──────────────────────────────
+
+    async def add_message(self, conv_id: str, role: str,
+                          content: str) -> None:
+        created = datetime.datetime.utcnow().isoformat()
+        async with aiosqlite.connect(self._path) as db:
+            title = f"Chat on {datetime.datetime.now().strftime('%b %d %I:%M%p')}"
+            await db.execute(
+                "INSERT OR IGNORE INTO conversations (id, title, created_at) "
+                "VALUES (?, ?, ?)",
+                (conv_id, title, created),
+            )
+            await db.execute(
+                "INSERT INTO messages (conversation_id, role, content, "
+                "created_at) VALUES (?, ?, ?, ?)",
+                (conv_id, role, content, created),
+            )
+            if role == "user":
+                cursor = await db.execute(
+                    "SELECT title FROM conversations WHERE id = ?", (conv_id,),
+                )
+                row = await cursor.fetchone()
+                if row and row[0].startswith("Chat on "):
+                    excerpt = content[:40].strip()
+                    if excerpt:
+                        await db.execute(
+                            "UPDATE conversations SET title = ? WHERE id = ?",
+                            (excerpt, conv_id),
+                        )
+            await db.commit()
+
+    async def get_messages(self, conv_id: str) -> List[dict]:
+        async with aiosqlite.connect(self._path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT role, content FROM messages "
+                "WHERE conversation_id = ? ORDER BY id ASC",
+                (conv_id,),
+            )
+            rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
+
+    # ── observations ──────────────────────────
+
+    async def save_observation(self, obs_type: str, image_path: str,
+                               timestamp: str) -> int:
+        async with aiosqlite.connect(self._path) as db:
+            cursor = await db.execute(
+                "INSERT INTO observations (type, image_path, timestamp, "
+                "processed) VALUES (?, ?, ?, 0)",
+                (obs_type, image_path, timestamp),
+            )
+            await db.commit()
+            return cursor.lastrowid
+
+    async def get_observations(self, obs_type: Optional[str] = None,
+                               limit: int = 15) -> List[dict]:
+        async with aiosqlite.connect(self._path) as db:
+            db.row_factory = aiosqlite.Row
+            if obs_type:
+                cursor = await db.execute(
+                    "SELECT id, type, image_path, timestamp, processed "
+                    "FROM observations WHERE type = ? ORDER BY id DESC LIMIT ?",
+                    (obs_type, limit),
+                )
+            else:
+                cursor = await db.execute(
+                    "SELECT id, type, image_path, timestamp, processed "
+                    "FROM observations ORDER BY id DESC LIMIT ?",
+                    (limit,),
+                )
+            rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
+
+
+# ──────────────────────────────────────────────
+#  VectorDB — ChromaDB persistent client
+# ──────────────────────────────────────────────
+
+class VectorDB:
+    """ChromaDB vector store backed by a persistent on-disk database."""
+
+    def __init__(self, path: str = CHROMA_PATH):
+        self._path = path
+        self._client: Any = None
+        self._collection: Any = None
+
+    async def init(self) -> None:
+        if self._client is not None:
+            return
+
+        logger.info("VectorDB: connecting persistent {}", self._path)
+        self._client = chromadb.PersistentClient(path=self._path)
+
+        try:
+            self._collection = self._client.get_collection("events")
+        except Exception:
+            self._collection = self._client.create_collection("events")
+
+        logger.info("VectorDB: ready ({} items)", self._collection.count())
+
+    async def add(self, data: list) -> None:
+        await self.init()
+
+        ids = [str(item["id"]) for item in data]
+        embeddings = [item["vector"] for item in data]
+        metadatas = [{"timestamp": item["timestamp"],
+                      "summary": item["summary"]} for item in data]
+
+        self._collection.add(ids=ids, embeddings=embeddings, metadatas=metadatas)
+        logger.info("VectorDB: added {} items", len(data))
+
+    async def search(self, query: list, limit: int = 5) -> list:
+        await self.init()
+
+        results = self._collection.query(
+            query_embeddings=[query],
+            n_results=limit,
         )
-    """)
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS conversations (
-            id TEXT PRIMARY KEY,
-            title TEXT NOT NULL,
-            created_at TEXT NOT NULL
-        )
-    """)
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS messages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            conversation_id TEXT NOT NULL,
-            role TEXT NOT NULL,
-            content TEXT NOT NULL,
-            created_at TEXT NOT NULL,
-            FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
-        )
-    """)
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS observations (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            type TEXT NOT NULL,
-            image_path TEXT NOT NULL,
-            timestamp TEXT NOT NULL,
-            processed INTEGER DEFAULT 0
-        )
-    """)
-    conn.commit()
-    conn.close()
 
-# LanceDB disabled for stability testing
-# import lancedb
-# LANCE_PATH = os.path.join(DB_DIR, "lance.db")
+        metadatas = results.get("metadatas", [[]])[0]
+        return [dict(m) for m in metadatas] if metadatas else []
 
-# def init_lancedb():
-#     db = lancedb.connect(LANCE_PATH)
-#     if "events" not in db.table_names():
-#         pass
-#     return db
 
-def save_event(timestamp: str, summary: str, transcripts: str, context: str, embedding: List[float]):
-    conn = sqlite3.connect(SQLITE_PATH)
-    cursor = conn.cursor()
-    cursor.execute(
-        "INSERT INTO user_events (timestamp, activity_summary, raw_transcripts, context) VALUES (?, ?, ?, ?)",
-        (timestamp, summary, transcripts, context)
-    )
-    event_id = cursor.lastrowid
-    conn.commit()
-    conn.close()
+# ──────────────────────────────────────────────
+#  Module-level singletons
+# ──────────────────────────────────────────────
 
-    # LanceDB disabled for stability testing
-    # try:
-    #     db = lancedb.connect(LANCE_PATH)
-    #     data = [{
-    #         "id": event_id,
-    #         "timestamp": timestamp,
-    #         "summary": summary,
-    #         "vector": embedding
-    #     }]
-    #     if "events" not in db.table_names():
-    #         db.create_table("events", data=data)
-    #     else:
-    #         table = db.open_table("events")
-    #         table.add(data)
-    # except Exception as e:
-    #     import logging
-    #     logging.getLogger(__name__).error(f"LanceDB write failed (non-fatal): {e}")
+app = AppDB()
+vector = VectorDB()
 
-    return event_id
 
-def search_events(query_embedding: List[float], limit: int = 5):
-    # LanceDB disabled for stability testing
-    # db = lancedb.connect(LANCE_PATH)
-    # if "events" not in db.table_names():
-    #     return []
-    # table = db.open_table("events")
-    # results = table.search(query_embedding).limit(limit).to_list()
-    # return results
-    return []
+async def init():
+    """Async initialisation (call once at startup)."""
+    await app.init()
+    await vector.init()
 
-def create_conversation(conv_id: str, title: str) -> None:
-    conn = sqlite3.connect(SQLITE_PATH)
-    cursor = conn.cursor()
-    created_at = datetime.datetime.utcnow().isoformat()
-    cursor.execute(
-        "INSERT OR IGNORE INTO conversations (id, title, created_at) VALUES (?, ?, ?)",
-        (conv_id, title, created_at)
-    )
-    conn.commit()
-    conn.close()
-
-def get_conversations() -> List[dict]:
-    conn = sqlite3.connect(SQLITE_PATH)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-    cursor.execute("SELECT id, title, created_at FROM conversations ORDER BY created_at DESC")
-    rows = cursor.fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
 
 def default_conversation_title() -> str:
     return f"Chat on {datetime.datetime.now().strftime('%b %d %I:%M%p')}"
-
-def add_message(conv_id: str, role: str, content: str) -> None:
-    conn = sqlite3.connect(SQLITE_PATH)
-    cursor = conn.cursor()
-    created_at = datetime.datetime.utcnow().isoformat()
-    cursor.execute(
-        "INSERT OR IGNORE INTO conversations (id, title, created_at) VALUES (?, ?, ?)",
-        (conv_id, default_conversation_title(), created_at)
-    )
-    cursor.execute(
-        "INSERT INTO messages (conversation_id, role, content, created_at) VALUES (?, ?, ?, ?)",
-        (conv_id, role, content, created_at)
-    )
-    if role == "user":
-        cursor.execute("SELECT title FROM conversations WHERE id = ?", (conv_id,))
-        row = cursor.fetchone()
-        if row and row[0].startswith("Chat on "):
-            excerpt = content[:40].strip()
-            if excerpt:
-                cursor.execute("UPDATE conversations SET title = ? WHERE id = ?", (excerpt, conv_id))
-    conn.commit()
-    conn.close()
-
-def get_messages(conv_id: str) -> List[dict]:
-    conn = sqlite3.connect(SQLITE_PATH)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-    cursor.execute("SELECT role, content FROM messages WHERE conversation_id = ? ORDER BY id ASC", (conv_id,))
-    rows = cursor.fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
-
-def delete_conversation(conv_id: str) -> None:
-    conn = sqlite3.connect(SQLITE_PATH)
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM conversations WHERE id = ?", (conv_id,))
-    cursor.execute("DELETE FROM messages WHERE conversation_id = ?", (conv_id,))
-    conn.commit()
-    conn.close()
-
-def save_observation(obs_type: str, image_path: str, timestamp: str) -> int:
-    conn = sqlite3.connect(SQLITE_PATH)
-    cursor = conn.cursor()
-    cursor.execute(
-        "INSERT INTO observations (type, image_path, timestamp, processed) VALUES (?, ?, ?, 0)",
-        (obs_type, image_path, timestamp)
-    )
-    obs_id = cursor.lastrowid
-    conn.commit()
-    conn.close()
-    return obs_id
-
-def get_observations(obs_type: str = None, limit: int = 15) -> List[dict]:
-    conn = sqlite3.connect(SQLITE_PATH)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-    if obs_type:
-        cursor.execute(
-            "SELECT id, type, image_path, timestamp, processed FROM observations WHERE type = ? ORDER BY id DESC LIMIT ?",
-            (obs_type, limit)
-        )
-    else:
-        cursor.execute(
-            "SELECT id, type, image_path, timestamp, processed FROM observations ORDER BY id DESC LIMIT ?",
-            (limit,)
-        )
-    rows = cursor.fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
-
-def get_insights(limit: int = 15) -> List[dict]:
-    conn = sqlite3.connect(SQLITE_PATH)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-    cursor.execute(
-        "SELECT id, timestamp, activity_summary, raw_transcripts, context FROM user_events ORDER BY id DESC LIMIT ?",
-        (limit,)
-    )
-    rows = cursor.fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
-
-init_sqlite()
-# init_lancedb()

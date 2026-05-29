@@ -42,7 +42,7 @@ function captureStreamToBase64(stream: MediaStream): Promise<string> {
           const ctx = canvas.getContext('2d');
           if (ctx) {
             ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-            const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+            const dataUrl = canvas.toDataURL('image/jpeg', 0.65);
             resolve(dataUrl);
           } else {
             reject(new Error("Failed to create canvas 2D context."));

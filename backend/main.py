@@ -1,7 +1,10 @@
 import os
 import sys
+import asyncio
 import base64
 import time
+import uuid
+import datetime
 from loguru import logger
 from dotenv import load_dotenv
 
@@ -21,8 +24,7 @@ from pipecat.transports.smallwebrtc.request_handler import (
 
 # Core Pipecat session setup
 from bot import start_pipecat_session
-import uuid
-import datetime
+from processor import process_interval
 import database
 
 load_dotenv()
@@ -53,8 +55,8 @@ app.add_middleware(
 )
 
 # Ensure observations directories exist and mount static route
-os.makedirs("data/observations", exist_ok=True)
-app.mount("/static", StaticFiles(directory="data"), name="static")
+os.makedirs(os.path.join("..", "data", "observations"), exist_ok=True)
+app.mount("/static", StaticFiles(directory=os.path.join("..", "data")), name="static")
 
 # Shared global state injected into custom bot processors
 global_state = {
@@ -222,22 +224,22 @@ async def upload_observation(req: ObservationUploadReq):
         safe_ts = timestamp_str.replace(":", "-").replace("Z", "").replace("T", "_")
         filename = f"{req.type}_{safe_ts}_{uuid.uuid4().hex[:6]}.jpg"
         
-        # Save 1: Permanent History in data/observations/
-        history_dir = os.path.join("data", "observations")
+        # Save 1: Permanent History in ../data/observations/
+        history_dir = os.path.join("..", "data", "observations")
         os.makedirs(history_dir, exist_ok=True)
         history_path = os.path.join(history_dir, filename)
         with open(history_path, "wb") as f:
             f.write(image_bytes)
             
-        # Save 2: Monitored Directory for Gemini Processor in ../frontend/data/observers
-        monitored_dir = os.path.join("..", "frontend", "data", "observers")
+        # Save 2: Monitored Directory for Gemini Processor in ../data/observers
+        monitored_dir = os.path.join("..", "data", "observers")
         os.makedirs(monitored_dir, exist_ok=True)
         monitored_path = os.path.join(monitored_dir, filename)
         with open(monitored_path, "wb") as f:
             f.write(image_bytes)
             
         db_image_path = f"observations/{filename}"
-        database.save_observation(req.type, db_image_path, timestamp_str)
+        await database.app.save_observation(req.type, db_image_path, timestamp_str)
         
         return {"status": "ok", "filename": filename, "db_path": db_image_path}
     except Exception as e:
@@ -247,7 +249,7 @@ async def upload_observation(req: ObservationUploadReq):
 @app.get("/api/observations", summary="Retrieve past observations list")
 async def get_observations(type: str | None = None, limit: int = 15):
     try:
-        return database.get_observations(obs_type=type, limit=limit)
+        return await database.app.get_observations(obs_type=type, limit=limit)
     except Exception as e:
         logger.error(f"Failed to retrieve observations: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -255,7 +257,7 @@ async def get_observations(type: str | None = None, limit: int = 15):
 @app.get("/api/insights", summary="Retrieve past Gemini summaries and activity insights")
 async def get_insights(limit: int = 15):
     try:
-        return database.get_insights(limit=limit)
+        return await database.app.get_insights(limit=limit)
     except Exception as e:
         logger.error(f"Failed to retrieve insights: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -263,18 +265,23 @@ async def get_insights(limit: int = 15):
 @app.post("/api/processor/trigger", summary="Trigger Gemini processor to run immediately")
 async def trigger_processor():
     try:
-        from processor import process_interval
-        import asyncio
-        result = await asyncio.to_thread(process_interval)
+        result = await process_interval()
         if result:
-            import database
-            database.save_event(
+            event_id = await database.app.save_event(
                 result["timestamp"],
                 result["summary"],
                 result["raw_transcripts"],
                 result["tip"],
-                result["embedding"],
             )
+            embedding = result["embedding"]
+            if embedding:
+                await database.vector.add([{
+                    "id": event_id,
+                    "timestamp": result["timestamp"],
+                    "summary": result["summary"],
+                    "vector": embedding,
+                }])
+            logger.info(f"Successfully saved event to database: {result['summary'][:100] + '...'}")
             return {"status": "ok", "summary": result["summary"][:100] + "..."}
         return {"status": "ok", "summary": "no new observations to process"}
     except Exception as e:
@@ -291,20 +298,20 @@ class ConversationCreateReq(BaseModel):
 async def api_create_conversation(req: ConversationCreateReq):
     conv_id = req.id or str(uuid.uuid4())
     title = req.title or database.default_conversation_title()
-    database.create_conversation(conv_id, title)
+    await database.app.create_conversation(conv_id, title)
     return {"id": conv_id, "title": title}
 
 @app.get("/api/conversations", summary="Retrieve all past conversations")
 async def api_get_conversations():
-    return database.get_conversations()
+    return await database.app.get_conversations()
 
 @app.get("/api/conversations/{conversation_id}/messages", summary="Retrieve messages in a past session")
 async def api_get_messages(conversation_id: str):
-    return database.get_messages(conversation_id)
+    return await database.app.get_messages(conversation_id)
 
 @app.delete("/api/conversations/{conversation_id}", summary="Delete a past conversation session")
 async def api_delete_conversation(conversation_id: str):
-    database.delete_conversation(conversation_id)
+    await database.app.delete_conversation(conversation_id)
     return {"status": "ok"}
 
 # --- WebRTC Endpoints ---
@@ -317,7 +324,7 @@ async def webrtc_connect(request: SmallWebRTCRequest, background_tasks: Backgrou
 
         conv_id = conversation_id or str(uuid.uuid4())
         # Ensure conversation entry exists
-        database.create_conversation(conv_id, database.default_conversation_title())
+        await database.app.create_conversation(conv_id, database.default_conversation_title())
 
         async def webrtc_connection_callback(connection: SmallWebRTCConnection):
             background_tasks.add_task(start_pipecat_session, connection, global_state, conv_id)
@@ -338,8 +345,6 @@ async def webrtc_patch(request: SmallWebRTCPatchRequest):
 
 @app.on_event("startup")
 async def startup_event():
-    import asyncio
-    from processor import processor_loop
 
     async def heartbeat():
         count = 0
@@ -350,8 +355,9 @@ async def startup_event():
 
     asyncio.create_task(heartbeat())
 
-    logger.info("Starting background Gemini processor task...")
-    asyncio.create_task(processor_loop())
+    await database.init()
+
+    logger.info("Server startup complete")
 
 @app.on_event("shutdown")
 async def shutdown_event():

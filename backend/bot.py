@@ -49,12 +49,29 @@ from pipecat.frames.frames import (
 from google import genai
 import database
 
-def _embed_query(query: str) -> list:
+SYSTEM_PROMPT = (
+    "你是Molly，和用户是好朋友，用微信聊天的语气回复。"
+    "不要用markdown格式，除非用户明确要求，否则不要用bullet points或者列表。"
+    "回复要简短自然，像好朋友间发微信一样。"
+    "适当用一些emoji和口语化表达，但不要太频繁。"
+    "你可以使用search_memory工具查找用户过去的活动和记忆。"
+    "聊到过去的事情、回忆、习惯或需要上下文时，可以先调用search_memory查询后再回复。"
+)
+
+def _build_messages(past_messages: list) -> list:
+    result = [{"role": "system", "content": SYSTEM_PROMPT}]
+    for msg in past_messages:
+        result.append({"role": msg["role"], "content": msg["content"]})
+    return result
+
+async def _embed_query(query: str) -> list:
     api_key = os.environ.get("GEMINI_API_KEY", "").strip()
     client = genai.Client(api_key=api_key) if api_key else genai.Client()
-    embed_result = client.models.embed_content(
-        model='gemini-embedding-2',
-        contents=query,
+    embed_result = await asyncio.wait_for(
+        client.aio.models.embed_content(
+            model='gemini-embedding-2',
+            contents=query,
+        ), timeout=30
     )
     return embed_result.embeddings[0].values
 
@@ -65,9 +82,10 @@ async def search_memory(params: FunctionCallParams, query: str):
         query: The search string to look up in the memory vector database.
     """
     try:
-        query_embedding = await asyncio.to_thread(_embed_query, query)
+        logger.info(f"Embedding query: {query}")
+        query_embedding = await _embed_query(query)
         
-        search_results = await asyncio.to_thread(database.search_events, query_embedding, 5)
+        search_results = await database.vector.search(query_embedding, 5)
         context_str = "\n".join([f"[{r.get('timestamp', 'Unknown')}] {r.get('summary', '')}" for r in search_results])
         if not context_str.strip():
             context_str = "No recent context available yet."
@@ -109,7 +127,6 @@ class AudioLevelProcessor(FrameProcessor):
             audio = frame.audio
             level = 0.0
             if audio is not None and len(audio) > 0:
-                import numpy as np
                 samples = np.frombuffer(audio, dtype=np.int16).astype(np.float64)
                 rms = float(np.sqrt(np.mean(np.square(samples))))
                 level = min(1.0, rms / 32768.0)
@@ -150,7 +167,7 @@ class UserBroadcaster(FrameProcessor):
         if direction == FrameDirection.DOWNSTREAM:
             if isinstance(frame, TranscriptionFrame):
                 if not getattr(frame, "interim_results", False):
-                    database.add_message(self._conversation_id, "user", frame.text)
+                    await database.app.add_message(self._conversation_id, "user", frame.text)
                     await self._transport._client.send_message(
                         OutputTransportMessageFrame(message={
                             "type": "transcript",
@@ -183,7 +200,7 @@ class AssistantBroadcaster(FrameProcessor):
             elif isinstance(frame, LLMFullResponseEndFrame):
                 full_text = "".join(self._buffer)
                 if full_text.strip():
-                    database.add_message(self._conversation_id, "assistant", full_text)
+                    await database.app.add_message(self._conversation_id, "assistant", full_text)
                 await self._transport._client.send_message(OutputTransportMessageFrame(message={"type": "end"}))
         await self.push_frame(frame, direction)
 
@@ -204,7 +221,7 @@ async def start_pipecat_session(connection: SmallWebRTCConnection, global_state:
             api_key=os.environ.get("GEMINI_API_KEY"),
             settings=GoogleLLMService.Settings(model="gemini-3.1-flash-lite")
         )
-        llm.register_direct_function(search_memory, cancel_on_interruption=False)
+        llm.register_direct_function(search_memory)
         
         stt_provider = os.environ.get("STT_PROVIDER", "soniox")
         stt_language = os.environ.get("STT_LANGUAGE", "zh")
@@ -224,44 +241,35 @@ async def start_pipecat_session(connection: SmallWebRTCConnection, global_state:
                 ),
             )
         
-        tts_voice = os.environ.get("CARTESIA_VOICE", "79a125e8-cd45-4c13-8a67-188112f4dd22")
-        tts_volume = float(os.environ.get("CARTESIA_VOLUME", "1.0"))
-        tts_speed = float(os.environ.get("CARTESIA_SPEED", "1.0"))
-        tts_emotion = os.environ.get("CARTESIA_EMOTION")
-        if not tts_emotion or tts_emotion == "neutral":
-            tts_emotion = None
-            
-        generation_config = GenerationConfig(
-            volume=tts_volume,
-            speed=tts_speed,
-            emotion=tts_emotion
-        )
-        
-        tts_language = os.environ.get("CARTESIA_TTS_LANGUAGE", "en")
-        tts = CartesiaTTSService(
-            api_key=os.environ.get("CARTESIA_API_KEY"),
-            settings=CartesiaTTSService.Settings(
-                model="sonic-3.5",
-                voice=tts_voice,
-                language=tts_language,
-                generation_config=generation_config
+        tts_provider = os.environ.get("TTS_PROVIDER", "cartesia")
+        if tts_provider == "cartesia":
+            tts_voice = os.environ.get("CARTESIA_VOICE", "79a125e8-cd45-4c13-8a67-188112f4dd22")
+            tts_volume = float(os.environ.get("CARTESIA_VOLUME", "1.0"))
+            tts_speed = float(os.environ.get("CARTESIA_SPEED", "1.0"))
+            tts_emotion = os.environ.get("CARTESIA_EMOTION")
+            if not tts_emotion or tts_emotion == "neutral":
+                tts_emotion = None
+
+            generation_config = GenerationConfig(
+                volume=tts_volume,
+                speed=tts_speed,
+                emotion=tts_emotion
             )
-        )
+
+            tts_language = os.environ.get("CARTESIA_TTS_LANGUAGE", "en")
+            tts = CartesiaTTSService(
+                api_key=os.environ.get("CARTESIA_API_KEY"),
+                settings=CartesiaTTSService.Settings(
+                    model="sonic-3.5",
+                    voice=tts_voice,
+                    language=tts_language,
+                    generation_config=generation_config
+                )
+            )
 
         # Retrieve past conversation messages
-        past_messages = database.get_messages(conv["id"])
-        # Convert past messages to Pipecat format
-        formatted_messages = [{
-            "role": "system",
-            "content": (
-                "你是Molly，和用户是好朋友，用微信聊天的语气回复。"
-                "不要用markdown格式，除非用户明确要求，否则不要用bullet points或者列表。"
-                "回复要简短自然，像好朋友间发微信一样。"
-                "适当用一些emoji和口语化表达，但不要太频繁。"
-            )
-        }]
-        for msg in past_messages:
-            formatted_messages.append({"role": msg["role"], "content": msg["content"]})
+        past_messages = await database.app.get_messages(conv["id"])
+        formatted_messages = _build_messages(past_messages)
 
         tools = ToolsSchema(standard_tools=[search_memory])
         context = LLMContext(messages=formatted_messages, tools=tools)
@@ -327,7 +335,7 @@ async def start_pipecat_session(connection: SmallWebRTCConnection, global_state:
                 text = message.get("text")
                 if text:
                     logger.info(f"Chat message received: {text}")
-                    database.add_message(conv["id"], "user", text)
+                    await database.app.add_message(conv["id"], "user", text)
                     await task.queue_frames([
                         InterruptionFrame(),
                         LLMMessagesAppendFrame(messages=[{"role": "user", "content": text}]),
@@ -340,18 +348,8 @@ async def start_pipecat_session(connection: SmallWebRTCConnection, global_state:
                     conv["id"] = new_id
                     user_broadcaster.set_conversation_id(new_id)
                     assistant_broadcaster.set_conversation_id(new_id)
-                    msgs = database.get_messages(new_id)
-                    formatted = [{
-                        "role": "system",
-                        "content": (
-                            "你是Molly，和用户是好朋友，用微信聊天的语气回复。"
-                            "不要用markdown格式，除非用户明确要求，否则不要用bullet points或者列表。"
-                            "回复要简短自然，像朋友间发微信一样。"
-                            "适当用一些emoji和口语化表达，但不要太频繁。"
-                        )
-                    }]
-                    for m in msgs:
-                        formatted.append({"role": m["role"], "content": m["content"]})
+                    msgs = await database.app.get_messages(new_id)
+                    formatted = _build_messages(msgs)
                     await task.queue_frames([
                         InterruptionFrame(),
                         LLMMessagesUpdateFrame(messages=formatted, run_llm=False),
