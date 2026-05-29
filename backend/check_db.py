@@ -1,0 +1,12 @@
+import sqlite3
+conn = sqlite3.connect('data/app.db')
+c = conn.cursor()
+c.execute("SELECT name FROM sqlite_master WHERE type='table'")
+print('Tables:', c.fetchall())
+c.execute("SELECT COUNT(*) FROM observations")
+print('Observations count:', c.fetchone())
+c.execute("SELECT id, type, image_path, timestamp FROM observations ORDER BY id DESC LIMIT 5")
+print('Latest observations:', c.fetchall())
+c.execute("SELECT COUNT(*) FROM user_events")
+print('Insights count:', c.fetchone())
+conn.close()

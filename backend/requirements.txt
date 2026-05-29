@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+pipecat-ai[cartesia,silero,google,webrtc]
+python-dotenv
+google-genai
+lancedb
+sqlalchemy
+pandas
+pyarrow
+pydantic

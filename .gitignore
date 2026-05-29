@@ -1,0 +1,38 @@
+# Dependencies
+node_modules/
+backend/venv/
+
+# Build output
+frontend/dist/
+frontend/dist-ssr/
+
+# Environment & secrets
+.env
+!.env.example
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Databases & data
+*.db
+*.sqlite3
+*.sqlite
+backend/data/
+frontend/data/
+
+# Logs
+*.log
+logs/
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.idea/
+*.swp
+*.swo
+*~

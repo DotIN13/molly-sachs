@@ -1,0 +1,82 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 42 33% 93%; /* #F4F0E6 - warm beige */
+    --foreground: 240 5% 15%;
+    --card: 0 0% 100%;
+    --card-foreground: 240 5% 15%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 5% 15%;
+    --primary: 240 5% 15%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 240 5% 96%;
+    --secondary-foreground: 240 5% 15%;
+    --muted: 240 5% 96%;
+    --muted-foreground: 240 4% 46%;
+    --accent: 240 5% 96%;
+    --accent-foreground: 240 5% 15%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 240 6% 90%;
+    --input: 240 6% 90%;
+    --ring: 240 5% 15%;
+    --radius: 0.5rem;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  }
+  h1, h2, h3, h4, h5, h6, .font-serif {
+    font-family: ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
+  }
+}
+
+.lux-panel {
+  @apply bg-white border border-slate-200/60 shadow-[0_4px_24px_-8px_rgba(0,0,0,0.05)] rounded-2xl;
+}
+
+.lux-bubble-ai {
+  @apply text-slate-800 text-base leading-relaxed font-serif;
+}
+
+.lux-bubble-user {
+  @apply bg-[#eef2fc] text-slate-800 text-base leading-relaxed rounded-xl shadow-sm font-serif;
+}
+
+/* Custom minimal scrollbar */
+::-webkit-scrollbar {
+  width: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(0,0,0,0.05);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0,0,0,0.1);
+}
+
+@keyframes level-bar-idle {
+  0%, 100% {
+    height: 4px;
+  }
+  50% {
+    height: 10px;
+  }
+}
+
+.animate-level-bar-idle {
+  animation: level-bar-idle 1.2s ease-in-out infinite;
+}
+
