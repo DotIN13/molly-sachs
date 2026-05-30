@@ -1,8 +1,170 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Settings, PenSquare, Search, FileText, Clock, Bird, Mic, MicOff, Volume2, VolumeX, RefreshCw } from 'lucide-react'
+import { Settings, PenSquare, Search, FileText, Clock, Bird, Mic, Volume2, VolumeX, RefreshCw } from 'lucide-react'
 import { updateObserverConfig, triggerObservationsCapture } from './observers'
+import { API_URL, isElectron } from './config'
+
+function useAudioVisualizer(active: boolean, barCount = 9): number[] {
+  const IDLE_BASE = 0.15
+
+  const [bars, setBars] = useState<number[]>(Array(barCount).fill(IDLE_BASE))
+
+  const audioCtxRef = useRef<AudioContext | null>(null)
+  const analyserRef = useRef<AnalyserNode | null>(null)
+  const streamRef = useRef<MediaStream | null>(null)
+  const frameRef = useRef<number>(0)
+
+  const timeDataRef = useRef<Uint8Array | null>(null)
+  const displayRef = useRef<number[]>(Array(barCount).fill(IDLE_BASE))
+  const targetRef = useRef<number[]>(Array(barCount).fill(IDLE_BASE))
+  const phaseRef = useRef(0)
+
+  useEffect(() => {
+    if (!active) {
+      cancelAnimationFrame(frameRef.current)
+      setBars(Array(barCount).fill(IDLE_BASE))
+      displayRef.current = Array(barCount).fill(IDLE_BASE)
+      targetRef.current = Array(barCount).fill(IDLE_BASE)
+      phaseRef.current = 0
+      return
+    }
+
+    let running = true
+
+    const NOISE_GATE = 0.12
+    const ACTIVE_PHASE_SPEED = 0.075
+    const RELEASE_EASING = 0.08
+    const ATTACK_EASING = 0.32
+
+    const setup = async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true
+          }
+        })
+
+        if (!running) {
+          stream.getTracks().forEach(track => track.stop())
+          return
+        }
+
+        streamRef.current = stream
+
+        const AudioContextClass =
+          window.AudioContext || (window as any).webkitAudioContext
+
+        const ctx = new AudioContextClass()
+        audioCtxRef.current = ctx
+
+        const analyser = ctx.createAnalyser()
+        analyser.fftSize = 512
+        analyser.smoothingTimeConstant = 0.82
+        analyserRef.current = analyser
+
+        const source = ctx.createMediaStreamSource(stream)
+        source.connect(analyser)
+
+        timeDataRef.current = new Uint8Array(analyser.fftSize)
+
+        const tick = () => {
+          if (!running || !analyser || !timeDataRef.current) return
+
+          analyser.getByteTimeDomainData(timeDataRef.current)
+
+          let sum = 0
+          for (let i = 0; i < timeDataRef.current.length; i++) {
+            const centered = (timeDataRef.current[i] - 128) / 128
+            sum += centered * centered
+          }
+
+          const rms = Math.sqrt(sum / timeDataRef.current.length)
+
+          const rawEnergy = Math.min(1, Math.pow(rms * 7.5, 0.72))
+
+          const energy =
+            rawEnergy < NOISE_GATE
+              ? 0
+              : Math.min(1, (rawEnergy - NOISE_GATE) / (1 - NOISE_GATE))
+
+          const isIdle = energy <= 0.001
+
+          if (isIdle) {
+            for (let i = 0; i < barCount; i++) {
+              targetRef.current[i] = IDLE_BASE
+            }
+          } else {
+            phaseRef.current += ACTIVE_PHASE_SPEED * energy
+
+            const center = (barCount - 1) / 2
+
+            for (let i = 0; i < barCount; i++) {
+              const distanceFromCenter = Math.abs(i - center) / center
+              const centerWeight = 1 - distanceFromCenter * 0.58
+
+              const wave =
+                0.5 +
+                0.5 *
+                Math.sin(
+                  phaseRef.current +
+                  i * 0.72 +
+                  Math.sin(phaseRef.current * 0.6) * 0.35
+                )
+
+              const voiceMotion = energy * centerWeight * (0.52 + wave * 0.48)
+
+              targetRef.current[i] = Math.max(
+                IDLE_BASE,
+                Math.min(1, IDLE_BASE + voiceMotion)
+              )
+            }
+          }
+
+          const next = displayRef.current.map((current, i) => {
+            const target = targetRef.current[i]
+            const velocity = target - current
+            const easing = velocity > 0 ? ATTACK_EASING : RELEASE_EASING
+
+            return current + velocity * easing
+          })
+
+          displayRef.current = next
+          setBars(next)
+
+          frameRef.current = requestAnimationFrame(tick)
+        }
+
+        frameRef.current = requestAnimationFrame(tick)
+      } catch (e) {
+        console.warn('Audio visualizer: mic access denied', e)
+      }
+    }
+
+    setup()
+
+    return () => {
+      running = false
+      cancelAnimationFrame(frameRef.current)
+
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop())
+        streamRef.current = null
+      }
+
+      if (audioCtxRef.current) {
+        audioCtxRef.current.close()
+        audioCtxRef.current = null
+      }
+
+      analyserRef.current = null
+    }
+  }, [active, barCount])
+
+  return bars
+}
 
 export default function App() {
   const [messages, setMessages] = useState<{ role: string, content: string }[]>([
@@ -38,14 +200,15 @@ export default function App() {
   const [observerCaptureInterval, setObserverCaptureInterval] = useState(60)
   const [observerProcessInterval, setObserverProcessInterval] = useState(300)
   const [debugMode, setDebugMode] = useState(false)
-  
+
   // Dashboard & Navigation States
   const [activeTab, setActiveTab] = useState<'chat' | 'screen' | 'camera' | 'insights'>('chat')
   const [screenCaptures, setScreenCaptures] = useState<any[]>([])
   const [cameraSnapshots, setCameraSnapshots] = useState<any[]>([])
   const [geminiInsights, setGeminiInsights] = useState<any[]>([])
   const [lastRefresh, setLastRefresh] = useState(0)
-  const [audioLevel, setAudioLevel] = useState(0)
+
+  const audioBars = useAudioVisualizer(voiceMode, 5)
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const pcRef = useRef<RTCPeerConnection | null>(null)
@@ -57,14 +220,14 @@ export default function App() {
   const isConnectedRef = useRef(false)
   const connectionIdRef = useRef(0)
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const refreshConversationsRef = useRef<() => void>(() => {})
+  const refreshConversationsRef = useRef<() => void>(() => { })
   const skipDisconnectRef = useRef(false)
 
   useEffect(() => {
     let active = true;
     const checkHealth = async () => {
       try {
-        const res = await fetch('http://localhost:8000/api/health');
+        const res = await fetch(`${API_URL}/api/health`);
         if (res.ok) {
           const data = await res.json();
           if (data.status === 'healthy' && active) {
@@ -89,7 +252,7 @@ export default function App() {
 
   useEffect(() => {
     if (backendStatus !== 'connected') return;
-    fetch('http://localhost:8000/api/settings')
+    fetch(`${API_URL}/api/settings`)
       .then(res => res.json())
       .then(data => {
         setGeminiKey(data.gemini_api_key || '')
@@ -104,19 +267,19 @@ export default function App() {
         setSttLanguage(data.stt_language || 'en')
         setSttProvider(data.stt_provider || 'soniox')
         setTtsLanguage(data.tts_language || 'en')
-        
+
         // Load Observers settings
         const scrActive = data.observer_screen_active ?? false;
         const camActive = data.observer_camera_active ?? false;
         const capInt = data.observer_capture_interval ?? 60;
         const procInt = data.observer_process_interval ?? 300;
-        
+
         setObserverScreenActive(scrActive);
         setObserverCameraActive(camActive);
         setObserverCaptureInterval(capInt);
         setObserverProcessInterval(procInt);
         setDebugMode(data.debug ?? false);
-        
+
         updateObserverConfig({
           screenActive: scrActive,
           cameraActive: camActive,
@@ -128,13 +291,14 @@ export default function App() {
 
   // Processor scheduling — frontend triggers the backend processor on interval
   useEffect(() => {
+    if (!isElectron) return;
     if (backendStatus !== 'connected') return;
     if (!observerScreenActive && !observerCameraActive) return;
 
     const intervalMs = observerProcessInterval * 1000;
     const triggerProcessor = () => {
-      fetch('http://localhost:8000/api/processor/trigger', { method: 'POST' })
-        .catch(() => {});
+      fetch(`${API_URL}/api/processor/trigger`, { method: 'POST' })
+        .catch(() => { });
     };
 
     triggerProcessor();
@@ -144,7 +308,7 @@ export default function App() {
 
   useEffect(() => {
     if (backendStatus !== 'connected') return;
-    fetch('http://localhost:8000/api/state', {
+    fetch(`${API_URL}/api/state`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ voice_mode: voiceMode, speak_text: speakText })
@@ -182,7 +346,7 @@ export default function App() {
           setMessages([{ role: 'assistant', content: 'I love using this AI companion. For my meetings and beyond.' }]);
         }
       } else if (data.type === 'audio_level') {
-        setAudioLevel(data.level);
+        // locally captured via AudioContext analyser
       }
     } catch (e) {
       if (typeof event.data === 'string' && event.data === 'ping') {
@@ -356,7 +520,7 @@ export default function App() {
       }
 
       // Send offer to backend
-      const response = await fetch(`http://localhost:8000/api/webrtc/connect?conversation_id=${activeConversationId}`, {
+      const response = await fetch(`${API_URL}/api/webrtc/connect?conversation_id=${activeConversationId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -401,17 +565,17 @@ export default function App() {
   }, [handleDataChannelMessage, disconnectWebRTC, backendStatus, activeConversationId]);
 
   const refreshConversations = useCallback(() => {
-    fetch('http://localhost:8000/api/conversations')
+    fetch(`${API_URL}/api/conversations`)
       .then(res => res.json())
       .then(data => setConversations(data || []))
-      .catch(() => {});
+      .catch(() => { });
   }, []);
   refreshConversationsRef.current = refreshConversations;
 
   // Load conversations list
   useEffect(() => {
     if (backendStatus !== 'connected') return;
-    fetch('http://localhost:8000/api/conversations')
+    fetch(`${API_URL}/api/conversations`)
       .then(res => res.json())
       .then(data => {
         setConversations(data || []);
@@ -436,7 +600,7 @@ export default function App() {
       if (pcRef.current) disconnectWebRTC();
       setActiveConversationId(id);
 
-      const res = await fetch(`http://localhost:8000/api/conversations/${id}/messages`);
+      const res = await fetch(`${API_URL}/api/conversations/${id}/messages`);
       const data = await res.json();
       if (data && data.length > 0) {
         setMessages(data);
@@ -452,7 +616,7 @@ export default function App() {
 
   const createNewConversation = async () => {
     try {
-      const res = await fetch('http://localhost:8000/api/conversations', {
+      const res = await fetch(`${API_URL}/api/conversations`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({})
@@ -476,7 +640,7 @@ export default function App() {
 
   const deleteConversation = async (id: string) => {
     try {
-      await fetch(`http://localhost:8000/api/conversations/${id}`, {
+      await fetch(`${API_URL}/api/conversations/${id}`, {
         method: 'DELETE'
       });
       setConversations(prev => prev.filter(c => c.id !== id));
@@ -514,7 +678,7 @@ export default function App() {
 
   const saveSettings = async () => {
     try {
-      await fetch('http://localhost:8000/api/settings', {
+      await fetch(`${API_URL}/api/settings`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -551,21 +715,21 @@ export default function App() {
     try {
       const now = Date.now();
       if (tab === 'screen') {
-        const res = await fetch(`http://localhost:8000/api/observations?type=screen&limit=15&_=${now}`);
+        const res = await fetch(`${API_URL}/api/observations?type=screen&limit=15&_=${now}`);
         if (res.ok) {
           const data = await res.json();
           setScreenCaptures(data || []);
           if (forceRefresh) setLastRefresh(now);
         }
       } else if (tab === 'camera') {
-        const res = await fetch(`http://localhost:8000/api/observations?type=camera&limit=15&_=${now}`);
+        const res = await fetch(`${API_URL}/api/observations?type=camera&limit=15&_=${now}`);
         if (res.ok) {
           const data = await res.json();
           setCameraSnapshots(data || []);
           if (forceRefresh) setLastRefresh(now);
         }
       } else if (tab === 'insights') {
-        const res = await fetch(`http://localhost:8000/api/insights?limit=15&_=${now}`);
+        const res = await fetch(`${API_URL}/api/insights?limit=15&_=${now}`);
         if (res.ok) {
           const data = await res.json();
           setGeminiInsights(data || []);
@@ -603,7 +767,7 @@ export default function App() {
       {/* Sidebar */}
       <div className="w-64 border-r border-slate-100 bg-[#fafafa] hidden lg:flex flex-col pt-12 pb-4">
         <div className="px-5 mb-8 flex items-center gap-3">
-          <img src="/logo.jpg" alt="Molly Logo" className="w-12 h-12 rounded-full object-cover border border-slate-100 shadow-sm" />
+          <img src="./logo.jpg" alt="Molly Logo" className="w-12 h-12 rounded-full object-cover border border-slate-100 shadow-sm" />
           <span className="font-semibold text-slate-800 text-sm tracking-wide">Molly</span>
         </div>
 
@@ -675,11 +839,10 @@ export default function App() {
                 <button
                   key={tab}
                   onClick={() => setActiveTab(tab)}
-                  className={`text-xs font-semibold px-4 py-1.5 rounded-lg transition-all uppercase tracking-wider text-[10px] ${
-                    activeTab === tab
-                      ? 'bg-slate-900 text-white shadow-md'
-                      : 'text-slate-500 hover:text-slate-800 hover:bg-slate-200/50'
-                  }`}
+                  className={`text-xs font-semibold px-4 py-1.5 rounded-lg transition-all uppercase tracking-wider text-[10px] ${activeTab === tab
+                    ? 'bg-slate-900 text-white shadow-md'
+                    : 'text-slate-500 hover:text-slate-800 hover:bg-slate-200/50'
+                    }`}
                 >
                   {tab}
                 </button>
@@ -692,18 +855,17 @@ export default function App() {
               <>
                 <button
                   onClick={() => setSpeakText(!speakText)}
-                  className={`flex items-center gap-1.5 text-xs font-medium transition-all px-3 py-1.5 rounded-lg border ${
-                    speakText 
-                      ? 'bg-indigo-50 text-indigo-600 border-indigo-100 shadow-sm' 
-                      : 'bg-slate-50 text-slate-500 border-slate-200'
-                  }`}
+                  className={`flex items-center gap-1.5 text-xs font-medium transition-all px-3 py-1.5 rounded-lg border ${speakText
+                    ? 'bg-indigo-50 text-indigo-600 border-indigo-100 shadow-sm'
+                    : 'bg-slate-50 text-slate-500 border-slate-200'
+                    }`}
                 >
                   {speakText ? <Volume2 className="w-3.5 h-3.5 text-indigo-500" /> : <VolumeX className="w-3.5 h-3.5" />}
                   {speakText ? "AI Speaking" : "AI Muted"}
                 </button>
-                
-                <button 
-                  onClick={() => setMessages([])} 
+
+                <button
+                  onClick={() => setMessages([])}
                   className="border border-slate-200 px-3.5 py-1.5 rounded-lg shadow-sm hover:bg-slate-50 transition-colors text-xs font-medium text-slate-500"
                 >
                   Clear Chat
@@ -761,11 +923,11 @@ export default function App() {
                   {screenCaptures.map(cap => (
                     <div key={cap.id} className="border border-slate-100 rounded-2xl overflow-hidden shadow-sm bg-white hover:shadow-md transition-all hover:scale-[1.01] duration-300 group">
                       <div className="relative aspect-video w-full bg-slate-950 overflow-hidden">
-                        <img 
-                          src={`http://localhost:8000/static/${cap.image_path}?t=${lastRefresh}`} 
-                          alt="Desktop Capture" 
+                        <img
+                          src={`${API_URL}/static/${cap.image_path}?t=${lastRefresh}`}
+                          alt="Desktop Capture"
                           loading="lazy"
-                          className="w-full h-full object-cover transition-transform group-hover:scale-105 duration-500" 
+                          className="w-full h-full object-cover transition-transform group-hover:scale-105 duration-500"
                         />
                         <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-3">
                           <span className="text-[10px] font-mono text-white/90">ID: #{cap.id}</span>
@@ -774,11 +936,10 @@ export default function App() {
                       <div className="p-4 bg-white">
                         <div className="flex items-center justify-between">
                           <span className="text-[10px] font-bold tracking-wider text-slate-400 uppercase">Screen Source</span>
-                          <span className={`text-[9px] uppercase tracking-wider px-2 py-0.5 rounded-full font-bold ${
-                            cap.processed 
-                              ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' 
-                              : 'bg-amber-50 text-amber-600 border border-amber-100'
-                          }`}>
+                          <span className={`text-[9px] uppercase tracking-wider px-2 py-0.5 rounded-full font-bold ${cap.processed
+                            ? 'bg-emerald-50 text-emerald-600 border border-emerald-100'
+                            : 'bg-amber-50 text-amber-600 border border-amber-100'
+                            }`}>
                             {cap.processed ? 'Processed' : 'Pending Analysis'}
                           </span>
                         </div>
@@ -824,11 +985,11 @@ export default function App() {
                   {cameraSnapshots.map(cap => (
                     <div key={cap.id} className="border border-slate-100 rounded-2xl overflow-hidden shadow-sm bg-white hover:shadow-md transition-all hover:scale-[1.01] duration-300 group">
                       <div className="relative aspect-video w-full bg-slate-950 overflow-hidden">
-                        <img 
-                          src={`http://localhost:8000/static/${cap.image_path}?t=${lastRefresh}`} 
-                          alt="Camera Snapshot" 
+                        <img
+                          src={`${API_URL}/static/${cap.image_path}?t=${lastRefresh}`}
+                          alt="Camera Snapshot"
                           loading="lazy"
-                          className="w-full h-full object-cover transition-transform group-hover:scale-105 duration-500" 
+                          className="w-full h-full object-cover transition-transform group-hover:scale-105 duration-500"
                         />
                         <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-3">
                           <span className="text-[10px] font-mono text-white/90">ID: #{cap.id}</span>
@@ -837,11 +998,10 @@ export default function App() {
                       <div className="p-4 bg-white">
                         <div className="flex items-center justify-between">
                           <span className="text-[10px] font-bold tracking-wider text-slate-400 uppercase">Camera Snaps</span>
-                          <span className={`text-[9px] uppercase tracking-wider px-2 py-0.5 rounded-full font-bold ${
-                            cap.processed 
-                              ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' 
-                              : 'bg-amber-50 text-amber-600 border border-amber-100'
-                          }`}>
+                          <span className={`text-[9px] uppercase tracking-wider px-2 py-0.5 rounded-full font-bold ${cap.processed
+                            ? 'bg-emerald-50 text-emerald-600 border border-emerald-100'
+                            : 'bg-amber-50 text-amber-600 border border-amber-100'
+                            }`}>
                             {cap.processed ? 'Processed' : 'Pending Analysis'}
                           </span>
                         </div>
@@ -888,7 +1048,7 @@ export default function App() {
                     <div key={ins.id} className="relative bg-white rounded-2xl border border-slate-100 p-6 shadow-sm hover:shadow-md transition-all duration-300">
                       {/* Timeline Dot Indicator */}
                       <div className="absolute w-4 h-4 bg-slate-900 rounded-full -left-[41px] top-6 border-4 border-slate-50 flex items-center justify-center shadow-sm" />
-                      
+
                       <div className="flex flex-wrap justify-between items-center gap-2 pb-3 border-b border-slate-50">
                         <span className="text-[10px] font-extrabold uppercase tracking-wider bg-slate-900 text-white px-2.5 py-0.5 rounded-md">
                           Molly Report #{ins.id}
@@ -898,7 +1058,7 @@ export default function App() {
                           {new Date(ins.timestamp).toLocaleString()}
                         </span>
                       </div>
-                      
+
                       <div className="mt-4">
                         <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Activity Summary</span>
                         <p className="text-xs text-slate-700 leading-relaxed mt-1.5 font-medium">
@@ -929,66 +1089,58 @@ export default function App() {
 
         {/* Input Area */}
         <div className={`p-6 bg-gradient-to-t from-white via-white to-transparent flex-shrink-0 border-t border-slate-50 ${activeTab === 'chat' ? '' : 'hidden'}`}>
-            <div className="max-w-2xl mx-auto flex items-center gap-2 bg-[#f9f9f9] border border-slate-200 rounded-full px-4 py-1.5 shadow-sm focus-within:ring-1 focus-within:ring-slate-350 transition-all">
-              <div className="text-slate-400 flex items-center justify-center">
-                <span className="text-lg leading-none mb-1 opacity-60">...</span>
-              </div>
-              <Input
-                value={input}
-                onChange={e => setInput(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && sendMessage()}
-                className="flex-1 bg-transparent border-0 focus-visible:ring-0 focus-visible:ring-offset-0 px-2 text-slate-700 text-sm shadow-none"
-                placeholder="Ask Molly about your context..."
-                disabled={voiceMode}
-              />
-              <button
-                onClick={() => setVoiceMode(!voiceMode)}
-                className={`flex items-center justify-center transition-all border ${
-                  voiceMode 
-                    ? 'px-2.5 py-1.5 rounded-full bg-rose-50 border-rose-200 shadow-sm animate-pulse gap-1.5' 
-                    : 'w-8 h-8 rounded-full bg-slate-50 text-slate-500 hover:text-slate-800 border-slate-200 hover:bg-slate-100'
-                }`}
-                title={voiceMode ? "Turn Off Voice Mode" : "Turn On Voice Mode"}
-              >
-                {voiceMode ? (
-                  <>
-                    <Mic className="w-3.5 h-3.5 text-rose-500" />
-                    <div className="flex items-end gap-[3px] h-3.5 px-0.5">
-                      {[0, 1, 2, 3, 4].map((i) => {
-                        const heights = [6, 12, 16, 10, 6];
-                        const activeHeight = heights[i];
-                        return (
-                          <span
-                            key={i}
-                            className={`w-[2.5px] bg-rose-500 rounded-full transition-all duration-75 origin-bottom ${
-                              audioLevel === 0 ? 'animate-level-bar-idle' : ''
-                            }`}
-                            style={{
-                              height: audioLevel > 0 
-                                ? `${Math.max(3, 3 + audioLevel * activeHeight * 1.5)}px` 
-                                : undefined,
-                              animationDelay: audioLevel === 0 ? `${i * 0.15}s` : undefined
-                            }}
-                          />
-                        );
-                      })}
-                    </div>
-                  </>
-                ) : (
-                  <Mic className="w-3.5 h-3.5 text-slate-500" />
-                )}
-              </button>
-
-              <button
-                onClick={sendMessage}
-                disabled={voiceMode || !input.trim()}
-                className="flex items-center gap-1.5 text-xs font-semibold text-slate-700 bg-white border border-slate-200 px-3.5 py-1.5 rounded-full shadow-sm hover:bg-slate-50 transition-all disabled:opacity-50"
-              >
-                <div className="w-2 h-2 bg-slate-900 rounded-sm"></div>
-                Send
-              </button>
+          <div className="max-w-2xl mx-auto flex items-center gap-2 bg-[#f9f9f9] border border-slate-200 rounded-full px-4 py-1.5 shadow-sm focus-within:ring-1 focus-within:ring-slate-350 transition-all">
+            <div className="text-slate-400 flex items-center justify-center">
+              <span className="text-lg leading-none mb-1 opacity-60">...</span>
             </div>
+            <Input
+              value={input}
+              onChange={e => setInput(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && sendMessage()}
+              className="flex-1 bg-transparent border-0 focus-visible:ring-0 focus-visible:ring-offset-0 px-2 text-slate-700 text-sm shadow-none"
+              placeholder="Ask Molly about your context..."
+              disabled={voiceMode}
+            />
+            <button
+              onClick={() => setVoiceMode(!voiceMode)}
+              className={`flex items-center justify-center transition-all border ${voiceMode
+                ? 'px-3 py-1.5 rounded-full bg-rose-50 border-rose-200 shadow-sm gap-2 ring-1 ring-rose-100'
+                : 'w-8 h-8 rounded-full bg-slate-50 text-slate-500 hover:text-slate-800 border-slate-200 hover:bg-slate-100'
+                }`}
+              title={voiceMode ? "Turn Off Voice Mode" : "Turn On Voice Mode"}
+            >
+              {voiceMode ? (
+                <>
+                  <Mic className="w-3.5 h-3.5 text-rose-500" />
+                  <div className="flex items-center gap-[3px] h-5 px-1">
+                    {audioBars.map((level, i) => (
+                      <span
+                        key={i}
+                        className="w-[3px] rounded-full bg-rose-500/90 shadow-[0_0_8px_rgba(244,63,94,0.28)] transition-[height,opacity,transform] duration-100 ease-out"
+                        style={{
+                          height: `${5 + level * 18}px`,
+                          opacity: 0.42 + level * 0.58,
+                          transform: `scaleY(${0.92 + level * 0.12})`
+                        }}
+                      />
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <Mic className="w-3.5 h-3.5 text-slate-500" />
+              )}
+            </button>
+
+            <button
+              onClick={sendMessage}
+              disabled={voiceMode || !input.trim()}
+              className="flex items-center gap-1.5 text-xs font-semibold text-slate-700 bg-white border border-slate-200 px-3.5 py-1.5 rounded-full shadow-sm hover:bg-slate-50 transition-all disabled:opacity-50"
+            >
+              <div className="w-2 h-2 bg-slate-900 rounded-sm"></div>
+              Send
+            </button>
           </div>
+        </div>
       </div>
 
       {/* Settings Modal */}
@@ -1005,7 +1157,9 @@ export default function App() {
               <div className="w-48 bg-slate-50 border-r border-slate-100 p-3 flex flex-col gap-1 overflow-y-auto">
                 <button onClick={() => setSettingsTab('speech')} className={`text-left px-3 py-2 rounded-md text-xs font-medium transition-colors ${settingsTab === 'speech' ? 'bg-white text-slate-900 shadow-sm border border-slate-200' : 'text-slate-600 hover:bg-slate-100'}`}>Speech</button>
                 <button onClick={() => setSettingsTab('api')} className={`text-left px-3 py-2 rounded-md text-xs font-medium transition-colors ${settingsTab === 'api' ? 'bg-white text-slate-900 shadow-sm border border-slate-200' : 'text-slate-600 hover:bg-slate-100'}`}>API Config</button>
-                <button onClick={() => setSettingsTab('observers')} className={`text-left px-3 py-2 rounded-md text-xs font-medium transition-colors ${settingsTab === 'observers' ? 'bg-white text-slate-900 shadow-sm border border-slate-200' : 'text-slate-600 hover:bg-slate-100'}`}>Observers</button>
+                {isElectron && (
+                  <button onClick={() => setSettingsTab('observers')} className={`text-left px-3 py-2 rounded-md text-xs font-medium transition-colors ${settingsTab === 'observers' ? 'bg-white text-slate-900 shadow-sm border border-slate-200' : 'text-slate-600 hover:bg-slate-100'}`}>Observers</button>
+                )}
               </div>
 
               {/* Tab Content */}
@@ -1104,34 +1258,34 @@ export default function App() {
                         <span className="text-xs font-bold text-slate-800">Screen Capture Observer</span>
                         <span className="text-[10px] text-slate-400 mt-0.5 font-medium">Periodically capture your active workspace</span>
                       </div>
-                      <input 
-                        type="checkbox" 
-                        checked={observerScreenActive} 
-                        onChange={e => setObserverScreenActive(e.target.checked)} 
-                        className="w-4.5 h-4.5 accent-slate-900 cursor-pointer rounded" 
+                      <input
+                        type="checkbox"
+                        checked={observerScreenActive}
+                        onChange={e => setObserverScreenActive(e.target.checked)}
+                        className="w-4.5 h-4.5 accent-slate-900 cursor-pointer rounded"
                       />
                     </div>
-                    
+
                     <div className="flex items-center justify-between p-3.5 bg-slate-50 border border-slate-200/60 rounded-xl">
                       <div className="flex flex-col">
                         <span className="text-xs font-bold text-slate-800">Camera Snaps Observer</span>
                         <span className="text-[10px] text-slate-400 mt-0.5 font-medium">Periodically capture camera frame</span>
                       </div>
-                      <input 
-                        type="checkbox" 
-                        checked={observerCameraActive} 
-                        onChange={e => setObserverCameraActive(e.target.checked)} 
-                        className="w-4.5 h-4.5 accent-slate-900 cursor-pointer rounded" 
+                      <input
+                        type="checkbox"
+                        checked={observerCameraActive}
+                        onChange={e => setObserverCameraActive(e.target.checked)}
+                        className="w-4.5 h-4.5 accent-slate-900 cursor-pointer rounded"
                       />
                     </div>
-                    
+
                     <div className="flex flex-col gap-1.5 pt-2">
                       <label className="text-xs font-semibold text-slate-700 flex justify-between">
                         Capture Interval <span>{observerCaptureInterval}s</span>
                       </label>
-                      <select 
-                        value={observerCaptureInterval} 
-                        onChange={e => setObserverCaptureInterval(parseInt(e.target.value))} 
+                      <select
+                        value={observerCaptureInterval}
+                        onChange={e => setObserverCaptureInterval(parseInt(e.target.value))}
                         className="bg-[#f9f9f9] border border-slate-200 text-sm focus-visible:ring-slate-350 rounded-lg h-9.5 px-3 outline-none"
                       >
                         <option value={30}>30 Seconds</option>
@@ -1145,9 +1299,9 @@ export default function App() {
                       <label className="text-xs font-semibold text-slate-700 flex justify-between">
                         Gemini Processing Interval <span>{observerProcessInterval / 60}m</span>
                       </label>
-                      <select 
-                        value={observerProcessInterval} 
-                        onChange={e => setObserverProcessInterval(parseInt(e.target.value))} 
+                      <select
+                        value={observerProcessInterval}
+                        onChange={e => setObserverProcessInterval(parseInt(e.target.value))}
                         className="bg-[#f9f9f9] border border-slate-200 text-sm focus-visible:ring-slate-350 rounded-lg h-9.5 px-3 outline-none"
                       >
                         <option value={120}>2 Minutes</option>
@@ -1172,7 +1326,7 @@ export default function App() {
                           <button
                             onClick={async () => {
                               try {
-                                await fetch('http://localhost:8000/api/processor/trigger', { method: 'POST' });
+                                await fetch('${API_URL}/api/processor/trigger', { method: 'POST' });
                                 fetchObservations('insights', true);
                               } catch (e) { console.error('Processor trigger failed:', e); }
                             }}

@@ -129,7 +129,7 @@ class AudioLevelProcessor(FrameProcessor):
             if audio is not None and len(audio) > 0:
                 samples = np.frombuffer(audio, dtype=np.int16).astype(np.float64)
                 rms = float(np.sqrt(np.mean(np.square(samples))))
-                level = min(1.0, rms / 32768.0)
+                level = min(1.0, rms / 8000.0)
             if self._frame_count % 3 == 0:
                 await self._transport._client.send_message(
                     OutputTransportMessageFrame(message={

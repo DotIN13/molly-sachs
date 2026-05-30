@@ -1,3 +1,5 @@
+import { API_URL, isElectron } from '../config'
+
 let captureIntervalId: ReturnType<typeof setInterval> | null = null;
 let currentConfig = {
   screenActive: false,
@@ -68,7 +70,7 @@ function captureStreamToBase64(stream: MediaStream): Promise<string> {
  */
 async function uploadCapture(type: 'screen' | 'camera', base64Data: string) {
   const timestamp = new Date().toISOString();
-  const response = await fetch('http://localhost:8000/api/observations', {
+  const response = await fetch(`${API_URL}/api/observations`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json'
@@ -89,6 +91,7 @@ async function uploadCapture(type: 'screen' | 'camera', base64Data: string) {
  * Execute Screen and Camera capture sequences
  */
 export async function triggerObservationsCapture() {
+  if (!isElectron) return;
   if (currentConfig.screenActive) {
     try {
       console.log("[Molly Observer] Calling getDesktopSources via electronAPI...");
@@ -157,6 +160,7 @@ export async function triggerObservationsCapture() {
  * Start or re-schedule observations capture scheduler
  */
 export function startObservers(config: { screenActive: boolean, cameraActive: boolean, captureInterval: number }) {
+  if (!isElectron) return;
   currentConfig = { ...config };
   
   if (captureIntervalId) {
@@ -194,6 +198,7 @@ export function stopObservers() {
  * Update capture scheduler configuration dynamically
  */
 export function updateObserverConfig(config: { screenActive: boolean, cameraActive: boolean, captureInterval: number }) {
+  if (!isElectron) return;
   console.log("[Molly Observer] Configuration updated:", config);
   startObservers(config);
 }
