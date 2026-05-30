@@ -4,7 +4,6 @@ import asyncio
 import numpy as np
 from loguru import logger
 
-# Pipecat core and services
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.task import PipelineTask, PipelineParams
 from pipecat.pipeline.runner import PipelineRunner
@@ -14,7 +13,6 @@ from pipecat.services.cartesia.stt import CartesiaSTTService
 from pipecat.services.cartesia.tts import CartesiaTTSService, GenerationConfig
 from pipecat.services.llm_service import FunctionCallParams
 
-# Pipecat VAD and transport
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.transports.base_transport import TransportParams
@@ -22,7 +20,6 @@ from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
 from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
 from pipecat.audio.filters.rnnoise_filter import RNNoiseFilter
 
-# Pipecat processors and frames
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair, LLMUserAggregatorParams
@@ -45,19 +42,18 @@ from pipecat.frames.frames import (
     BotStoppedSpeakingFrame
 )
 
-# Gemini SDK
 from google import genai
 import database
-from db import settings
 
 SYSTEM_PROMPT = (
-    "你是Molly，和用户是好朋友，用微信聊天的语气回复。"
-    "不要用markdown格式，除非用户明确要求，否则不要用bullet points或者列表。"
-    "回复要简短自然，像好朋友间发微信一样。"
-    "适当用一些emoji和口语化表达，但不要太频繁。"
-    "你可以使用search_memory工具查找用户过去的活动和记忆。"
-    "聊到过去的事情、回忆、习惯或需要上下文时，可以先调用search_memory查询后再回复。"
+    "\u4f60\u662fMolly\uff0c\u548c\u7528\u6237\u662f\u597d\u670b\u53cb\uff0c\u7528\u5fae\u4fe1\u804a\u5929\u7684\u8bed\u6c14\u56de\u590d\u3002"
+    "\u4e0d\u8981\u7528markdown\u683c\u5f0f\uff0c\u9664\u975e\u7528\u6237\u660e\u786e\u8981\u6c42\uff0c\u5426\u5219\u4e0d\u8981\u7528bullet points\u6216\u8005\u5217\u8868\u3002"
+    "\u56de\u590d\u8981\u7b80\u77ed\u81ea\u7136\uff0c\u50cf\u597d\u670b\u53cb\u95f4\u53d1\u5fae\u4fe1\u4e00\u6837\u3002"
+    "\u9002\u5f53\u7528\u4e00\u4e9bemoji\u548c\u53e3\u8bed\u5316\u8868\u8fbe\uff0c\u4f46\u4e0d\u8981\u592a\u9891\u7e41\u3002"
+    "\u4f60\u53ef\u4ee5\u4f7f\u7528search_memory\u5de5\u5177\u67e5\u627e\u7528\u6237\u8fc7\u53bb\u7684\u6d3b\u52a8\u548c\u8bb0\u5fc6\u3002"
+    "\u804a\u5230\u8fc7\u53bb\u7684\u4e8b\u60c5\u3001\u56de\u5fc6\u3001\u4e60\u60ef\u6216\u9700\u8981\u4e0a\u4e0b\u6587\u65f6\uff0c\u53ef\u4ee5\u5148\u8c03\u7528search_memory\u67e5\u8be2\u540e\u518d\u56de\u590d\u3002"
 )
+
 
 def _build_messages(past_messages: list) -> list:
     result = [{"role": "system", "content": SYSTEM_PROMPT}]
@@ -65,8 +61,8 @@ def _build_messages(past_messages: list) -> list:
         result.append({"role": msg["role"], "content": msg["content"]})
     return result
 
-async def _embed_query(query: str) -> list:
-    api_key = settings.settings.get("gemini_api_key", "").strip()
+
+async def _embed_query(query: str, api_key: str) -> list:
     client = genai.Client(api_key=api_key) if api_key else genai.Client()
     embed_result = await asyncio.wait_for(
         client.aio.models.embed_content(
@@ -76,24 +72,37 @@ async def _embed_query(query: str) -> list:
     )
     return embed_result.embeddings[0].values
 
-async def search_memory(params: FunctionCallParams, query: str):
-    """Searches the user's past activity memory and context for relevant information.
-    
-    Args:
-        query: The search string to look up in the memory vector database.
-    """
-    try:
-        logger.info(f"Embedding query: {query}")
-        query_embedding = await _embed_query(query)
-        
-        search_results = await database.vector.search(query_embedding, 5)
-        context_str = "\n".join([f"[{r.get('timestamp', 'Unknown')}] {r.get('summary', '')}" for r in search_results])
-        if not context_str.strip():
-            context_str = "No recent context available yet."
-            
-        await params.result_callback(context_str)
-    except Exception as e:
-        await params.result_callback(f"Error searching memory: {str(e)}")
+
+def make_search_memory(user_id: str, api_key: str):
+    """Factory returning a search_memory callable that captures user_id + api_key
+    in its closure, avoiding race conditions between concurrent sessions."""
+
+    async def search_memory(params: FunctionCallParams, query: str):
+        """Searches the user's past activity memory and context for relevant information.
+
+        Args:
+            query: The search string to look up in the memory vector database.
+        """
+        try:
+            logger.info("Embedding query: {}", query)
+            query_embedding = await _embed_query(query, api_key)
+
+            search_results = await database.vector.search(
+                query_embedding, 5, user_id=user_id
+            )
+            context_str = "\n".join(
+                [f"[{r.get('timestamp', 'Unknown')}] {r.get('summary', '')}"
+                 for r in search_results]
+            )
+            if not context_str.strip():
+                context_str = "No recent context available yet."
+
+            await params.result_callback(context_str)
+        except Exception as e:
+            await params.result_callback(f"Error searching memory: {str(e)}")
+
+    return search_memory
+
 
 class MicFilterProcessor(FrameProcessor):
     """Filters outgoing microphone audio if voice mode is inactive."""
@@ -107,6 +116,7 @@ class MicFilterProcessor(FrameProcessor):
             if not self._global_state["voice_mode"]:
                 return
         await self.push_frame(frame, direction)
+
 
 class AudioLevelProcessor(FrameProcessor):
     """Calculates microphone audio level, sends to frontend, and gates noise when bot is speaking."""
@@ -140,6 +150,7 @@ class AudioLevelProcessor(FrameProcessor):
                 )
         await self.push_frame(frame, direction)
 
+
 class TTSFilterProcessor(FrameProcessor):
     """Filters outgoing TTS audio if the assistant should remain silent."""
     def __init__(self, global_state: dict):
@@ -153,12 +164,15 @@ class TTSFilterProcessor(FrameProcessor):
                 return
         await self.push_frame(frame, direction)
 
+
 class UserBroadcaster(FrameProcessor):
     """Intercepts and broadcasts user voice transcriptions to the frontend instantly."""
-    def __init__(self, transport: SmallWebRTCTransport, conversation_id: str):
+    def __init__(self, transport: SmallWebRTCTransport, conversation_id: str,
+                 user_id: str):
         super().__init__()
         self._transport = transport
         self._conversation_id = conversation_id
+        self._user_id = user_id
 
     def set_conversation_id(self, cid: str):
         self._conversation_id = cid
@@ -168,7 +182,9 @@ class UserBroadcaster(FrameProcessor):
         if direction == FrameDirection.DOWNSTREAM:
             if isinstance(frame, TranscriptionFrame):
                 if not getattr(frame, "interim_results", False):
-                    await database.app.add_message(self._conversation_id, "user", frame.text)
+                    await database.app.add_message(
+                        self._conversation_id, "user", frame.text, self._user_id
+                    )
                     await self._transport._client.send_message(
                         OutputTransportMessageFrame(message={
                             "type": "transcript",
@@ -178,12 +194,15 @@ class UserBroadcaster(FrameProcessor):
                     )
         await self.push_frame(frame, direction)
 
+
 class AssistantBroadcaster(FrameProcessor):
     """Intercepts and broadcasts assistant response text chunks to the frontend instantly."""
-    def __init__(self, transport: SmallWebRTCTransport, conversation_id: str):
+    def __init__(self, transport: SmallWebRTCTransport, conversation_id: str,
+                 user_id: str):
         super().__init__()
         self._transport = transport
         self._conversation_id = conversation_id
+        self._user_id = user_id
         self._buffer = []
 
     def set_conversation_id(self, cid: str):
@@ -194,21 +213,32 @@ class AssistantBroadcaster(FrameProcessor):
         if direction == FrameDirection.DOWNSTREAM:
             if isinstance(frame, LLMFullResponseStartFrame):
                 self._buffer = []
-                await self._transport._client.send_message(OutputTransportMessageFrame(message={"type": "start"}))
+                await self._transport._client.send_message(
+                    OutputTransportMessageFrame(message={"type": "start"}))
             elif isinstance(frame, TextFrame) and not isinstance(frame, TranscriptionFrame):
                 self._buffer.append(frame.text)
-                await self._transport._client.send_message(OutputTransportMessageFrame(message={"type": "chunk", "text": frame.text}))
+                await self._transport._client.send_message(
+                    OutputTransportMessageFrame(message={"type": "chunk", "text": frame.text}))
             elif isinstance(frame, LLMFullResponseEndFrame):
                 full_text = "".join(self._buffer)
                 if full_text.strip():
-                    await database.app.add_message(self._conversation_id, "assistant", full_text)
-                await self._transport._client.send_message(OutputTransportMessageFrame(message={"type": "end"}))
+                    await database.app.add_message(
+                        self._conversation_id, "assistant", full_text, self._user_id
+                    )
+                await self._transport._client.send_message(
+                    OutputTransportMessageFrame(message={"type": "end"}))
         await self.push_frame(frame, direction)
 
-async def start_pipecat_session(connection: SmallWebRTCConnection, global_state: dict, conversation_id: str):
+
+async def start_pipecat_session(
+    connection: SmallWebRTCConnection,
+    global_state: dict,
+    conversation_id: str,
+    user_id: str,
+    prefs: dict[str, str],
+):
     """Initializes and starts a single WebRTC Pipecat pipeline session."""
-    s = settings.settings
-    conv = {"id": conversation_id}  # mutable ref for session reuse
+    conv = {"id": conversation_id}
     try:
         transport = SmallWebRTCTransport(
             params=TransportParams(
@@ -218,18 +248,20 @@ async def start_pipecat_session(connection: SmallWebRTCConnection, global_state:
             ),
             webrtc_connection=connection
         )
-        
+
+        gemini_key = prefs.get("gemini_api_key", "")
         llm = GoogleLLMService(
-            api_key=s.get("gemini_api_key"),
+            api_key=gemini_key,
             settings=GoogleLLMService.Settings(model="gemini-3.1-flash-lite")
         )
-        llm.register_direct_function(search_memory)
-        
-        stt_provider = s.get("stt_provider", "soniox")
-        stt_language = s.get("stt_language", "zh")
+        memory_tool = make_search_memory(user_id, gemini_key)
+        llm.register_direct_function(memory_tool)
+
+        stt_provider = prefs.get("stt_provider", "soniox")
+        stt_language = prefs.get("stt_language", "zh")
         if stt_provider == "cartesia":
             stt = CartesiaSTTService(
-                api_key=s.get("cartesia_api_key"),
+                api_key=prefs.get("cartesia_api_key"),
                 settings=CartesiaSTTService.Settings(
                     model="ink-whisper",
                     language=stt_language,
@@ -237,18 +269,18 @@ async def start_pipecat_session(connection: SmallWebRTCConnection, global_state:
             )
         else:
             stt = SonioxSTTService(
-                api_key=s.get("soniox_api_key"),
+                api_key=prefs.get("soniox_api_key"),
                 settings=SonioxSTTService.Settings(
                     language=stt_language,
                 ),
             )
-        
-        tts_provider = s.get("tts_provider", "cartesia")
+
+        tts_provider = prefs.get("tts_provider", "cartesia")
         if tts_provider == "cartesia":
-            tts_voice = s.get("tts_voice", "79a125e8-cd45-4c13-8a67-188112f4dd22")
-            tts_volume = float(s.get("tts_volume", "1.0"))
-            tts_speed = float(s.get("tts_speed", "1.0"))
-            tts_emotion = s.get("tts_emotion")
+            tts_voice = prefs.get("tts_voice", "79a125e8-cd45-4c13-8a67-188112f4dd22")
+            tts_volume = float(prefs.get("tts_volume", "1.0"))
+            tts_speed = float(prefs.get("tts_speed", "1.0"))
+            tts_emotion = prefs.get("tts_emotion")
             if not tts_emotion or tts_emotion == "neutral":
                 tts_emotion = None
 
@@ -258,9 +290,9 @@ async def start_pipecat_session(connection: SmallWebRTCConnection, global_state:
                 emotion=tts_emotion
             )
 
-            tts_language = s.get("tts_language", "en")
+            tts_language = prefs.get("tts_language", "en")
             tts = CartesiaTTSService(
-                api_key=s.get("cartesia_api_key"),
+                api_key=prefs.get("cartesia_api_key"),
                 settings=CartesiaTTSService.Settings(
                     model="sonic-3.5",
                     voice=tts_voice,
@@ -269,11 +301,10 @@ async def start_pipecat_session(connection: SmallWebRTCConnection, global_state:
                 )
             )
 
-        # Retrieve past conversation messages
         past_messages = await database.app.get_messages(conv["id"])
         formatted_messages = _build_messages(past_messages)
 
-        tools = ToolsSchema(standard_tools=[search_memory])
+        tools = ToolsSchema(standard_tools=[memory_tool])
         context = LLMContext(messages=formatted_messages, tools=tools)
         vad_params = VADParams(
             start_secs=0.4,
@@ -293,8 +324,8 @@ async def start_pipecat_session(connection: SmallWebRTCConnection, global_state:
 
         mic_filter = MicFilterProcessor(global_state)
         tts_filter = TTSFilterProcessor(global_state)
-        user_broadcaster = UserBroadcaster(transport, conv["id"])
-        assistant_broadcaster = AssistantBroadcaster(transport, conv["id"])
+        user_broadcaster = UserBroadcaster(transport, conv["id"], user_id)
+        assistant_broadcaster = AssistantBroadcaster(transport, conv["id"], user_id)
         audio_level = AudioLevelProcessor(transport, global_state)
 
         pipeline = Pipeline([
@@ -311,7 +342,7 @@ async def start_pipecat_session(connection: SmallWebRTCConnection, global_state:
             transport.output(),
             assistant_aggregator,
         ])
-        
+
         task = PipelineTask(
             pipeline,
             params=PipelineParams(
@@ -320,7 +351,7 @@ async def start_pipecat_session(connection: SmallWebRTCConnection, global_state:
                 enable_usage_metrics=True,
             )
         )
-        
+
         @transport.event_handler("on_client_connected")
         async def on_client_connected(transport, client):
             logger.info("Client connected to WebRTC")
@@ -336,8 +367,8 @@ async def start_pipecat_session(connection: SmallWebRTCConnection, global_state:
             if isinstance(message, dict) and message.get("type") == "chat":
                 text = message.get("text")
                 if text:
-                    logger.info(f"Chat message received: {text}")
-                    await database.app.add_message(conv["id"], "user", text)
+                    logger.info("Chat message received: {}", text)
+                    await database.app.add_message(conv["id"], "user", text, user_id)
                     await task.queue_frames([
                         InterruptionFrame(),
                         LLMMessagesAppendFrame(messages=[{"role": "user", "content": text}]),
@@ -346,7 +377,7 @@ async def start_pipecat_session(connection: SmallWebRTCConnection, global_state:
             elif isinstance(message, dict) and message.get("type") == "switch_conversation":
                 new_id = message.get("conversation_id")
                 if new_id and new_id != conv["id"]:
-                    logger.info(f"Switching conversation: {conv['id']} -> {new_id}")
+                    logger.info("Switching conversation: {} -> {}", conv["id"], new_id)
                     conv["id"] = new_id
                     user_broadcaster.set_conversation_id(new_id)
                     assistant_broadcaster.set_conversation_id(new_id)
@@ -370,6 +401,6 @@ async def start_pipecat_session(connection: SmallWebRTCConnection, global_state:
     except asyncio.CancelledError:
         logger.info("Pipecat session cancelled.")
     except Exception as e:
-        logger.exception(f"Pipecat task failed: {e}")
+        logger.exception("Pipecat task failed: {}", e)
     finally:
         logger.info("Pipecat session cleanup complete")

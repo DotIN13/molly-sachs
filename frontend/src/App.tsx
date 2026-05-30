@@ -1,13 +1,17 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { Input } from '@/components/ui/input'
-import { Settings, PenSquare, Search, FileText, Clock, Bird, Mic, Volume2, VolumeX, RefreshCw } from 'lucide-react'
+import { Settings, PenSquare, Search, FileText, Clock, Bird, Mic, Volume2, VolumeX, RefreshCw, LogOut } from 'lucide-react'
 import { updateObserverConfig } from './observers'
 import { API_URL, isElectron } from './config'
 import useAudioVisualizer from './hooks/useAudioVisualizer'
 import useWebRTC from './hooks/useWebRTC'
 import SettingsModal from './components/SettingsModal'
+import { useAuth } from './contexts/AuthContext'
+import Login from './pages/Login'
 
 export default function App() {
+  const auth = useAuth()
+
   const [messages, setMessages] = useState<{ role: string, content: string }[]>([
     { role: 'assistant', content: 'I love using this AI companion. For my meetings and beyond.' }
   ])
@@ -37,6 +41,8 @@ export default function App() {
   const [observerScreenActive, setObserverScreenActive] = useState(false)
   const [observerCameraActive, setObserverCameraActive] = useState(false)
   const [observerCaptureInterval, setObserverCaptureInterval] = useState(60)
+  const [observerScreenInterval, setObserverScreenInterval] = useState(60)
+  const [observerCameraInterval, setObserverCameraInterval] = useState(120)
   const [observerProcessInterval, setObserverProcessInterval] = useState(300)
   const [debugMode, setDebugMode] = useState(false)
 
@@ -88,8 +94,8 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (backendStatus !== 'connected') return;
-    fetch(`${API_URL}/api/settings`)
+    if (backendStatus !== 'connected' || !auth.isAuthenticated) return;
+    auth.authFetch(`${API_URL}/api/settings`)
       .then(res => res.json())
       .then(data => {
         setGeminiKey(data.gemini_api_key || '')
@@ -120,64 +126,71 @@ export default function App() {
         const scrActive = data.observer_screen_active ?? false;
         const camActive = data.observer_camera_active ?? false;
         const capInt = data.observer_capture_interval ?? 60;
+        const scrInt = data.observer_screen_interval ?? 60;
+        const camInt = data.observer_camera_interval ?? 120;
         const procInt = data.observer_process_interval ?? 300;
 
         setObserverScreenActive(scrActive);
         setObserverCameraActive(camActive);
         setObserverCaptureInterval(capInt);
+        setObserverScreenInterval(scrInt);
+        setObserverCameraInterval(camInt);
         setObserverProcessInterval(procInt);
         setDebugMode(data.debug ?? false);
 
         updateObserverConfig({
           screenActive: scrActive,
           cameraActive: camActive,
-          captureInterval: capInt
+          screenInterval: scrInt,
+          cameraInterval: camInt,
         });
       })
       .catch(console.error)
-  }, [backendStatus])
+  }, [backendStatus, auth.isAuthenticated])
 
   // Processor scheduling — frontend triggers the backend processor on interval
   useEffect(() => {
     if (!isElectron) return;
-    if (backendStatus !== 'connected') return;
+    if (backendStatus !== 'connected' || !auth.isAuthenticated) return;
     if (!observerScreenActive && !observerCameraActive) return;
 
     const intervalMs = observerProcessInterval * 1000;
     const triggerProcessor = () => {
-      fetch(`${API_URL}/api/processor/trigger`, { method: 'POST' })
+      auth.authFetch(`${API_URL}/api/processor/trigger`, { method: 'POST' })
         .catch(() => { });
     };
 
     triggerProcessor();
     const timer = setInterval(triggerProcessor, intervalMs);
     return () => clearInterval(timer);
-  }, [backendStatus, observerProcessInterval, observerScreenActive, observerCameraActive]);
+  }, [backendStatus, auth.isAuthenticated, observerProcessInterval, observerScreenActive, observerCameraActive]);
 
   useEffect(() => {
-    if (backendStatus !== 'connected') return;
-    fetch(`${API_URL}/api/state`, {
+    if (backendStatus !== 'connected' || !auth.isAuthenticated) return;
+    auth.authFetch(`${API_URL}/api/state`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ voice_mode: voiceMode, speak_text: speakText })
     }).catch(console.error)
-  }, [voiceMode, speakText, backendStatus])
+  }, [voiceMode, speakText, backendStatus, auth.isAuthenticated])
 
   const refreshConversations = useCallback(() => {
-    fetch(`${API_URL}/api/conversations`)
+    if (!auth.isAuthenticated) return;
+    auth.authFetch(`${API_URL}/api/conversations`)
       .then(res => res.json())
-      .then(data => setConversations(data || []))
+      .then(data => setConversations(Array.isArray(data) ? data : []))
       .catch(() => { });
-  }, []);
+  }, [auth.isAuthenticated]);
   refreshConversationsRef.current = refreshConversations;
 
   // Load conversations list
   useEffect(() => {
-    if (backendStatus !== 'connected') return;
-    fetch(`${API_URL}/api/conversations`)
+    if (backendStatus !== 'connected' || !auth.isAuthenticated) return;
+    auth.authFetch(`${API_URL}/api/conversations`)
       .then(res => res.json())
       .then(data => {
-        setConversations(data || []);
+        if (!Array.isArray(data)) return;
+        setConversations(data);
         if (data && data.length > 0 && !activeConversationId) {
           loadConversation(data[0].id);
         } else if ((!data || data.length === 0) && !activeConversationId) {
@@ -185,7 +198,7 @@ export default function App() {
         }
       })
       .catch(console.error);
-  }, [backendStatus]);
+  }, [backendStatus, auth.isAuthenticated]);
 
   const loadConversation = async (id: string) => {
     try {
@@ -198,7 +211,7 @@ export default function App() {
       if (pcRef.current) disconnectWebRTC();
       setActiveConversationId(id);
 
-      const res = await fetch(`${API_URL}/api/conversations/${id}/messages`);
+      const res = await auth.authFetch(`${API_URL}/api/conversations/${id}/messages`);
       const data = await res.json();
       if (data && data.length > 0) {
         setMessages(data);
@@ -214,7 +227,7 @@ export default function App() {
 
   const createNewConversation = async () => {
     try {
-      const res = await fetch(`${API_URL}/api/conversations`, {
+      const res = await auth.authFetch(`${API_URL}/api/conversations`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({})
@@ -237,7 +250,7 @@ export default function App() {
 
   const deleteConversation = async (id: string) => {
     try {
-      await fetch(`${API_URL}/api/conversations/${id}`, {
+      await auth.authFetch(`${API_URL}/api/conversations/${id}`, {
         method: 'DELETE'
       });
       setConversations(prev => prev.filter(c => c.id !== id));
@@ -262,7 +275,7 @@ export default function App() {
 
   const saveSettings = async () => {
     try {
-      await fetch(`${API_URL}/api/settings`, {
+      await auth.authFetch(`${API_URL}/api/settings`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -278,6 +291,8 @@ export default function App() {
           stt_provider: sttProvider,
           observer_screen_active: observerScreenActive,
           observer_camera_active: observerCameraActive,
+          observer_screen_interval: observerScreenInterval,
+          observer_camera_interval: observerCameraInterval,
           observer_capture_interval: observerCaptureInterval,
           observer_process_interval: observerProcessInterval
         })
@@ -285,7 +300,8 @@ export default function App() {
       updateObserverConfig({
         screenActive: observerScreenActive,
         cameraActive: observerCameraActive,
-        captureInterval: observerCaptureInterval
+        screenInterval: observerScreenInterval,
+        cameraInterval: observerCameraInterval,
       })
       setIsSettingsOpen(false)
 
@@ -311,21 +327,21 @@ export default function App() {
     try {
       const now = Date.now();
       if (tab === 'screen') {
-        const res = await fetch(`${API_URL}/api/observations?type=screen&limit=15&_=${now}`);
+        const res = await auth.authFetch(`${API_URL}/api/observations?type=screen&limit=15&_=${now}`);
         if (res.ok) {
           const data = await res.json();
           setScreenCaptures(data || []);
           if (forceRefresh) setLastRefresh(now);
         }
       } else if (tab === 'camera') {
-        const res = await fetch(`${API_URL}/api/observations?type=camera&limit=15&_=${now}`);
+        const res = await auth.authFetch(`${API_URL}/api/observations?type=camera&limit=15&_=${now}`);
         if (res.ok) {
           const data = await res.json();
           setCameraSnapshots(data || []);
           if (forceRefresh) setLastRefresh(now);
         }
       } else if (tab === 'insights') {
-        const res = await fetch(`${API_URL}/api/insights?limit=15&_=${now}`);
+        const res = await auth.authFetch(`${API_URL}/api/insights?limit=15&_=${now}`);
         if (res.ok) {
           const data = await res.json();
           setGeminiInsights(data || []);
@@ -358,6 +374,8 @@ export default function App() {
       observerScreenActive: setObserverScreenActive,
       observerCameraActive: setObserverCameraActive,
       observerCaptureInterval: setObserverCaptureInterval,
+      observerScreenInterval: setObserverScreenInterval,
+      observerCameraInterval: setObserverCameraInterval,
       observerProcessInterval: setObserverProcessInterval,
       settingsTab: setSettingsTab,
     }
@@ -367,7 +385,8 @@ export default function App() {
   const settingsData = {
     geminiKey, cartesiaKey, sonioxKey, ttsVoice, ttsVolume, ttsSpeed, ttsEmotion,
     sttLanguage, sttProvider, ttsLanguage,
-    observerScreenActive, observerCameraActive, observerCaptureInterval, observerProcessInterval,
+    observerScreenActive, observerCameraActive, observerScreenInterval,
+    observerCameraInterval, observerCaptureInterval, observerProcessInterval,
     settingsTab, debugMode,
   }
 
@@ -376,6 +395,18 @@ export default function App() {
     setMessages(prev => [...prev, { role: 'user', content: input }])
     sendChatMessage(input)
     setInput('')
+  }
+
+  if (auth.isLoading) {
+    return (
+      <div className="h-screen w-full bg-[#fafafa] flex items-center justify-center">
+        <div className="text-slate-500 text-lg">Loading...</div>
+      </div>
+    )
+  }
+
+  if (!auth.isAuthenticated) {
+    return <Login />
   }
 
   return (
@@ -434,14 +465,23 @@ export default function App() {
 
 
 
-        <div className="px-4 mt-auto">
+        <div className="px-4 mt-auto space-y-2">
           <button onClick={() => setIsSettingsOpen(true)} className="w-full flex items-center gap-2 px-2 py-2 text-xs border border-slate-200 rounded-md shadow-sm text-slate-600 hover:bg-slate-50 transition-colors">
-            <div className="w-5 h-5 rounded bg-slate-200 flex items-center justify-center text-slate-600 font-medium">U</div>
+            <div className="w-5 h-5 rounded bg-slate-200 flex items-center justify-center text-slate-600 font-medium text-[10px]">
+              {auth.user?.name?.charAt(0)?.toUpperCase() || 'U'}
+            </div>
             <div className="flex flex-col items-start flex-1 text-[10px]">
-              <span className="font-semibold leading-tight">Settings</span>
+              <span className="font-semibold leading-tight">{auth.user?.name || 'Settings'}</span>
               <span className="text-slate-400 leading-tight">API Config</span>
             </div>
             <Settings className="w-3.5 h-3.5 opacity-50" />
+          </button>
+          <button
+            onClick={auth.logout}
+            className="w-full flex items-center gap-2 px-2 py-2 text-xs border border-slate-200 rounded-md shadow-sm text-slate-500 hover:text-rose-600 hover:bg-rose-50 transition-colors"
+          >
+            <LogOut className="w-3 h-3" />
+            <span className="text-[10px]">Sign out</span>
           </button>
         </div>
       </div>
@@ -619,7 +659,7 @@ export default function App() {
                             ? 'bg-emerald-50 text-emerald-600 border border-emerald-100'
                             : 'bg-amber-50 text-amber-600 border border-amber-100'
                             }`}>
-                            {cap.processed ? 'Processed' : 'Pending Analysis'}
+                            {cap.processed ? 'Processed' : 'Pending'}
                           </span>
                         </div>
                         <p className="text-[10px] text-slate-500 mt-2 font-mono flex items-center gap-1.5 bg-slate-50 px-2 py-1 rounded">

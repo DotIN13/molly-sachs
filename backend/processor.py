@@ -5,29 +5,27 @@ import asyncio
 from google import genai
 from google.genai import types
 from loguru import logger
-from db import settings
 import database
 import config
 
 TIPS_QUEUE = []
 
 
-async def process_interval():
-    api_key = settings.settings.get("gemini_api_key", "").strip()
+async def process_pending_observations(user_id: str, prefs: dict[str, str]) -> dict | None:
+    api_key = prefs.get("gemini_api_key", "").strip()
     if not api_key:
         logger.warning("GEMINI_API_KEY not configured. Skipping background processing.")
         return None
 
     client = genai.Client(api_key=api_key)
 
-    rows = await database.app.get_unprocessed_observations()
+    rows = await database.app.get_unprocessed_observations(user_id)
     if not rows:
         return None
 
-    logger.info("Processing {} unprocessed observations with Gemini...", len(rows))
+    logger.info("Processing {} unprocessed observations for user {}...",
+                len(rows), user_id[:8])
 
-    # Derive entry JSON path: observations/date/artefacts/screen_xxx.jpg
-    #                        → observations/date/entries/screen_xxx.json
     def _artefact_to_entry(p: str) -> str:
         return p.replace("/artefacts/", "/entries/").rsplit(".", 1)[0] + ".json"
 
@@ -112,5 +110,5 @@ async def process_interval():
         }
 
     except Exception as e:
-        logger.error(f"Error during Gemini processing run: {e}")
+        logger.error("Error during Gemini processing run: {}", e)
         return None

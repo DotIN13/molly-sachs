@@ -1,11 +1,14 @@
 import { API_URL, isElectron } from '../config'
 
-let captureIntervalId: ReturnType<typeof setInterval> | null = null;
+let screenTimerId: ReturnType<typeof setInterval> | null = null
+let cameraTimerId: ReturnType<typeof setInterval> | null = null
+
 let currentConfig = {
   screenActive: false,
   cameraActive: false,
-  captureInterval: 60 // in seconds
-};
+  screenInterval: 60,
+  cameraInterval: 120,
+}
 
 /**
  * Capture frame from a MediaStream to JPEG base64
@@ -18,7 +21,6 @@ function captureStreamToBase64(stream: MediaStream): Promise<string> {
     video.muted = true;
     video.srcObject = stream;
     
-    // Set a safety timeout in case loadedmetadata doesn't fire
     const timeoutId = setTimeout(() => {
       video.pause();
       video.srcObject = null;
@@ -27,7 +29,6 @@ function captureStreamToBase64(stream: MediaStream): Promise<string> {
 
     video.onloadedmetadata = () => {
       video.play().then(() => {
-        // Wait a short delay to allow stream rendering to stabilize
         setTimeout(() => {
           clearTimeout(timeoutId);
           const canvas = document.createElement('canvas');
@@ -70,11 +71,16 @@ function captureStreamToBase64(stream: MediaStream): Promise<string> {
  */
 async function uploadCapture(type: 'screen' | 'camera', base64Data: string, windowTitles: string[] = []) {
   const timestamp = new Date().toISOString();
+  const token = (() => { try { return localStorage.getItem('molly_access_token') } catch { return null } })();
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json'
+  };
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
   const response = await fetch(`${API_URL}/api/observations`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json'
-    },
+    headers,
     body: JSON.stringify({
       type,
       image_base64: base64Data,
@@ -88,121 +94,121 @@ async function uploadCapture(type: 'screen' | 'camera', base64Data: string, wind
   return await response.json();
 }
 
-/**
- * Execute Screen and Camera capture sequences
- */
-export async function triggerObservationsCapture() {
-  if (!isElectron) return;
-  if (currentConfig.screenActive) {
-    try {
-      console.log("[Molly Observer] Calling getDesktopSources via electronAPI...");
-      const electronAPI = (window as any).electronAPI;
-      if (!electronAPI) {
-        console.error("[Molly Observer] electronAPI is not available — not running in Electron!");
-        return;
-      }
-      const sources = await electronAPI.getDesktopSources();
-      console.log("[Molly Observer] Sources returned:", sources?.length, sources?.map((s: any) => ({ id: s.id, name: s.name })));
-      if (sources && sources.length > 0) {
-        const screenSource = sources.find((s: any) => s.id.startsWith('screen:')) || sources[0];
-        const windowTitles = sources
-          .filter((s: any) => s.id?.startsWith('window:'))
-          .map((s: any) => s.name)
-          .filter(Boolean);
-        console.log("[Molly Observer] Using source:", screenSource.id, screenSource.name, "Windows:", windowTitles.length);
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: false,
-          video: {
-            mandatory: {
-              chromeMediaSource: 'desktop',
-              chromeMediaSourceId: screenSource.id,
-            }
-          } as any
-        });
-        console.log("[Molly Observer] Stream obtained:", stream.id, "tracks:", stream.getVideoTracks().length);
-        
-        try {
-          const base64 = await captureStreamToBase64(stream);
-          console.log("[Molly Observer] Captured base64 length:", base64.length);
-          const result = await uploadCapture('screen', base64, windowTitles);
-          console.log("[Molly Observer] Screen capture persisted successfully:", result);
-        } finally {
-          stream.getTracks().forEach(track => track.stop());
-        }
-      } else {
-        console.warn("[Molly Observer] No screen source available for capturing.");
-      }
-    } catch (err) {
-      console.error("[Molly Observer] Screen capture failed:", err);
+async function captureScreen() {
+  try {
+    console.log("[Molly Observer] Capturing screen...");
+    const electronAPI = (window as any).electronAPI;
+    if (!electronAPI) {
+      console.error("[Molly Observer] electronAPI is not available — not running in Electron!");
+      return;
     }
-  }
-
-  if (currentConfig.cameraActive) {
-    try {
-      console.log("[Molly Observer] Capture camera initiated...");
+    const sources = await electronAPI.getDesktopSources();
+    console.log("[Molly Observer] Sources returned:", sources?.length);
+    if (sources && sources.length > 0) {
+      const screenSource = sources.find((s: any) => s.id.startsWith('screen:')) || sources[0];
+      const windowTitles = sources
+        .filter((s: any) => s.id?.startsWith('window:'))
+        .map((s: any) => s.name)
+        .filter(Boolean);
+      console.log("[Molly Observer] Using source:", screenSource.id, screenSource.name);
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: false,
         video: {
-          width: { ideal: 1280 },
-          height: { ideal: 720 }
-        }
+          mandatory: {
+            chromeMediaSource: 'desktop',
+            chromeMediaSourceId: screenSource.id,
+          }
+        } as any
       });
-      
       try {
         const base64 = await captureStreamToBase64(stream);
-        await uploadCapture('camera', base64);
-        console.log("[Molly Observer] Camera snap persisted successfully.");
+        console.log("[Molly Observer] Captured base64 length:", base64.length);
+        const result = await uploadCapture('screen', base64, windowTitles);
+        console.log("[Molly Observer] Screen capture persisted:", result);
       } finally {
         stream.getTracks().forEach(track => track.stop());
       }
-    } catch (err) {
-      console.error("[Molly Observer] Camera capture failed:", err);
+    } else {
+      console.warn("[Molly Observer] No screen source available.");
     }
+  } catch (err) {
+    console.error("[Molly Observer] Screen capture failed:", err);
   }
 }
 
-/**
- * Start or re-schedule observations capture scheduler
- */
-export function startObservers(config: { screenActive: boolean, cameraActive: boolean, captureInterval: number }) {
+async function captureCamera() {
+  try {
+    console.log("[Molly Observer] Capturing camera...");
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: {
+        width: { ideal: 1280 },
+        height: { ideal: 720 }
+      }
+    });
+    try {
+      const base64 = await captureStreamToBase64(stream);
+      await uploadCapture('camera', base64);
+      console.log("[Molly Observer] Camera snap persisted.");
+    } finally {
+      stream.getTracks().forEach(track => track.stop());
+    }
+  } catch (err) {
+    console.error("[Molly Observer] Camera capture failed:", err);
+  }
+}
+
+export async function triggerObservationsCapture() {
+  if (!isElectron) return;
+  if (currentConfig.screenActive) await captureScreen();
+  if (currentConfig.cameraActive) await captureCamera();
+}
+
+function clearTimers() {
+  if (screenTimerId) { clearInterval(screenTimerId); screenTimerId = null; }
+  if (cameraTimerId) { clearInterval(cameraTimerId); cameraTimerId = null; }
+}
+
+export function startObservers(config: {
+  screenActive: boolean
+  cameraActive: boolean
+  screenInterval: number
+  cameraInterval: number
+}) {
   if (!isElectron) return;
   currentConfig = { ...config };
-  
-  if (captureIntervalId) {
-    clearInterval(captureIntervalId);
-    captureIntervalId = null;
-  }
-  
+  clearTimers();
+
   if (!config.screenActive && !config.cameraActive) {
     console.log("[Molly Observer] Both observers disabled. Scheduler inactive.");
     return;
   }
-  
-  console.log(`[Molly Observer] Scheduler started (Interval: ${config.captureInterval}s, Screen: ${config.screenActive}, Camera: ${config.cameraActive})`);
-  
-  // Perform an initial capture immediately
-  triggerObservationsCapture();
-  
-  captureIntervalId = setInterval(() => {
-    triggerObservationsCapture();
-  }, config.captureInterval * 1000);
+
+  console.log("[Molly Observer] Scheduler: screen=", config.screenActive,
+    `every ${config.screenInterval}s`, "camera=", config.cameraActive,
+    `every ${config.cameraInterval}s`);
+
+  if (config.screenActive) {
+    captureScreen();
+    screenTimerId = setInterval(captureScreen, config.screenInterval * 1000);
+  }
+  if (config.cameraActive) {
+    captureCamera();
+    cameraTimerId = setInterval(captureCamera, config.cameraInterval * 1000);
+  }
 }
 
-/**
- * Terminate scheduler completely
- */
 export function stopObservers() {
-  if (captureIntervalId) {
-    clearInterval(captureIntervalId);
-    captureIntervalId = null;
-  }
+  clearTimers();
   console.log("[Molly Observer] Scheduler stopped.");
 }
 
-/**
- * Update capture scheduler configuration dynamically
- */
-export function updateObserverConfig(config: { screenActive: boolean, cameraActive: boolean, captureInterval: number }) {
+export function updateObserverConfig(config: {
+  screenActive: boolean
+  cameraActive: boolean
+  screenInterval: number
+  cameraInterval: number
+}) {
   if (!isElectron) return;
   console.log("[Molly Observer] Configuration updated:", config);
   startObservers(config);

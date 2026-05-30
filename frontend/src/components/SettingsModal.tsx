@@ -15,6 +15,8 @@ export interface SettingsData {
   ttsLanguage: string
   observerScreenActive: boolean
   observerCameraActive: boolean
+  observerScreenInterval: number
+  observerCameraInterval: number
   observerCaptureInterval: number
   observerProcessInterval: number
   settingsTab: string
@@ -42,7 +44,7 @@ export default function SettingsModal({ isOpen, onClose, onSave, settings, onCha
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/10 backdrop-blur-sm animate-in fade-in" onClick={handleClose}>
       <div className="w-full max-w-2xl bg-white rounded-xl overflow-hidden shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-slate-100 animate-in zoom-in-95 flex flex-col h-[500px]" onClick={e => e.stopPropagation()}>
         <div className="flex flex-1 overflow-hidden">
-          <div className="w-48 bg-slate-50 border-r border-slate-100 p-3 flex flex-col gap-1 overflow-y-auto">
+          <div className="w-48 bg-slate-50 border-r border-slate-100 px-3 py-8 flex flex-col gap-1 overflow-y-auto">
             <button onClick={() => onChange('settingsTab', 'speech')} className={`text-left px-3 py-2 rounded-md text-xs font-medium transition-colors ${settings.settingsTab === 'speech' ? 'bg-white text-slate-900 shadow-sm border border-slate-200' : 'text-slate-600 hover:bg-slate-100'}`}>Speech</button>
             {isElectron && (
               <button onClick={() => onChange('settingsTab', 'observers')} className={`text-left px-3 py-2 rounded-md text-xs font-medium transition-colors ${settings.settingsTab === 'observers' ? 'bg-white text-slate-900 shadow-sm border border-slate-200' : 'text-slate-600 hover:bg-slate-100'}`}>Observers</button>
@@ -50,7 +52,7 @@ export default function SettingsModal({ isOpen, onClose, onSave, settings, onCha
             <button onClick={() => onChange('settingsTab', 'api')} className={`text-left px-3 py-2 rounded-md text-xs font-medium transition-colors ${settings.settingsTab === 'api' ? 'bg-white text-slate-900 shadow-sm border border-slate-200' : 'text-slate-600 hover:bg-slate-100'}`}>API Config</button>
           </div>
 
-          <div className="flex-1 p-6 overflow-y-auto">
+          <div className="flex-1 px-6 py-10 overflow-y-auto">
             {settings.settingsTab === 'api' && (
               <div className="flex flex-col gap-4">
                 <div className="flex flex-col gap-1.5">
@@ -163,17 +165,35 @@ export default function SettingsModal({ isOpen, onClose, onSave, settings, onCha
 
                 <div className="flex flex-col gap-1.5 pt-2">
                   <label className="text-xs font-semibold text-slate-700 flex justify-between">
-                    Capture Interval <span>{settings.observerCaptureInterval}s</span>
+                    Screen Capture Interval <span>{settings.observerScreenInterval}s</span>
                   </label>
                   <select
-                    value={settings.observerCaptureInterval}
-                    onChange={e => onChange('observerCaptureInterval', parseInt(e.target.value))}
+                    value={settings.observerScreenInterval}
+                    onChange={e => onChange('observerScreenInterval', parseInt(e.target.value))}
                     className="bg-[#f9f9f9] border border-slate-200 text-sm focus-visible:ring-slate-350 rounded-lg h-9.5 px-3 outline-none"
                   >
+                    <option value={15}>15 Seconds</option>
                     <option value={30}>30 Seconds</option>
                     <option value={60}>1 Minute (Default)</option>
                     <option value={120}>2 Minutes</option>
                     <option value={300}>5 Minutes</option>
+                  </select>
+                </div>
+
+                <div className="flex flex-col gap-1.5 pt-2">
+                  <label className="text-xs font-semibold text-slate-700 flex justify-between">
+                    Camera Capture Interval <span>{settings.observerCameraInterval}s</span>
+                  </label>
+                  <select
+                    value={settings.observerCameraInterval}
+                    onChange={e => onChange('observerCameraInterval', parseInt(e.target.value))}
+                    className="bg-[#f9f9f9] border border-slate-200 text-sm focus-visible:ring-slate-350 rounded-lg h-9.5 px-3 outline-none"
+                  >
+                    <option value={30}>30 Seconds</option>
+                    <option value={60}>1 Minute</option>
+                    <option value={120}>2 Minutes (Default)</option>
+                    <option value={300}>5 Minutes</option>
+                    <option value={600}>10 Minutes</option>
                   </select>
                 </div>
 
@@ -208,7 +228,11 @@ export default function SettingsModal({ isOpen, onClose, onSave, settings, onCha
                       <button
                         onClick={async () => {
                           try {
-                            await fetch(`${API_URL}/api/processor/trigger`, { method: 'POST' })
+                            const token = (() => { try { return localStorage.getItem('molly_access_token') } catch { return null } })()
+                            await fetch(`${API_URL}/api/processor/trigger`, {
+                              method: 'POST',
+                              headers: token ? { Authorization: `Bearer ${token}` } : {},
+                            })
                             fetchObservations('insights', true)
                           } catch (e) { console.error('Processor trigger failed:', e) }
                         }}

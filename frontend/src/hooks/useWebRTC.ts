@@ -230,7 +230,9 @@ export default function useWebRTC(opts: UseWebRTCOptions): UseWebRTCReturn {
         return
       }
 
-      const response = await fetch(`${API_URL}/api/webrtc/connect?conversation_id=${activeConversationId}`, {
+      const token = (() => { try { return localStorage.getItem('molly_access_token') } catch { return null } })()
+      const tokenParam = token ? `&token=${encodeURIComponent(token)}` : ''
+      const response = await fetch(`${API_URL}/api/webrtc/connect?conversation_id=${activeConversationId}${tokenParam}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

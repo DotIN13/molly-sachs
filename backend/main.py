@@ -5,17 +5,17 @@ import base64
 import json
 import time
 import uuid
+import secrets
 import datetime
+from datetime import timedelta, timezone
 from loguru import logger
 from cryptography.fernet import Fernet
 
-# FastAPI & Pydantic
-from fastapi import FastAPI, BackgroundTasks, HTTPException
+from fastapi import FastAPI, BackgroundTasks, HTTPException, Depends
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-# WebRTC request handler
 from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
 from pipecat.transports.smallwebrtc.request_handler import (
     SmallWebRTCRequest,
@@ -23,17 +23,17 @@ from pipecat.transports.smallwebrtc.request_handler import (
     SmallWebRTCPatchRequest
 )
 
-# Core Pipecat session setup
 from bot import start_pipecat_session
-from processor import process_interval
+from processor import process_pending_observations
 import database
 import config
-from db import settings
+from db.settings import Settings
+import auth
+import mailer
 
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 
-# Configure logging
 logger.remove(0)
 if config.is_debug():
     logger.add(sys.stderr, level="DEBUG")
@@ -46,7 +46,6 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Enable CORS for frontend access
 app.add_middleware(
     CORSMiddleware,
     allow_origins=config.cors_origins(),
@@ -55,19 +54,15 @@ app.add_middleware(
     allow_headers=["*"]
 )
 
-# Ensure observations directories exist and mount static route
 os.makedirs(config.OBSERVATIONS_DIR, exist_ok=True)
 app.mount("/static", StaticFiles(directory=config.DATA_DIR), name="static")
 
-# Shared global state injected into custom bot processors
-global_state = {
-    "voice_mode": False,
-    "speak_text": True
-}
+# Per-user voice/speaker state
+global_states: dict[str, dict] = {}
 
 webrtc_handler = SmallWebRTCRequestHandler(esp32_mode=False)
 
-# --- FastAPI Models ---
+# ── FastAPI Models ───────────────────────────
 
 class StateConfigReq(BaseModel):
     voice_mode: bool
@@ -86,13 +81,160 @@ class SettingsReq(BaseModel):
     tts_language: str | None = None
     observer_screen_active: bool | None = None
     observer_camera_active: bool | None = None
-    observer_capture_interval: int | None = None
+    observer_screen_interval: int | None = None
+    observer_camera_interval: int | None = None
+    observer_capture_interval: int | None = None  # deprecated — kept for compat
     observer_process_interval: int | None = None
 
-# --- REST Endpoints ---
+class RegisterReq(BaseModel):
+    email: str
+    password: str
+    name: str | None = None
+
+class VerifyReq(BaseModel):
+    email: str
+    code: str
+
+class LoginReq(BaseModel):
+    email: str
+    password: str
+
+class RefreshReq(BaseModel):
+    refresh_token: str
+
+class ResendReq(BaseModel):
+    email: str
+
+class ObservationUploadReq(BaseModel):
+    type: str
+    image_base64: str
+    timestamp: str | None = None
+    window_titles: list[str] | None = None
+
+class ConversationCreateReq(BaseModel):
+    id: str | None = None
+    title: str | None = None
+
+
+def _get_user_state(user_id: str) -> dict:
+    if user_id not in global_states:
+        global_states[user_id] = {"voice_mode": False, "speak_text": True}
+    return global_states[user_id]
+
+
+# ── Auth Endpoints ──────────────────────────
+
+@app.post("/api/auth/register", summary="Register a new user account")
+async def register(req: RegisterReq):
+    existing = await database.app.get_user_by_email(req.email)
+    if existing:
+        if existing.get("email_verified"):
+            raise HTTPException(status_code=409, detail="Email already registered")
+        # Unverified — remove stale account so user can re-register
+        await database.app.delete_user(existing["id"])
+
+    password_hash = auth.hash_password(req.password)
+    user = await database.app.create_user(req.email, password_hash, req.name)
+
+    code = secrets.token_hex(3)[:6]
+    expires = (datetime.datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat()
+    await database.app.set_verification_code(user["id"], code, expires)
+
+    await mailer.send_verification_email(req.email, code)
+
+    return {"status": "ok", "message": "Verification code sent to email",
+            "user_id": user["id"]}
+
+
+@app.post("/api/auth/verify", summary="Verify email with code and receive tokens")
+async def verify_email(req: VerifyReq):
+    user = await database.app.get_user_by_email(req.email)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if user.get("email_verified"):
+        raise HTTPException(status_code=400, detail="Email already verified")
+    if user.get("verification_code") != req.code:
+        raise HTTPException(status_code=400, detail="Invalid verification code")
+    expires = user.get("verification_expires", "")
+    if expires and datetime.datetime.fromisoformat(expires).replace(tzinfo=timezone.utc) < datetime.datetime.now(timezone.utc):
+        raise HTTPException(status_code=400, detail="Verification code expired")
+
+    await database.app.verify_user_email(user["id"])
+
+    access_token = auth.create_access_token(user["id"])
+    refresh_token = auth.create_refresh_token(user["id"])
+
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "user": {"id": user["id"], "name": user["name"], "email": user["email"]},
+    }
+
+
+@app.post("/api/auth/login", summary="Login with email and password")
+async def login(req: LoginReq):
+    user = await database.app.get_user_by_email(req.email)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    valid, updated_hash = auth.verify_and_update_password(
+        req.password, user.get("password_hash", "")
+    )
+    if not valid:
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    if not user.get("email_verified"):
+        raise HTTPException(status_code=403, detail="Email not verified. Check your inbox.")
+    if updated_hash:
+        await database.app.update_user_password(user["id"], updated_hash)
+
+    access_token = auth.create_access_token(user["id"])
+    refresh_token = auth.create_refresh_token(user["id"])
+
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "user": {"id": user["id"], "name": user["name"], "email": user["email"]},
+    }
+
+
+@app.post("/api/auth/refresh", summary="Refresh an expired access token")
+async def refresh_token(req: RefreshReq):
+    payload = auth.decode_token_safe(req.refresh_token, "refresh")
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
+    user = await database.app.get_user_by_id(payload["sub"])
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+    access_token = auth.create_access_token(user["id"])
+    return {"access_token": access_token}
+
+
+@app.post("/api/auth/resend-verification", summary="Resend verification code")
+async def resend_verification(req: ResendReq):
+    user = await database.app.get_user_by_email(req.email)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if user.get("email_verified"):
+        raise HTTPException(status_code=400, detail="Email already verified")
+
+    code = secrets.token_hex(3)[:6]
+    expires = (datetime.datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat()
+    await database.app.set_verification_code(user["id"], code, expires)
+    await mailer.send_verification_email(req.email, code)
+
+    return {"status": "ok", "message": "New verification code sent"}
+
+
+@app.get("/api/auth/me", summary="Get current user profile")
+async def get_me(current_user: dict = Depends(auth.get_current_user)):
+    return {"id": current_user["id"], "name": current_user["name"],
+            "email": current_user["email"],
+            "email_verified": bool(current_user.get("email_verified"))}
+
+# ── Settings Endpoints ──────────────────────
 
 @app.post("/api/settings", summary="Save user API keys and speech preferences")
-async def save_settings(req: SettingsReq):
+async def save_settings(req: SettingsReq,
+                        current_user: dict = Depends(auth.get_current_user)):
     data: dict = {
         "gemini_api_key": req.gemini_api_key,
         "cartesia_api_key": req.cartesia_api_key,
@@ -119,15 +261,20 @@ async def save_settings(req: SettingsReq):
         data["observer_camera_active"] = "true" if req.observer_camera_active else "false"
     if req.observer_capture_interval is not None:
         data["observer_capture_interval"] = str(req.observer_capture_interval)
+    if req.observer_screen_interval is not None:
+        data["observer_screen_interval"] = str(req.observer_screen_interval)
+    if req.observer_camera_interval is not None:
+        data["observer_camera_interval"] = str(req.observer_camera_interval)
     if req.observer_process_interval is not None:
         data["observer_process_interval"] = str(req.observer_process_interval)
 
-    await settings.settings.save("default", data)
+    await Settings(current_user["id"]).save(data)
     return {"status": "ok"}
 
+
 @app.get("/api/settings", summary="Retrieve active API keys and speech preferences")
-async def get_settings():
-    s = settings.settings
+async def get_settings(current_user: dict = Depends(auth.get_current_user)):
+    s = await Settings(current_user["id"]).load()
     return {
         "gemini_api_key": s.get("gemini_api_key", ""),
         "cartesia_api_key": s.get("cartesia_api_key", ""),
@@ -142,35 +289,39 @@ async def get_settings():
         "observer_screen_active": s.get("observer_screen_active", "false").lower() == "true",
         "observer_camera_active": s.get("observer_camera_active", "false").lower() == "true",
         "observer_capture_interval": int(s.get("observer_capture_interval", "60")),
+        "observer_screen_interval": int(s.get("observer_screen_interval", "60")),
+        "observer_camera_interval": int(s.get("observer_camera_interval", "120")),
         "observer_process_interval": int(s.get("observer_process_interval", "300")),
         "debug": s.get("debug", "false").lower() == "true",
     }
 
-@app.get("/api/health", summary="Health check endpoint for active frontend connectivity")
+# ── Health ──────────────────────────────────
+
+@app.get("/api/health", summary="Health check endpoint")
 async def health_check():
     return {"status": "healthy"}
 
+# ── State ───────────────────────────────────
+
 @app.post("/api/state", summary="Update voice mode and speaker state")
-async def update_state(req: StateConfigReq):
-    global_state["voice_mode"] = req.voice_mode
-    global_state["speak_text"] = req.speak_text
-    logger.info(f"Updated global state: {global_state}")
-    return {"status": "ok", "state": global_state}
+async def update_state(req: StateConfigReq,
+                       current_user: dict = Depends(auth.get_current_user)):
+    state = _get_user_state(current_user["id"])
+    state["voice_mode"] = req.voice_mode
+    state["speak_text"] = req.speak_text
+    logger.info("Updated state for user {}: {}", current_user["id"][:8], state)
+    return {"status": "ok", "state": state}
+
 
 @app.get("/api/state", summary="Get current voice mode and speaker state")
-async def get_state():
-    return global_state
+async def get_state(current_user: dict = Depends(auth.get_current_user)):
+    return _get_user_state(current_user["id"])
 
-# --- Observations & Insights Endpoints ---
-
-class ObservationUploadReq(BaseModel):
-    type: str                # 'screen' or 'camera'
-    image_base64: str        # JPEG base64
-    timestamp: str | None = None
-    window_titles: list[str] | None = None
+# ── Observations ────────────────────────────
 
 @app.post("/api/observations", summary="Receive observer base64 capture and save entry + artefact")
-async def upload_observation(req: ObservationUploadReq):
+async def upload_observation(req: ObservationUploadReq,
+                             current_user: dict = Depends(auth.get_current_user)):
     try:
         data_str = req.image_base64
         if "," in data_str:
@@ -178,7 +329,7 @@ async def upload_observation(req: ObservationUploadReq):
         image_bytes = base64.b64decode(data_str)
 
         timestamp_str = req.timestamp or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-        date_str = timestamp_str[:10]                             # YYYY-MM-DD
+        date_str = timestamp_str[:10]
         safe_ts = timestamp_str.replace(":", "-").replace("Z", "").replace("T", "_")
         stem = f"{req.type}_{safe_ts}_{uuid.uuid4().hex[:6]}"
 
@@ -187,13 +338,11 @@ async def upload_observation(req: ObservationUploadReq):
         os.makedirs(entries_dir, exist_ok=True)
         os.makedirs(artefacts_dir, exist_ok=True)
 
-        # Save image artefact
         artefact_filename = f"{stem}.jpg"
         artefact_path = os.path.join(artefacts_dir, artefact_filename)
         with open(artefact_path, "wb") as f:
             f.write(image_bytes)
 
-        # Build and save JSON entry
         windows = req.window_titles or []
         prompt_text = ""
         if req.type == "screen" and windows:
@@ -217,9 +366,10 @@ async def upload_observation(req: ObservationUploadReq):
         with open(entry_path, "w", encoding="utf-8") as f:
             json.dump(entry, f, ensure_ascii=False, indent=2)
 
-        # DB: store artefact relative path
         db_image_path = f"observations/{date_str}/artefacts/{artefact_filename}"
-        await database.app.save_observation(req.type, db_image_path, timestamp_str)
+        await database.app.save_observation(
+            req.type, db_image_path, timestamp_str, current_user["id"]
+        )
 
         return {
             "status": "ok",
@@ -231,28 +381,39 @@ async def upload_observation(req: ObservationUploadReq):
         logger.error(f"Failed to upload observation: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @app.get("/api/observations", summary="Retrieve past observations list")
-async def get_observations(type: str | None = None, limit: int = 15):
+async def get_observations(type: str | None = None, limit: int = 15,
+                           current_user: dict = Depends(auth.get_current_user)):
     try:
-        return await database.app.get_observations(obs_type=type, limit=limit)
+        return await database.app.get_observations(
+            current_user["id"], obs_type=type, limit=limit
+        )
     except Exception as e:
         logger.error(f"Failed to retrieve observations: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @app.get("/api/insights", summary="Retrieve past Gemini summaries and activity insights")
-async def get_insights(limit: int = 15):
+async def get_insights(limit: int = 15,
+                       current_user: dict = Depends(auth.get_current_user)):
     try:
-        return await database.app.get_insights(limit=limit)
+        return await database.app.get_insights(current_user["id"], limit=limit)
     except Exception as e:
         logger.error(f"Failed to retrieve insights: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @app.post("/api/processor/trigger", summary="Trigger Gemini processor to run immediately")
-async def trigger_processor():
+async def trigger_processor(
+    current_user: dict = Depends(auth.get_current_user)
+):
     try:
-        result = await process_interval()
+        prefs = await Settings(current_user["id"]).load()
+        result = await process_pending_observations(current_user["id"], prefs)
         if result:
             event_id = await database.app.save_event(
+                current_user["id"],
                 result["timestamp"],
                 result["summary"],
                 result["raw_transcripts"],
@@ -265,68 +426,109 @@ async def trigger_processor():
                     "timestamp": result["timestamp"],
                     "summary": result["summary"],
                     "vector": embedding,
+                    "user_id": current_user["id"],
                 }])
-            logger.info(f"Successfully saved event to database: {result['summary'][:100] + '...'}")
+            logger.info("Saved event: {}", result["summary"][:100] + "...")
             return {"status": "ok", "summary": result["summary"][:100] + "..."}
         return {"status": "ok", "summary": "no new observations to process"}
     except Exception as e:
         logger.error(f"Failed to trigger processor: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# --- Conversation Endpoints ---
-
-class ConversationCreateReq(BaseModel):
-    id: str | None = None
-    title: str | None = None
+# ── Conversations ───────────────────────────
 
 @app.post("/api/conversations", summary="Create a new conversation session")
-async def api_create_conversation(req: ConversationCreateReq):
+async def api_create_conversation(
+    req: ConversationCreateReq,
+    current_user: dict = Depends(auth.get_current_user)
+):
     conv_id = req.id or str(uuid.uuid4())
     title = req.title or database.default_conversation_title()
-    await database.app.create_conversation(conv_id, title)
+    await database.app.create_conversation(conv_id, title, current_user["id"])
     return {"id": conv_id, "title": title}
 
+
 @app.get("/api/conversations", summary="Retrieve all past conversations")
-async def api_get_conversations():
-    return await database.app.get_conversations()
+async def api_get_conversations(
+    current_user: dict = Depends(auth.get_current_user)
+):
+    return await database.app.get_conversations(current_user["id"])
 
-@app.get("/api/conversations/{conversation_id}/messages", summary="Retrieve messages in a past session")
-async def api_get_messages(conversation_id: str):
-    return await database.app.get_messages(conversation_id)
 
-@app.delete("/api/conversations/{conversation_id}", summary="Delete a past conversation session")
-async def api_delete_conversation(conversation_id: str):
-    await database.app.delete_conversation(conversation_id)
+@app.get("/api/conversations/{conversation_id}/messages",
+         summary="Retrieve messages in a past session")
+async def api_get_messages(
+    conversation_id: str,
+    current_user: dict = Depends(auth.get_current_user)
+):
+    if not await database.app.verify_conversation_owner(conversation_id, current_user["id"]):
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return await database.app.get_messages(conversation_id, current_user["id"])
+
+
+@app.delete("/api/conversations/{conversation_id}",
+            summary="Delete a past conversation session")
+async def api_delete_conversation(
+    conversation_id: str,
+    current_user: dict = Depends(auth.get_current_user)
+):
+    deleted = await database.app.delete_conversation(conversation_id, current_user["id"])
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Conversation not found")
     return {"status": "ok"}
 
-# --- WebRTC Endpoints ---
+# ── WebRTC ──────────────────────────────────
 
 @app.post("/api/webrtc/connect", summary="Handle WebRTC connection offer")
-async def webrtc_connect(request: SmallWebRTCRequest, background_tasks: BackgroundTasks, conversation_id: str | None = None):
+async def webrtc_connect(
+    request: SmallWebRTCRequest,
+    background_tasks: BackgroundTasks,
+    conversation_id: str | None = None,
+    token: str | None = None
+):
     try:
-        if not settings.settings.get("gemini_api_key") or not settings.settings.get("cartesia_api_key"):
-            raise HTTPException(status_code=400, detail="Missing API keys in server.")
+        if not token:
+            raise HTTPException(status_code=401, detail="Authentication token required")
+        payload = auth.decode_token_safe(token, "access")
+        if not payload:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+        user = await database.app.get_user_by_id(payload["sub"])
+        if not user:
+            raise HTTPException(status_code=401, detail="User not found")
+
+        prefs = await Settings(user["id"]).load()
+        if not prefs.get("gemini_api_key") or not prefs.get("cartesia_api_key"):
+            raise HTTPException(status_code=400, detail="Missing API keys. Configure in Settings.")
 
         conv_id = conversation_id or str(uuid.uuid4())
-        # Ensure conversation entry exists
-        await database.app.create_conversation(conv_id, database.default_conversation_title())
+        await database.app.create_conversation(conv_id, database.default_conversation_title(), user["id"])
+
+        user_state = _get_user_state(user["id"])
 
         async def webrtc_connection_callback(connection: SmallWebRTCConnection):
-            background_tasks.add_task(start_pipecat_session, connection, global_state, conv_id)
+            background_tasks.add_task(
+                start_pipecat_session, connection, user_state, conv_id,
+                user["id"], prefs
+            )
 
         answer = await webrtc_handler.handle_web_request(
             request=request,
             webrtc_connection_callback=webrtc_connection_callback
         )
         return answer
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"WebRTC connection error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.patch("/api/webrtc/connect", summary="Receive trickle ICE candidates from client")
 async def webrtc_patch(request: SmallWebRTCPatchRequest):
     await webrtc_handler.handle_patch_request(request)
     return {"status": "success"}
+
+# ── Lifecycle ──────────────────────────────
 
 @app.on_event("startup")
 async def startup_event():
@@ -341,6 +543,7 @@ async def startup_event():
     asyncio.create_task(heartbeat())
 
     await database.init()
+    auth._get_secret()  # ensure JWT_SECRET exists
 
     if not config.fernet_key():
         key = Fernet.generate_key().decode()
@@ -350,13 +553,14 @@ async def startup_event():
             f.write(f"\nFERNET_KEY={key}\n")
         logger.info("Generated new FERNET_KEY and appended to .env")
 
-    await settings.settings.load()
     logger.info("Server startup complete")
+
 
 @app.on_event("shutdown")
 async def shutdown_event():
     logger.info("Server shutting down, closing WebRTC handler")
     await webrtc_handler.close()
+
 
 if __name__ == "__main__":
     import uvicorn
