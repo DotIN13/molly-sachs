@@ -19,7 +19,16 @@ else:
 SQLITE_PATH = os.path.join(DATA_DIR, "app.db")
 CHROMA_PATH = os.path.join(DATA_DIR, "chroma.db")
 OBSERVATIONS_DIR = os.path.join(DATA_DIR, "observations")
-OBSERVERS_DIR = os.path.join(DATA_DIR, "observers")
+
+
+def observation_entries_dir(date_str: str) -> str:
+    """`observations/YYYY-MM-DD/entries/`"""
+    return os.path.join(OBSERVATIONS_DIR, date_str, "entries")
+
+
+def observation_artefacts_dir(date_str: str) -> str:
+    """`observations/YYYY-MM-DD/artefacts/`"""
+    return os.path.join(OBSERVATIONS_DIR, date_str, "artefacts")
 
 os.makedirs(DATA_DIR, exist_ok=True)
 

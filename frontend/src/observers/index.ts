@@ -31,7 +31,7 @@ function captureStreamToBase64(stream: MediaStream): Promise<string> {
         setTimeout(() => {
           clearTimeout(timeoutId);
           const canvas = document.createElement('canvas');
-          const MAX_DIM = 1280;
+          const MAX_DIM = 1920;
           let w = video.videoWidth || 1280;
           let h = video.videoHeight || 720;
           if (w > MAX_DIM || h > MAX_DIM) {
@@ -44,7 +44,7 @@ function captureStreamToBase64(stream: MediaStream): Promise<string> {
           const ctx = canvas.getContext('2d');
           if (ctx) {
             ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-            const dataUrl = canvas.toDataURL('image/jpeg', 0.65);
+            const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
             resolve(dataUrl);
           } else {
             reject(new Error("Failed to create canvas 2D context."));
@@ -68,7 +68,7 @@ function captureStreamToBase64(stream: MediaStream): Promise<string> {
 /**
  * Upload the JPEG base64 payload to the FastAPI observations API
  */
-async function uploadCapture(type: 'screen' | 'camera', base64Data: string) {
+async function uploadCapture(type: 'screen' | 'camera', base64Data: string, windowTitles: string[] = []) {
   const timestamp = new Date().toISOString();
   const response = await fetch(`${API_URL}/api/observations`, {
     method: 'POST',
@@ -78,7 +78,8 @@ async function uploadCapture(type: 'screen' | 'camera', base64Data: string) {
     body: JSON.stringify({
       type,
       image_base64: base64Data,
-      timestamp
+      timestamp,
+      window_titles: windowTitles
     })
   });
   if (!response.ok) {
@@ -104,7 +105,11 @@ export async function triggerObservationsCapture() {
       console.log("[Molly Observer] Sources returned:", sources?.length, sources?.map((s: any) => ({ id: s.id, name: s.name })));
       if (sources && sources.length > 0) {
         const screenSource = sources.find((s: any) => s.id.startsWith('screen:')) || sources[0];
-        console.log("[Molly Observer] Using source:", screenSource.id, screenSource.name);
+        const windowTitles = sources
+          .filter((s: any) => s.id?.startsWith('window:'))
+          .map((s: any) => s.name)
+          .filter(Boolean);
+        console.log("[Molly Observer] Using source:", screenSource.id, screenSource.name, "Windows:", windowTitles.length);
         const stream = await navigator.mediaDevices.getUserMedia({
           audio: false,
           video: {
@@ -119,7 +124,7 @@ export async function triggerObservationsCapture() {
         try {
           const base64 = await captureStreamToBase64(stream);
           console.log("[Molly Observer] Captured base64 length:", base64.length);
-          const result = await uploadCapture('screen', base64);
+          const result = await uploadCapture('screen', base64, windowTitles);
           console.log("[Molly Observer] Screen capture persisted successfully:", result);
         } finally {
           stream.getTracks().forEach(track => track.stop());

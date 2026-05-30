@@ -206,6 +206,18 @@ class AppDB:
             await db.commit()
             return cursor.lastrowid
 
+    async def get_unprocessed_observations(self) -> List[dict]:
+        """Return all observations where processed = 0 (for the processor)."""
+        async with aiosqlite.connect(self._path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT id, type, image_path, timestamp "
+                "FROM observations WHERE processed = 0 "
+                "ORDER BY id ASC",
+            )
+            rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
+
     async def get_observations(self, obs_type: Optional[str] = None,
                                limit: int = 15) -> List[dict]:
         async with aiosqlite.connect(self._path) as db:
@@ -225,17 +237,16 @@ class AppDB:
             rows = await cursor.fetchall()
             return [dict(r) for r in rows]
 
-    async def mark_observations_processed(self, filenames: list) -> None:
-        """Mark observations as processed by filename match."""
-        if not filenames:
+    async def mark_observations_processed(self, image_paths: list) -> None:
+        """Mark observations as processed by full relative image_path."""
+        if not image_paths:
             return
         async with aiosqlite.connect(self._path) as db:
-            placeholders = ",".join(["?" for _ in filenames])
-            paths = [f"observations/{f}" for f in filenames]
+            placeholders = ",".join(["?" for _ in image_paths])
             await db.execute(
                 f"UPDATE observations SET processed = 1 "
                 f"WHERE image_path IN ({placeholders})",
-                paths,
+                image_paths,
             )
             await db.commit()
 

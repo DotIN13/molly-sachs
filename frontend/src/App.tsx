@@ -557,7 +557,7 @@ export default function App() {
                             ? 'bg-emerald-50 text-emerald-600 border border-emerald-100'
                             : 'bg-amber-50 text-amber-600 border border-amber-100'
                             }`}>
-                            {cap.processed ? 'Processed' : 'Pending Analysis'}
+                            {cap.processed ? 'Processed' : 'Pending'}
                           </span>
                         </div>
                         <p className="text-[10px] text-slate-500 mt-2 font-mono flex items-center gap-1.5 bg-slate-50 px-2 py-1 rounded">

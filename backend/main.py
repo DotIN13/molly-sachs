@@ -2,6 +2,7 @@ import os
 import sys
 import asyncio
 import base64
+import json
 import time
 import uuid
 import datetime
@@ -163,39 +164,69 @@ async def get_state():
 # --- Observations & Insights Endpoints ---
 
 class ObservationUploadReq(BaseModel):
-    type: str          # 'screen' or 'camera'
-    image_base64: str  # JPEG base64
+    type: str                # 'screen' or 'camera'
+    image_base64: str        # JPEG base64
     timestamp: str | None = None
+    window_titles: list[str] | None = None
 
-@app.post("/api/observations", summary="Receive observer base64 capture and save files")
+@app.post("/api/observations", summary="Receive observer base64 capture and save entry + artefact")
 async def upload_observation(req: ObservationUploadReq):
     try:
         data_str = req.image_base64
         if "," in data_str:
             data_str = data_str.split(",")[1]
-        
         image_bytes = base64.b64decode(data_str)
-        
+
         timestamp_str = req.timestamp or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        date_str = timestamp_str[:10]                             # YYYY-MM-DD
         safe_ts = timestamp_str.replace(":", "-").replace("Z", "").replace("T", "_")
-        filename = f"{req.type}_{safe_ts}_{uuid.uuid4().hex[:6]}.jpg"
-        
-        # Save 1: Permanent History
-        os.makedirs(config.OBSERVATIONS_DIR, exist_ok=True)
-        history_path = os.path.join(config.OBSERVATIONS_DIR, filename)
-        with open(history_path, "wb") as f:
+        stem = f"{req.type}_{safe_ts}_{uuid.uuid4().hex[:6]}"
+
+        entries_dir = config.observation_entries_dir(date_str)
+        artefacts_dir = config.observation_artefacts_dir(date_str)
+        os.makedirs(entries_dir, exist_ok=True)
+        os.makedirs(artefacts_dir, exist_ok=True)
+
+        # Save image artefact
+        artefact_filename = f"{stem}.jpg"
+        artefact_path = os.path.join(artefacts_dir, artefact_filename)
+        with open(artefact_path, "wb") as f:
             f.write(image_bytes)
-            
-        # Save 2: Monitored Directory for Gemini Processor
-        os.makedirs(config.OBSERVERS_DIR, exist_ok=True)
-        monitored_path = os.path.join(config.OBSERVERS_DIR, filename)
-        with open(monitored_path, "wb") as f:
-            f.write(image_bytes)
-            
-        db_image_path = f"observations/{filename}"
+
+        # Build and save JSON entry
+        windows = req.window_titles or []
+        prompt_text = ""
+        if req.type == "screen" and windows:
+            win_list = "\n  ".join(windows)
+            prompt_text = f"[Screenshot {date_str}] Open windows:\n  {win_list}"
+        elif req.type == "screen":
+            prompt_text = f"[Screenshot {date_str}]"
+        else:
+            prompt_text = f"[Camera {date_str}]"
+
+        entry = {
+            "type": req.type,
+            "observer": req.type,
+            "timestamp": timestamp_str,
+            "windows": windows,
+            "prompt_text": prompt_text,
+            "artefact_path": f"../artefacts/{artefact_filename}",
+        }
+        entry_filename = f"{stem}.json"
+        entry_path = os.path.join(entries_dir, entry_filename)
+        with open(entry_path, "w", encoding="utf-8") as f:
+            json.dump(entry, f, ensure_ascii=False, indent=2)
+
+        # DB: store artefact relative path
+        db_image_path = f"observations/{date_str}/artefacts/{artefact_filename}"
         await database.app.save_observation(req.type, db_image_path, timestamp_str)
-        
-        return {"status": "ok", "filename": filename, "db_path": db_image_path}
+
+        return {
+            "status": "ok",
+            "filename": artefact_filename,
+            "db_path": db_image_path,
+            "entry_path": f"observations/{date_str}/entries/{entry_filename}",
+        }
     except Exception as e:
         logger.error(f"Failed to upload observation: {e}")
         raise HTTPException(status_code=500, detail=str(e))
