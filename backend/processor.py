@@ -4,17 +4,16 @@ import asyncio
 from google import genai
 from google.genai import types
 from loguru import logger
-from dotenv import load_dotenv
+from db import settings
+import database
+import config
 
-load_dotenv()
-
-DATA_DIR = os.path.join("..", "data", "observers")
-os.makedirs(DATA_DIR, exist_ok=True)
+os.makedirs(config.OBSERVERS_DIR, exist_ok=True)
 
 TIPS_QUEUE = []
 
 async def process_interval():
-    api_key = os.environ.get("GEMINI_API_KEY", "").strip()
+    api_key = settings.settings.get("gemini_api_key", "").strip()
     if not api_key:
         logger.warning("GEMINI_API_KEY not configured. Skipping background processing.")
         return None
@@ -22,8 +21,8 @@ async def process_interval():
     client = genai.Client(api_key=api_key)
 
     file_paths = []
-    for f in os.listdir(DATA_DIR):
-        fp = os.path.join(DATA_DIR, f)
+    for f in os.listdir(config.OBSERVERS_DIR):
+        fp = os.path.join(config.OBSERVERS_DIR, f)
         if f.endswith(".png") or f.endswith(".jpg") or f.endswith(".jpeg"):
             file_paths.append(fp)
 
@@ -93,6 +92,11 @@ async def process_interval():
 
         timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         raw_transcripts = str([os.path.basename(f) for f in file_paths])
+
+        # Mark processed in DB before deleting files
+        await database.app.mark_observations_processed(
+            [os.path.basename(f) for f in file_paths]
+        )
 
         for f in file_paths:
             try:

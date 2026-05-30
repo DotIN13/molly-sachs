@@ -48,6 +48,7 @@ from pipecat.frames.frames import (
 # Gemini SDK
 from google import genai
 import database
+from db import settings
 
 SYSTEM_PROMPT = (
     "你是Molly，和用户是好朋友，用微信聊天的语气回复。"
@@ -65,7 +66,7 @@ def _build_messages(past_messages: list) -> list:
     return result
 
 async def _embed_query(query: str) -> list:
-    api_key = os.environ.get("GEMINI_API_KEY", "").strip()
+    api_key = settings.settings.get("gemini_api_key", "").strip()
     client = genai.Client(api_key=api_key) if api_key else genai.Client()
     embed_result = await asyncio.wait_for(
         client.aio.models.embed_content(
@@ -206,6 +207,7 @@ class AssistantBroadcaster(FrameProcessor):
 
 async def start_pipecat_session(connection: SmallWebRTCConnection, global_state: dict, conversation_id: str):
     """Initializes and starts a single WebRTC Pipecat pipeline session."""
+    s = settings.settings
     conv = {"id": conversation_id}  # mutable ref for session reuse
     try:
         transport = SmallWebRTCTransport(
@@ -218,16 +220,16 @@ async def start_pipecat_session(connection: SmallWebRTCConnection, global_state:
         )
         
         llm = GoogleLLMService(
-            api_key=os.environ.get("GEMINI_API_KEY"),
+            api_key=s.get("gemini_api_key"),
             settings=GoogleLLMService.Settings(model="gemini-3.1-flash-lite")
         )
         llm.register_direct_function(search_memory)
         
-        stt_provider = os.environ.get("STT_PROVIDER", "soniox")
-        stt_language = os.environ.get("STT_LANGUAGE", "zh")
+        stt_provider = s.get("stt_provider", "soniox")
+        stt_language = s.get("stt_language", "zh")
         if stt_provider == "cartesia":
             stt = CartesiaSTTService(
-                api_key=os.environ.get("CARTESIA_API_KEY"),
+                api_key=s.get("cartesia_api_key"),
                 settings=CartesiaSTTService.Settings(
                     model="ink-whisper",
                     language=stt_language,
@@ -235,18 +237,18 @@ async def start_pipecat_session(connection: SmallWebRTCConnection, global_state:
             )
         else:
             stt = SonioxSTTService(
-                api_key=os.environ.get("SONIOX_API_KEY"),
+                api_key=s.get("soniox_api_key"),
                 settings=SonioxSTTService.Settings(
                     language=stt_language,
                 ),
             )
         
-        tts_provider = os.environ.get("TTS_PROVIDER", "cartesia")
+        tts_provider = s.get("tts_provider", "cartesia")
         if tts_provider == "cartesia":
-            tts_voice = os.environ.get("CARTESIA_VOICE", "79a125e8-cd45-4c13-8a67-188112f4dd22")
-            tts_volume = float(os.environ.get("CARTESIA_VOLUME", "1.0"))
-            tts_speed = float(os.environ.get("CARTESIA_SPEED", "1.0"))
-            tts_emotion = os.environ.get("CARTESIA_EMOTION")
+            tts_voice = s.get("tts_voice", "79a125e8-cd45-4c13-8a67-188112f4dd22")
+            tts_volume = float(s.get("tts_volume", "1.0"))
+            tts_speed = float(s.get("tts_speed", "1.0"))
+            tts_emotion = s.get("tts_emotion")
             if not tts_emotion or tts_emotion == "neutral":
                 tts_emotion = None
 
@@ -256,9 +258,9 @@ async def start_pipecat_session(connection: SmallWebRTCConnection, global_state:
                 emotion=tts_emotion
             )
 
-            tts_language = os.environ.get("CARTESIA_TTS_LANGUAGE", "en")
+            tts_language = s.get("tts_language", "en")
             tts = CartesiaTTSService(
-                api_key=os.environ.get("CARTESIA_API_KEY"),
+                api_key=s.get("cartesia_api_key"),
                 settings=CartesiaTTSService.Settings(
                     model="sonic-3.5",
                     voice=tts_voice,

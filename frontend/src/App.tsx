@@ -1,170 +1,11 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Settings, PenSquare, Search, FileText, Clock, Bird, Mic, Volume2, VolumeX, RefreshCw } from 'lucide-react'
-import { updateObserverConfig, triggerObservationsCapture } from './observers'
+import { updateObserverConfig } from './observers'
 import { API_URL, isElectron } from './config'
-
-function useAudioVisualizer(active: boolean, barCount = 9): number[] {
-  const IDLE_BASE = 0.15
-
-  const [bars, setBars] = useState<number[]>(Array(barCount).fill(IDLE_BASE))
-
-  const audioCtxRef = useRef<AudioContext | null>(null)
-  const analyserRef = useRef<AnalyserNode | null>(null)
-  const streamRef = useRef<MediaStream | null>(null)
-  const frameRef = useRef<number>(0)
-
-  const timeDataRef = useRef<Uint8Array | null>(null)
-  const displayRef = useRef<number[]>(Array(barCount).fill(IDLE_BASE))
-  const targetRef = useRef<number[]>(Array(barCount).fill(IDLE_BASE))
-  const phaseRef = useRef(0)
-
-  useEffect(() => {
-    if (!active) {
-      cancelAnimationFrame(frameRef.current)
-      setBars(Array(barCount).fill(IDLE_BASE))
-      displayRef.current = Array(barCount).fill(IDLE_BASE)
-      targetRef.current = Array(barCount).fill(IDLE_BASE)
-      phaseRef.current = 0
-      return
-    }
-
-    let running = true
-
-    const NOISE_GATE = 0.12
-    const ACTIVE_PHASE_SPEED = 0.075
-    const RELEASE_EASING = 0.08
-    const ATTACK_EASING = 0.32
-
-    const setup = async () => {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true
-          }
-        })
-
-        if (!running) {
-          stream.getTracks().forEach(track => track.stop())
-          return
-        }
-
-        streamRef.current = stream
-
-        const AudioContextClass =
-          window.AudioContext || (window as any).webkitAudioContext
-
-        const ctx = new AudioContextClass()
-        audioCtxRef.current = ctx
-
-        const analyser = ctx.createAnalyser()
-        analyser.fftSize = 512
-        analyser.smoothingTimeConstant = 0.82
-        analyserRef.current = analyser
-
-        const source = ctx.createMediaStreamSource(stream)
-        source.connect(analyser)
-
-        timeDataRef.current = new Uint8Array(analyser.fftSize)
-
-        const tick = () => {
-          if (!running || !analyser || !timeDataRef.current) return
-
-          analyser.getByteTimeDomainData(timeDataRef.current)
-
-          let sum = 0
-          for (let i = 0; i < timeDataRef.current.length; i++) {
-            const centered = (timeDataRef.current[i] - 128) / 128
-            sum += centered * centered
-          }
-
-          const rms = Math.sqrt(sum / timeDataRef.current.length)
-
-          const rawEnergy = Math.min(1, Math.pow(rms * 7.5, 0.72))
-
-          const energy =
-            rawEnergy < NOISE_GATE
-              ? 0
-              : Math.min(1, (rawEnergy - NOISE_GATE) / (1 - NOISE_GATE))
-
-          const isIdle = energy <= 0.001
-
-          if (isIdle) {
-            for (let i = 0; i < barCount; i++) {
-              targetRef.current[i] = IDLE_BASE
-            }
-          } else {
-            phaseRef.current += ACTIVE_PHASE_SPEED * energy
-
-            const center = (barCount - 1) / 2
-
-            for (let i = 0; i < barCount; i++) {
-              const distanceFromCenter = Math.abs(i - center) / center
-              const centerWeight = 1 - distanceFromCenter * 0.58
-
-              const wave =
-                0.5 +
-                0.5 *
-                Math.sin(
-                  phaseRef.current +
-                  i * 0.72 +
-                  Math.sin(phaseRef.current * 0.6) * 0.35
-                )
-
-              const voiceMotion = energy * centerWeight * (0.52 + wave * 0.48)
-
-              targetRef.current[i] = Math.max(
-                IDLE_BASE,
-                Math.min(1, IDLE_BASE + voiceMotion)
-              )
-            }
-          }
-
-          const next = displayRef.current.map((current, i) => {
-            const target = targetRef.current[i]
-            const velocity = target - current
-            const easing = velocity > 0 ? ATTACK_EASING : RELEASE_EASING
-
-            return current + velocity * easing
-          })
-
-          displayRef.current = next
-          setBars(next)
-
-          frameRef.current = requestAnimationFrame(tick)
-        }
-
-        frameRef.current = requestAnimationFrame(tick)
-      } catch (e) {
-        console.warn('Audio visualizer: mic access denied', e)
-      }
-    }
-
-    setup()
-
-    return () => {
-      running = false
-      cancelAnimationFrame(frameRef.current)
-
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach(track => track.stop())
-        streamRef.current = null
-      }
-
-      if (audioCtxRef.current) {
-        audioCtxRef.current.close()
-        audioCtxRef.current = null
-      }
-
-      analyserRef.current = null
-    }
-  }, [active, barCount])
-
-  return bars
-}
+import useAudioVisualizer from './hooks/useAudioVisualizer'
+import useWebRTC from './hooks/useWebRTC'
+import SettingsModal from './components/SettingsModal'
 
 export default function App() {
   const [messages, setMessages] = useState<{ role: string, content: string }[]>([
@@ -180,8 +21,6 @@ export default function App() {
   const [geminiKey, setGeminiKey] = useState('')
   const [cartesiaKey, setCartesiaKey] = useState('')
   const [sonioxKey, setSonioxKey] = useState('')
-  const [inputDevice, setInputDevice] = useState<number | null>(null)
-  const [outputDevice, setOutputDevice] = useState<number | null>(null)
 
   const [ttsVoice, setTtsVoice] = useState('79a125e8-cd45-4c13-8a67-188112f4dd22')
   const [ttsVolume, setTtsVolume] = useState(1.0)
@@ -211,17 +50,15 @@ export default function App() {
   const audioBars = useAudioVisualizer(voiceMode, 5)
 
   const scrollRef = useRef<HTMLDivElement>(null)
-  const pcRef = useRef<RTCPeerConnection | null>(null)
-  const dcRef = useRef<RTCDataChannel | null>(null)
-  const localStreamRef = useRef<MediaStream | null>(null)
-  const audioRef = useRef<HTMLAudioElement | null>(null)
-  const pingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const isConnectingRef = useRef(false)
-  const isConnectedRef = useRef(false)
-  const connectionIdRef = useRef(0)
-  const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const refreshConversationsRef = useRef<() => void>(() => { })
-  const skipDisconnectRef = useRef(false)
+  const appliedSettingsRef = useRef<Record<string, any>>({})
+
+  const { dcRef, pcRef, disconnectWebRTC, connectWebRTC, sendChatMessage } = useWebRTC({
+    backendStatus,
+    activeConversationId,
+    setMessages,
+    refreshConversationsRef,
+  })
 
   useEffect(() => {
     let active = true;
@@ -258,8 +95,6 @@ export default function App() {
         setGeminiKey(data.gemini_api_key || '')
         setCartesiaKey(data.cartesia_api_key || '')
         setSonioxKey(data.soniox_api_key || '')
-        setInputDevice(data.input_device !== null ? data.input_device : null)
-        setOutputDevice(data.output_device !== null ? data.output_device : null)
         setTtsVoice(data.tts_voice || '79a125e8-cd45-4c13-8a67-188112f4dd22')
         setTtsVolume(data.tts_volume ?? 1.0)
         setTtsSpeed(data.tts_speed ?? 1.0)
@@ -267,6 +102,19 @@ export default function App() {
         setSttLanguage(data.stt_language || 'en')
         setSttProvider(data.stt_provider || 'soniox')
         setTtsLanguage(data.tts_language || 'en')
+
+        appliedSettingsRef.current = {
+          geminiKey: data.gemini_api_key || '',
+          cartesiaKey: data.cartesia_api_key || '',
+          sonioxKey: data.soniox_api_key || '',
+          ttsVoice: data.tts_voice || '79a125e8-cd45-4c13-8a67-188112f4dd22',
+          ttsVolume: data.tts_volume ?? 1.0,
+          ttsSpeed: data.tts_speed ?? 1.0,
+          ttsEmotion: data.tts_emotion || 'neutral',
+          ttsLanguage: data.tts_language || 'en',
+          sttProvider: data.stt_provider || 'soniox',
+          sttLanguage: data.stt_language || 'en',
+        }
 
         // Load Observers settings
         const scrActive = data.observer_screen_active ?? false;
@@ -315,255 +163,6 @@ export default function App() {
     }).catch(console.error)
   }, [voiceMode, speakText, backendStatus])
 
-  const handleDataChannelMessage = useCallback((event: MessageEvent) => {
-    try {
-      const data = JSON.parse(event.data);
-      if (data.type === 'start') {
-        setMessages(prev => [...prev, { role: 'assistant', content: '' }]);
-      } else if (data.type === 'chunk') {
-        setMessages(prev => {
-          const newMsgs = [...prev];
-          const lastIdx = newMsgs.length - 1;
-          if (lastIdx >= 0 && newMsgs[lastIdx].role === 'assistant') {
-            newMsgs[lastIdx] = {
-              ...newMsgs[lastIdx],
-              content: newMsgs[lastIdx].content + data.text
-            };
-          } else {
-            newMsgs.push({ role: 'assistant', content: data.text });
-          }
-          return newMsgs;
-        });
-      } else if (data.type === 'transcript') {
-        setMessages(prev => [...prev, { role: 'user', content: data.text }]);
-        refreshConversationsRef.current();
-      } else if (data.type === 'end') {
-        // response complete
-      } else if (data.type === 'messages') {
-        if (data.messages && data.messages.length > 0) {
-          setMessages(data.messages);
-        } else {
-          setMessages([{ role: 'assistant', content: 'I love using this AI companion. For my meetings and beyond.' }]);
-        }
-      } else if (data.type === 'audio_level') {
-        // locally captured via AudioContext analyser
-      }
-    } catch (e) {
-      if (typeof event.data === 'string' && event.data === 'ping') {
-        if (dcRef.current && dcRef.current.readyState === 'open') {
-          dcRef.current.send('pong');
-        }
-      }
-    }
-  }, []);
-
-  const disconnectWebRTC = useCallback(() => {
-    isConnectingRef.current = false;
-    isConnectedRef.current = false;
-    connectionIdRef.current += 1;
-    if (reconnectTimeoutRef.current) {
-      clearTimeout(reconnectTimeoutRef.current);
-      reconnectTimeoutRef.current = null;
-    }
-    if (pingIntervalRef.current) {
-      clearInterval(pingIntervalRef.current);
-      pingIntervalRef.current = null;
-    }
-    if (dcRef.current) {
-      dcRef.current.close();
-      dcRef.current = null;
-    }
-    if (pcRef.current) {
-      pcRef.current.close();
-      pcRef.current = null;
-    }
-    if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach(t => t.stop());
-      localStreamRef.current = null;
-    }
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current.srcObject = null;
-      audioRef.current = null;
-    }
-  }, []);
-
-  const connectWebRTC = useCallback(async () => {
-    if (isConnectingRef.current || isConnectedRef.current) return;
-    if (backendStatus !== 'connected') return;
-    isConnectingRef.current = true;
-
-    connectionIdRef.current += 1;
-    const curId = connectionIdRef.current;
-
-    let stream: MediaStream | null = null;
-    let pc: RTCPeerConnection | null = null;
-
-    try {
-      // Get user microphone with echo cancellation
-      const activeStream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true
-        }
-      });
-      stream = activeStream;
-
-      if (curId !== connectionIdRef.current) {
-        activeStream.getTracks().forEach(t => t.stop());
-        return;
-      }
-      localStreamRef.current = activeStream;
-
-      const activePC = new RTCPeerConnection({
-        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-      });
-      pc = activePC;
-      pcRef.current = activePC;
-
-      // Add mic track
-      activeStream.getAudioTracks().forEach(track => activePC.addTrack(track, activeStream));
-
-      // Create data channel for app messages (text chat, events)
-      const dc = activePC.createDataChannel('chat', { ordered: true });
-      dcRef.current = dc;
-      dc.onmessage = handleDataChannelMessage;
-      dc.onopen = () => {
-        console.log('DataChannel open');
-        if (dc.readyState === 'open') dc.send('ping');
-        pingIntervalRef.current = setInterval(() => {
-          if (dc.readyState === 'open') dc.send('ping');
-        }, 1000);
-      };
-      dc.onclose = () => {
-        console.log('DataChannel closed — scheduling reconnect...');
-        if (pingIntervalRef.current) clearInterval(pingIntervalRef.current);
-        if (curId === connectionIdRef.current && !reconnectTimeoutRef.current) {
-          isConnectingRef.current = false;
-          isConnectedRef.current = false;
-          reconnectTimeoutRef.current = setTimeout(() => {
-            reconnectTimeoutRef.current = null;
-            if (curId === connectionIdRef.current) {
-              console.log('Auto-reconnecting after DataChannel close...');
-              disconnectWebRTC();
-              connectWebRTC();
-            }
-          }, 1500);
-        }
-      };
-
-      // Detect idle timeout / server-side teardown via ICE state
-      activePC.oniceconnectionstatechange = () => {
-        const state = activePC.iceConnectionState;
-        console.log('ICE connection state:', state);
-        if ((state === 'closed' || state === 'failed') && curId === connectionIdRef.current && !reconnectTimeoutRef.current) {
-          console.log(`ICE ${state} — scheduling reconnect...`);
-          isConnectingRef.current = false;
-          isConnectedRef.current = false;
-          reconnectTimeoutRef.current = setTimeout(() => {
-            reconnectTimeoutRef.current = null;
-            if (curId === connectionIdRef.current) {
-              console.log('Auto-reconnecting after ICE state change...');
-              disconnectWebRTC();
-              connectWebRTC();
-            }
-          }, 1500);
-        }
-      };
-
-      // Handle incoming audio from bot
-      activePC.ontrack = (event) => {
-        console.log('Received remote track', event.track.kind);
-        if (event.track.kind === 'audio') {
-          const audio = new Audio();
-          audio.srcObject = new MediaStream([event.track]);
-          audio.autoplay = true;
-          audioRef.current = audio;
-        }
-      };
-
-      // Create SDP offer
-      const offer = await activePC.createOffer();
-      if (curId !== connectionIdRef.current) {
-        activeStream.getTracks().forEach(t => t.stop());
-        activePC.close();
-        return;
-      }
-      await activePC.setLocalDescription(offer);
-      if (curId !== connectionIdRef.current) {
-        activeStream.getTracks().forEach(t => t.stop());
-        activePC.close();
-        return;
-      }
-
-      // Wait for ICE gathering to complete
-      await new Promise<void>((resolve) => {
-        if (activePC.iceGatheringState === 'complete') {
-          resolve();
-        } else {
-          const checkState = () => {
-            if (activePC.iceGatheringState === 'complete') {
-              activePC.removeEventListener('icegatheringstatechange', checkState);
-              resolve();
-            }
-          };
-          activePC.addEventListener('icegatheringstatechange', checkState);
-          // Timeout fallback
-          setTimeout(resolve, 3000);
-        }
-      });
-      if (curId !== connectionIdRef.current) {
-        activeStream.getTracks().forEach(t => t.stop());
-        activePC.close();
-        return;
-      }
-
-      // Send offer to backend
-      const response = await fetch(`${API_URL}/api/webrtc/connect?conversation_id=${activeConversationId}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sdp: activePC.localDescription!.sdp,
-          type: activePC.localDescription!.type
-        })
-      });
-      if (curId !== connectionIdRef.current) {
-        activeStream.getTracks().forEach(t => t.stop());
-        activePC.close();
-        return;
-      }
-      const answer = await response.json();
-      if (curId !== connectionIdRef.current) {
-        activeStream.getTracks().forEach(t => t.stop());
-        activePC.close();
-        return;
-      }
-
-      await activePC.setRemoteDescription(new RTCSessionDescription({
-        sdp: answer.sdp,
-        type: answer.type
-      }));
-      if (curId !== connectionIdRef.current) {
-        activeStream.getTracks().forEach(t => t.stop());
-        activePC.close();
-        return;
-      }
-
-      isConnectingRef.current = false;
-      isConnectedRef.current = true;
-      console.log('WebRTC connected, pc_id:', answer.pc_id);
-    } catch (e) {
-      console.error('WebRTC connection failed:', e);
-      if (curId === connectionIdRef.current) {
-        disconnectWebRTC();
-      } else {
-        if (stream) stream.getTracks().forEach(t => t.stop());
-        if (pc) pc.close();
-      }
-    }
-  }, [handleDataChannelMessage, disconnectWebRTC, backendStatus, activeConversationId]);
-
   const refreshConversations = useCallback(() => {
     fetch(`${API_URL}/api/conversations`)
       .then(res => res.json())
@@ -592,7 +191,6 @@ export default function App() {
     try {
       // Reuse existing pipeline if connected
       if (dcRef.current && dcRef.current.readyState === 'open') {
-        skipDisconnectRef.current = true;
         setActiveConversationId(id);
         dcRef.current.send(JSON.stringify({ type: 'switch_conversation', conversation_id: id }));
         return;
@@ -624,7 +222,6 @@ export default function App() {
       const data = await res.json();
       setConversations(prev => [data, ...prev]);
       if (dcRef.current && dcRef.current.readyState === 'open') {
-        skipDisconnectRef.current = true;
         setActiveConversationId(data.id);
         dcRef.current.send(JSON.stringify({ type: 'switch_conversation', conversation_id: data.id }));
       } else {
@@ -657,19 +254,6 @@ export default function App() {
     }
   };
 
-  // Connect WebRTC on mount/status change/active conversation change
-  useEffect(() => {
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    if (backendStatus === 'connected' && activeConversationId) {
-      timer = setTimeout(() => connectWebRTC(), 100);
-    }
-    return () => {
-      if (timer) clearTimeout(timer);
-      if (!skipDisconnectRef.current) disconnectWebRTC();
-      skipDisconnectRef.current = false;
-    };
-  }, [connectWebRTC, disconnectWebRTC, backendStatus, activeConversationId]);
-
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
@@ -685,8 +269,6 @@ export default function App() {
           gemini_api_key: geminiKey,
           cartesia_api_key: cartesiaKey,
           soniox_api_key: sonioxKey,
-          input_device: inputDevice,
-          output_device: outputDevice,
           tts_voice: ttsVoice,
           tts_volume: ttsVolume,
           tts_speed: ttsSpeed,
@@ -706,6 +288,20 @@ export default function App() {
         captureInterval: observerCaptureInterval
       })
       setIsSettingsOpen(false)
+
+      const prev = appliedSettingsRef.current
+      const curr = {
+        geminiKey, cartesiaKey, sonioxKey,
+        ttsVoice, ttsVolume, ttsSpeed, ttsEmotion, ttsLanguage,
+        sttProvider, sttLanguage,
+      }
+      const keys = Object.keys(curr) as (keyof typeof curr)[]
+      const pipelineChanged = keys.some(k => String(curr[k]) !== String(prev[k] ?? ''))
+      if (pipelineChanged) {
+        disconnectWebRTC()
+        setTimeout(() => connectWebRTC(), 200)
+      }
+      appliedSettingsRef.current = curr
     } catch (e) {
       console.error("Failed to save settings")
     }
@@ -747,18 +343,39 @@ export default function App() {
     }
   }, [activeTab, backendStatus, fetchObservations]);
 
+  const handleSettingsChange = (key: string, value: any) => {
+    const setters: Record<string, any> = {
+      geminiKey: setGeminiKey,
+      cartesiaKey: setCartesiaKey,
+      sonioxKey: setSonioxKey,
+      ttsVoice: setTtsVoice,
+      ttsVolume: setTtsVolume,
+      ttsSpeed: setTtsSpeed,
+      ttsEmotion: setTtsEmotion,
+      sttLanguage: setSttLanguage,
+      sttProvider: setSttProvider,
+      ttsLanguage: setTtsLanguage,
+      observerScreenActive: setObserverScreenActive,
+      observerCameraActive: setObserverCameraActive,
+      observerCaptureInterval: setObserverCaptureInterval,
+      observerProcessInterval: setObserverProcessInterval,
+      settingsTab: setSettingsTab,
+    }
+    setters[key]?.(value)
+  }
+
+  const settingsData = {
+    geminiKey, cartesiaKey, sonioxKey, ttsVoice, ttsVolume, ttsSpeed, ttsEmotion,
+    sttLanguage, sttProvider, ttsLanguage,
+    observerScreenActive, observerCameraActive, observerCaptureInterval, observerProcessInterval,
+    settingsTab, debugMode,
+  }
+
   const sendMessage = () => {
     if (!input.trim()) return
     setMessages(prev => [...prev, { role: 'user', content: input }])
-    const currentInput = input
+    sendChatMessage(input)
     setInput('')
-
-    // Send via DataChannel
-    if (dcRef.current && dcRef.current.readyState === 'open') {
-      dcRef.current.send(JSON.stringify({ type: 'chat', text: currentInput }));
-    } else {
-      console.warn('DataChannel not open, cannot send message');
-    }
   }
 
   return (
@@ -1046,7 +663,6 @@ export default function App() {
                 <div className="relative border-l-2 border-slate-200/80 ml-4 pl-8 space-y-8 py-2">
                   {geminiInsights.map(ins => (
                     <div key={ins.id} className="relative bg-white rounded-2xl border border-slate-100 p-6 shadow-sm hover:shadow-md transition-all duration-300">
-                      {/* Timeline Dot Indicator */}
                       <div className="absolute w-4 h-4 bg-slate-900 rounded-full -left-[41px] top-6 border-4 border-slate-50 flex items-center justify-center shadow-sm" />
 
                       <div className="flex flex-wrap justify-between items-center gap-2 pb-3 border-b border-slate-50">
@@ -1143,225 +759,14 @@ export default function App() {
         </div>
       </div>
 
-      {/* Settings Modal */}
-      {isSettingsOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/10 backdrop-blur-sm animate-in fade-in">
-          <div className="w-full max-w-2xl bg-white rounded-xl overflow-hidden shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-slate-100 animate-in zoom-in-95 flex flex-col h-[500px]">
-            <div className="p-5 border-b border-slate-100 flex-shrink-0">
-              <h2 className="font-serif text-xl text-slate-900 tracking-tight">Configuration</h2>
-              <p className="text-xs text-slate-500 mt-1">Manage your API keys and local inference.</p>
-            </div>
-
-            <div className="flex flex-1 overflow-hidden">
-              {/* Tabs Sidebar */}
-              <div className="w-48 bg-slate-50 border-r border-slate-100 p-3 flex flex-col gap-1 overflow-y-auto">
-                <button onClick={() => setSettingsTab('speech')} className={`text-left px-3 py-2 rounded-md text-xs font-medium transition-colors ${settingsTab === 'speech' ? 'bg-white text-slate-900 shadow-sm border border-slate-200' : 'text-slate-600 hover:bg-slate-100'}`}>Speech</button>
-                <button onClick={() => setSettingsTab('api')} className={`text-left px-3 py-2 rounded-md text-xs font-medium transition-colors ${settingsTab === 'api' ? 'bg-white text-slate-900 shadow-sm border border-slate-200' : 'text-slate-600 hover:bg-slate-100'}`}>API Config</button>
-                {isElectron && (
-                  <button onClick={() => setSettingsTab('observers')} className={`text-left px-3 py-2 rounded-md text-xs font-medium transition-colors ${settingsTab === 'observers' ? 'bg-white text-slate-900 shadow-sm border border-slate-200' : 'text-slate-600 hover:bg-slate-100'}`}>Observers</button>
-                )}
-              </div>
-
-              {/* Tab Content */}
-              <div className="flex-1 p-6 overflow-y-auto">
-                {settingsTab === 'api' && (
-                  <div className="flex flex-col gap-4">
-                    <div className="flex flex-col gap-1.5">
-                      <label className="text-xs font-medium text-slate-700">Gemini API Key</label>
-                      <Input type="password" value={geminiKey} onChange={e => setGeminiKey(e.target.value)} className="bg-[#f9f9f9] border-slate-200 text-sm focus-visible:ring-slate-300" placeholder="AIzaSy..." />
-                    </div>
-                    <div className="flex flex-col gap-1.5">
-                      <label className="text-xs font-medium text-slate-700">Cartesia API Key (TTS)</label>
-                      <Input type="password" value={cartesiaKey} onChange={e => setCartesiaKey(e.target.value)} className="bg-[#f9f9f9] border-slate-200 text-sm focus-visible:ring-slate-300" placeholder="sk-..." />
-                    </div>
-                    <div className="flex flex-col gap-1.5">
-                      <label className="text-xs font-medium text-slate-700">Soniox API Key (STT)</label>
-                      <Input type="password" value={sonioxKey} onChange={e => setSonioxKey(e.target.value)} className="bg-[#f9f9f9] border-slate-200 text-sm focus-visible:ring-slate-300" placeholder="soniox-..." />
-                    </div>
-                  </div>
-                )}
-
-                {/* Audio Devices tab removed - browser handles device selection via getUserMedia */}
-
-                {settingsTab === 'speech' && (
-                  <div className="flex flex-col gap-4">
-
-                    {/* TTS Section */}
-                    <div className="pt-1 pb-2 border-b border-slate-100">
-                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Speech Output (TTS)</span>
-                    </div>
-                    <div className="flex flex-col gap-1.5">
-                      <label className="text-xs font-medium text-slate-700">Voice ID</label>
-                      <Input value={ttsVoice} onChange={e => setTtsVoice(e.target.value)} className="bg-[#f9f9f9] border-slate-200 text-sm focus-visible:ring-slate-300" placeholder="79a125e8-..." />
-                    </div>
-                    <div className="flex items-center gap-4">
-                      <div className="flex-1 flex flex-col gap-1.5">
-                        <label className="text-xs font-medium text-slate-700 flex justify-between">Volume <span>{ttsVolume}</span></label>
-                        <input type="range" min="0.5" max="2.0" step="0.1" value={ttsVolume} onChange={e => setTtsVolume(parseFloat(e.target.value))} className="w-full accent-slate-900" />
-                      </div>
-                      <div className="flex-1 flex flex-col gap-1.5">
-                        <label className="text-xs font-medium text-slate-700 flex justify-between">Speed <span>{ttsSpeed}</span></label>
-                        <input type="range" min="0.6" max="1.5" step="0.1" value={ttsSpeed} onChange={e => setTtsSpeed(parseFloat(e.target.value))} className="w-full accent-slate-900" />
-                      </div>
-                    </div>
-                    <div className="flex flex-col gap-1.5">
-                      <label className="text-xs font-medium text-slate-700">Emotion</label>
-                      <select value={ttsEmotion} onChange={e => setTtsEmotion(e.target.value)} className="bg-[#f9f9f9] border border-slate-200 text-sm focus-visible:ring-slate-300 rounded-md h-9 px-3 outline-none">
-                        {['calm', 'happy', 'excited', 'enthusiastic', 'curious', 'content', 'peaceful', 'serene', 'grateful', 'affectionate', 'flirtatious', 'sarcastic', 'sad', 'wistful', 'apologetic', 'confident', 'neutral'].map(emotion => (
-                          <option key={emotion} value={emotion}>{emotion.charAt(0).toUpperCase() + emotion.slice(1)}</option>
-                        ))}
-                      </select>
-                    </div>
-                    <div className="flex flex-col gap-1.5">
-                      <label className="text-xs font-medium text-slate-700">TTS Language</label>
-                      <select value={ttsLanguage} onChange={e => setTtsLanguage(e.target.value)} className="bg-[#f9f9f9] border border-slate-200 text-sm focus-visible:ring-slate-300 rounded-md h-9 px-3 outline-none">
-                        {[
-                          { code: 'en', label: 'English' }, { code: 'zh', label: 'Chinese' }, { code: 'ja', label: 'Japanese' },
-                          { code: 'es', label: 'Spanish' }, { code: 'fr', label: 'French' }, { code: 'de', label: 'German' },
-                          { code: 'pt', label: 'Portuguese' }, { code: 'it', label: 'Italian' }
-                        ].map(lang => (
-                          <option key={lang.code} value={lang.code}>{lang.label}</option>
-                        ))}
-                      </select>
-                    </div>
-
-                    {/* STT Section */}
-                    <div className="pt-4 pb-2 border-b border-slate-100">
-                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Speech Input (STT)</span>
-                    </div>
-                    <div className="flex flex-col gap-1.5">
-                      <label className="text-xs font-medium text-slate-700">Provider</label>
-                      <select value={sttProvider} onChange={e => setSttProvider(e.target.value)} className="bg-[#f9f9f9] border border-slate-200 text-sm focus-visible:ring-slate-300 rounded-md h-9 px-3 outline-none">
-                        <option value="soniox">Soniox (Recommended)</option>
-                        <option value="cartesia">Cartesia</option>
-                      </select>
-                    </div>
-                    <div className="flex flex-col gap-1.5">
-                      <label className="text-xs font-medium text-slate-700">Transcription Language</label>
-                      <select value={sttLanguage} onChange={e => setSttLanguage(e.target.value)} className="bg-[#f9f9f9] border border-slate-200 text-sm focus-visible:ring-slate-300 rounded-md h-9 px-3 outline-none">
-                        {[
-                          { code: 'en', label: 'English' }, { code: 'zh', label: 'Chinese' }, { code: 'ja', label: 'Japanese' },
-                          { code: 'es', label: 'Spanish' }, { code: 'fr', label: 'French' }, { code: 'de', label: 'German' },
-                          { code: 'pt', label: 'Portuguese' }, { code: 'it', label: 'Italian' }
-                        ].map(lang => (
-                          <option key={lang.code} value={lang.code}>{lang.label}</option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
-                )}
-
-                {settingsTab === 'observers' && (
-                  <div className="flex flex-col gap-4 animate-in fade-in duration-200">
-                    <div className="flex items-center justify-between p-3.5 bg-slate-50 border border-slate-200/60 rounded-xl">
-                      <div className="flex flex-col">
-                        <span className="text-xs font-bold text-slate-800">Screen Capture Observer</span>
-                        <span className="text-[10px] text-slate-400 mt-0.5 font-medium">Periodically capture your active workspace</span>
-                      </div>
-                      <input
-                        type="checkbox"
-                        checked={observerScreenActive}
-                        onChange={e => setObserverScreenActive(e.target.checked)}
-                        className="w-4.5 h-4.5 accent-slate-900 cursor-pointer rounded"
-                      />
-                    </div>
-
-                    <div className="flex items-center justify-between p-3.5 bg-slate-50 border border-slate-200/60 rounded-xl">
-                      <div className="flex flex-col">
-                        <span className="text-xs font-bold text-slate-800">Camera Snaps Observer</span>
-                        <span className="text-[10px] text-slate-400 mt-0.5 font-medium">Periodically capture camera frame</span>
-                      </div>
-                      <input
-                        type="checkbox"
-                        checked={observerCameraActive}
-                        onChange={e => setObserverCameraActive(e.target.checked)}
-                        className="w-4.5 h-4.5 accent-slate-900 cursor-pointer rounded"
-                      />
-                    </div>
-
-                    <div className="flex flex-col gap-1.5 pt-2">
-                      <label className="text-xs font-semibold text-slate-700 flex justify-between">
-                        Capture Interval <span>{observerCaptureInterval}s</span>
-                      </label>
-                      <select
-                        value={observerCaptureInterval}
-                        onChange={e => setObserverCaptureInterval(parseInt(e.target.value))}
-                        className="bg-[#f9f9f9] border border-slate-200 text-sm focus-visible:ring-slate-350 rounded-lg h-9.5 px-3 outline-none"
-                      >
-                        <option value={30}>30 Seconds</option>
-                        <option value={60}>1 Minute (Default)</option>
-                        <option value={120}>2 Minutes</option>
-                        <option value={300}>5 Minutes</option>
-                      </select>
-                    </div>
-
-                    <div className="flex flex-col gap-1.5">
-                      <label className="text-xs font-semibold text-slate-700 flex justify-between">
-                        Gemini Processing Interval <span>{observerProcessInterval / 60}m</span>
-                      </label>
-                      <select
-                        value={observerProcessInterval}
-                        onChange={e => setObserverProcessInterval(parseInt(e.target.value))}
-                        className="bg-[#f9f9f9] border border-slate-200 text-sm focus-visible:ring-slate-350 rounded-lg h-9.5 px-3 outline-none"
-                      >
-                        <option value={120}>2 Minutes</option>
-                        <option value={300}>5 Minutes (Default)</option>
-                        <option value={600}>10 Minutes</option>
-                        <option value={900}>15 Minutes</option>
-                      </select>
-                    </div>
-
-                    {debugMode && (
-                      <div className="flex flex-col gap-2 pt-4 border-t border-amber-200 mt-2">
-                        <span className="text-[10px] font-bold text-amber-600 uppercase tracking-wider flex items-center gap-1.5">
-                          <span className="w-1.5 h-1.5 bg-amber-500 rounded-full" /> Debug Actions
-                        </span>
-                        <div className="flex gap-2">
-                          <button
-                            onClick={async () => { await triggerObservationsCapture(); fetchObservations('screen', true); }}
-                            className="text-[10px] font-semibold text-amber-700 hover:text-amber-900 bg-amber-50 border border-amber-200 px-3 py-1.5 rounded-lg transition-all"
-                          >
-                            Capture Now
-                          </button>
-                          <button
-                            onClick={async () => {
-                              try {
-                                await fetch('${API_URL}/api/processor/trigger', { method: 'POST' });
-                                fetchObservations('insights', true);
-                              } catch (e) { console.error('Processor trigger failed:', e); }
-                            }}
-                            className="text-[10px] font-semibold text-amber-700 hover:text-amber-900 bg-amber-50 border border-amber-200 px-3 py-1.5 rounded-lg transition-all"
-                          >
-                            Process Now
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div className="p-4 bg-slate-50 border-t border-slate-100 flex items-center justify-between flex-shrink-0">
-              <div className="flex items-center gap-1.5 px-3 py-1 bg-white border border-slate-250 rounded-full shadow-sm">
-                <span className={`w-2 h-2 rounded-full ${backendStatus === 'connected' ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' :
-                  backendStatus === 'disconnected' ? 'bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.5)]' :
-                    'bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.5)]'
-                  }`} />
-                <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">
-                  Server Status: {backendStatus === 'connected' ? 'Online' :
-                    backendStatus === 'disconnected' ? 'Offline' :
-                      'Checking'}
-                </span>
-              </div>
-              <div className="flex gap-2">
-                <Button variant="ghost" onClick={() => setIsSettingsOpen(false)} className="rounded-md text-xs h-8 text-slate-600 hover:bg-slate-200/50">Cancel</Button>
-                <Button onClick={saveSettings} className="bg-slate-900 hover:bg-slate-800 text-white rounded-md text-xs h-8 px-4 shadow-sm">Save Changes</Button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      <SettingsModal
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        onSave={saveSettings}
+        settings={settingsData}
+        onChange={handleSettingsChange}
+        fetchObservations={fetchObservations}
+      />
     </div>
   )
 }

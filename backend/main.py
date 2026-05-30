@@ -6,7 +6,7 @@ import time
 import uuid
 import datetime
 from loguru import logger
-from dotenv import load_dotenv
+from cryptography.fernet import Fernet
 
 # FastAPI & Pydantic
 from fastapi import FastAPI, BackgroundTasks, HTTPException
@@ -26,15 +26,15 @@ from pipecat.transports.smallwebrtc.request_handler import (
 from bot import start_pipecat_session
 from processor import process_interval
 import database
-
-load_dotenv()
+import config
+from db import settings
 
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 
 # Configure logging
 logger.remove(0)
-if os.environ.get("DEBUG", "false").lower() == "true":
+if config.is_debug():
     logger.add(sys.stderr, level="DEBUG")
 else:
     logger.add(sys.stderr, level="INFO")
@@ -46,23 +46,17 @@ app = FastAPI(
 )
 
 # Enable CORS for frontend access
-cors_origins = os.environ.get("CORS_ORIGINS", "*").strip()
-if cors_origins == "*":
-    allowed_origins = ["*"]
-else:
-    allowed_origins = [origin.strip() for origin in cors_origins.split(",") if origin.strip()]
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_origins,
+    allow_origins=config.cors_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"]
 )
 
 # Ensure observations directories exist and mount static route
-os.makedirs(os.path.join("..", "data", "observations"), exist_ok=True)
-app.mount("/static", StaticFiles(directory=os.path.join("..", "data")), name="static")
+os.makedirs(config.OBSERVATIONS_DIR, exist_ok=True)
+app.mount("/static", StaticFiles(directory=config.DATA_DIR), name="static")
 
 # Shared global state injected into custom bot processors
 global_state = {
@@ -82,8 +76,6 @@ class SettingsReq(BaseModel):
     gemini_api_key: str
     cartesia_api_key: str
     soniox_api_key: str | None = None
-    input_device: int | None = None
-    output_device: int | None = None
     tts_voice: str | None = None
     tts_volume: float | None = None
     tts_speed: float | None = None
@@ -98,101 +90,59 @@ class SettingsReq(BaseModel):
 
 # --- REST Endpoints ---
 
-@app.post("/api/settings", summary="Save user API keys and speech preferences to .env")
+@app.post("/api/settings", summary="Save user API keys and speech preferences")
 async def save_settings(req: SettingsReq):
-    os.environ["GEMINI_API_KEY"] = req.gemini_api_key
-    os.environ["CARTESIA_API_KEY"] = req.cartesia_api_key
+    data: dict = {
+        "gemini_api_key": req.gemini_api_key,
+        "cartesia_api_key": req.cartesia_api_key,
+    }
     if req.soniox_api_key is not None:
-        os.environ["SONIOX_API_KEY"] = req.soniox_api_key
-    if req.input_device is not None:
-        os.environ["AUDIO_INPUT_DEVICE"] = str(req.input_device)
-    if req.output_device is not None:
-        os.environ["AUDIO_OUTPUT_DEVICE"] = str(req.output_device)
+        data["soniox_api_key"] = req.soniox_api_key
     if req.tts_voice is not None:
-        os.environ["CARTESIA_VOICE"] = req.tts_voice
+        data["tts_voice"] = req.tts_voice
     if req.tts_volume is not None:
-        os.environ["CARTESIA_VOLUME"] = str(req.tts_volume)
+        data["tts_volume"] = str(req.tts_volume)
     if req.tts_speed is not None:
-        os.environ["CARTESIA_SPEED"] = str(req.tts_speed)
+        data["tts_speed"] = str(req.tts_speed)
     if req.tts_emotion is not None:
-        os.environ["CARTESIA_EMOTION"] = req.tts_emotion
+        data["tts_emotion"] = req.tts_emotion
     if req.stt_language is not None:
-        os.environ["STT_LANGUAGE"] = req.stt_language
+        data["stt_language"] = req.stt_language
     if req.stt_provider is not None:
-        os.environ["STT_PROVIDER"] = req.stt_provider
+        data["stt_provider"] = req.stt_provider
     if req.tts_language is not None:
-        os.environ["CARTESIA_TTS_LANGUAGE"] = req.tts_language
+        data["tts_language"] = req.tts_language
     if req.observer_screen_active is not None:
-        os.environ["OBSERVER_SCREEN_ACTIVE"] = "true" if req.observer_screen_active else "false"
+        data["observer_screen_active"] = "true" if req.observer_screen_active else "false"
     if req.observer_camera_active is not None:
-        os.environ["OBSERVER_CAMERA_ACTIVE"] = "true" if req.observer_camera_active else "false"
+        data["observer_camera_active"] = "true" if req.observer_camera_active else "false"
     if req.observer_capture_interval is not None:
-        os.environ["OBSERVER_CAPTURE_INTERVAL"] = str(req.observer_capture_interval)
+        data["observer_capture_interval"] = str(req.observer_capture_interval)
     if req.observer_process_interval is not None:
-        os.environ["OBSERVER_PROCESS_INTERVAL"] = str(req.observer_process_interval)
-        
-    with open(".env", "w") as f:
-        f.write(f"GEMINI_API_KEY={req.gemini_api_key}\n")
-        f.write(f"CARTESIA_API_KEY={req.cartesia_api_key}\n")
-        if req.soniox_api_key is not None:
-            f.write(f"SONIOX_API_KEY={req.soniox_api_key}\n")
-        if req.input_device is not None:
-            f.write(f"AUDIO_INPUT_DEVICE={req.input_device}\n")
-        if req.output_device is not None:
-            f.write(f"AUDIO_OUTPUT_DEVICE={req.output_device}\n")
-        if req.tts_voice is not None:
-            f.write(f"CARTESIA_VOICE={req.tts_voice}\n")
-        if req.tts_volume is not None:
-            f.write(f"CARTESIA_VOLUME={req.tts_volume}\n")
-        if req.tts_speed is not None:
-            f.write(f"CARTESIA_SPEED={req.tts_speed}\n")
-        if req.tts_emotion is not None:
-            f.write(f"CARTESIA_EMOTION={req.tts_emotion}\n")
-        if req.stt_language is not None:
-            f.write(f"STT_LANGUAGE={req.stt_language}\n")
-        if req.stt_provider is not None:
-            f.write(f"STT_PROVIDER={req.stt_provider}\n")
-        if req.tts_language is not None:
-            f.write(f"CARTESIA_TTS_LANGUAGE={req.tts_language}\n")
-        if req.observer_screen_active is not None:
-            f.write(f"OBSERVER_SCREEN_ACTIVE={'true' if req.observer_screen_active else 'false'}\n")
-        if req.observer_camera_active is not None:
-            f.write(f"OBSERVER_CAMERA_ACTIVE={'true' if req.observer_camera_active else 'false'}\n")
-        if req.observer_capture_interval is not None:
-            f.write(f"OBSERVER_CAPTURE_INTERVAL={req.observer_capture_interval}\n")
-        if req.observer_process_interval is not None:
-            f.write(f"OBSERVER_PROCESS_INTERVAL={req.observer_process_interval}\n")
-            
+        data["observer_process_interval"] = str(req.observer_process_interval)
+
+    await settings.settings.save("default", data)
     return {"status": "ok"}
 
 @app.get("/api/settings", summary="Retrieve active API keys and speech preferences")
 async def get_settings():
-    input_device = os.environ.get("AUDIO_INPUT_DEVICE")
-    output_device = os.environ.get("AUDIO_OUTPUT_DEVICE")
-    tts_volume = os.environ.get("CARTESIA_VOLUME")
-    tts_speed = os.environ.get("CARTESIA_SPEED")
-    screen_active = os.environ.get("OBSERVER_SCREEN_ACTIVE", "false").lower() == "true"
-    camera_active = os.environ.get("OBSERVER_CAMERA_ACTIVE", "false").lower() == "true"
-    capture_interval = os.environ.get("OBSERVER_CAPTURE_INTERVAL")
-    process_interval = os.environ.get("OBSERVER_PROCESS_INTERVAL")
+    s = settings.settings
     return {
-        "gemini_api_key": os.environ.get("GEMINI_API_KEY", ""),
-        "cartesia_api_key": os.environ.get("CARTESIA_API_KEY", ""),
-        "soniox_api_key": os.environ.get("SONIOX_API_KEY", ""),
-        "input_device": int(input_device) if input_device else None,
-        "output_device": int(output_device) if output_device else None,
-        "tts_voice": os.environ.get("CARTESIA_VOICE", "79a125e8-cd45-4c13-8a67-188112f4dd22"),
-        "tts_volume": float(tts_volume) if tts_volume else 1.0,
-        "tts_speed": float(tts_speed) if tts_speed else 1.0,
-        "tts_emotion": os.environ.get("CARTESIA_EMOTION", "neutral"),
-        "stt_language": os.environ.get("STT_LANGUAGE", "zh"),
-        "stt_provider": os.environ.get("STT_PROVIDER", "soniox"),
-        "tts_language": os.environ.get("CARTESIA_TTS_LANGUAGE", "en"),
-        "observer_screen_active": screen_active,
-        "observer_camera_active": camera_active,
-        "observer_capture_interval": int(capture_interval) if capture_interval else 60,
-        "observer_process_interval": int(process_interval) if process_interval else 300,
-        "debug": os.environ.get("DEBUG", "false").lower() == "true"
+        "gemini_api_key": s.get("gemini_api_key", ""),
+        "cartesia_api_key": s.get("cartesia_api_key", ""),
+        "soniox_api_key": s.get("soniox_api_key", ""),
+        "tts_voice": s.get("tts_voice"),
+        "tts_volume": float(s.get("tts_volume", "1.0")),
+        "tts_speed": float(s.get("tts_speed", "1.0")),
+        "tts_emotion": s.get("tts_emotion"),
+        "stt_language": s.get("stt_language"),
+        "stt_provider": s.get("stt_provider"),
+        "tts_language": s.get("tts_language"),
+        "observer_screen_active": s.get("observer_screen_active", "false").lower() == "true",
+        "observer_camera_active": s.get("observer_camera_active", "false").lower() == "true",
+        "observer_capture_interval": int(s.get("observer_capture_interval", "60")),
+        "observer_process_interval": int(s.get("observer_process_interval", "300")),
+        "debug": s.get("debug", "false").lower() == "true",
     }
 
 @app.get("/api/health", summary="Health check endpoint for active frontend connectivity")
@@ -230,17 +180,15 @@ async def upload_observation(req: ObservationUploadReq):
         safe_ts = timestamp_str.replace(":", "-").replace("Z", "").replace("T", "_")
         filename = f"{req.type}_{safe_ts}_{uuid.uuid4().hex[:6]}.jpg"
         
-        # Save 1: Permanent History in ../data/observations/
-        history_dir = os.path.join("..", "data", "observations")
-        os.makedirs(history_dir, exist_ok=True)
-        history_path = os.path.join(history_dir, filename)
+        # Save 1: Permanent History
+        os.makedirs(config.OBSERVATIONS_DIR, exist_ok=True)
+        history_path = os.path.join(config.OBSERVATIONS_DIR, filename)
         with open(history_path, "wb") as f:
             f.write(image_bytes)
             
-        # Save 2: Monitored Directory for Gemini Processor in ../data/observers
-        monitored_dir = os.path.join("..", "data", "observers")
-        os.makedirs(monitored_dir, exist_ok=True)
-        monitored_path = os.path.join(monitored_dir, filename)
+        # Save 2: Monitored Directory for Gemini Processor
+        os.makedirs(config.OBSERVERS_DIR, exist_ok=True)
+        monitored_path = os.path.join(config.OBSERVERS_DIR, filename)
         with open(monitored_path, "wb") as f:
             f.write(image_bytes)
             
@@ -325,7 +273,7 @@ async def api_delete_conversation(conversation_id: str):
 @app.post("/api/webrtc/connect", summary="Handle WebRTC connection offer")
 async def webrtc_connect(request: SmallWebRTCRequest, background_tasks: BackgroundTasks, conversation_id: str | None = None):
     try:
-        if not os.environ.get("GEMINI_API_KEY") or not os.environ.get("CARTESIA_API_KEY"):
+        if not settings.settings.get("gemini_api_key") or not settings.settings.get("cartesia_api_key"):
             raise HTTPException(status_code=400, detail="Missing API keys in server.")
 
         conv_id = conversation_id or str(uuid.uuid4())
@@ -363,6 +311,15 @@ async def startup_event():
 
     await database.init()
 
+    if not config.fernet_key():
+        key = Fernet.generate_key().decode()
+        os.environ["FERNET_KEY"] = key
+        env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+        with open(env_path, "a") as f:
+            f.write(f"\nFERNET_KEY={key}\n")
+        logger.info("Generated new FERNET_KEY and appended to .env")
+
+    await settings.settings.load()
     logger.info("Server startup complete")
 
 @app.on_event("shutdown")

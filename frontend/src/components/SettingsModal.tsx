@@ -1,0 +1,229 @@
+import { Input } from '@/components/ui/input'
+import { triggerObservationsCapture } from '../observers'
+import { API_URL, isElectron } from '../config'
+
+export interface SettingsData {
+  geminiKey: string
+  cartesiaKey: string
+  sonioxKey: string
+  ttsVoice: string
+  ttsVolume: number
+  ttsSpeed: number
+  ttsEmotion: string
+  sttLanguage: string
+  sttProvider: string
+  ttsLanguage: string
+  observerScreenActive: boolean
+  observerCameraActive: boolean
+  observerCaptureInterval: number
+  observerProcessInterval: number
+  settingsTab: string
+  debugMode: boolean
+}
+
+interface Props {
+  isOpen: boolean
+  onClose: () => void
+  onSave: () => Promise<void>
+  settings: SettingsData
+  onChange: (key: string, value: any) => void
+  fetchObservations: (tab: string, force?: boolean) => void
+}
+
+export default function SettingsModal({ isOpen, onClose, onSave, settings, onChange, fetchObservations }: Props) {
+  if (!isOpen) return null
+
+  const handleClose = () => {
+    onSave()
+    onClose()
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/10 backdrop-blur-sm animate-in fade-in" onClick={handleClose}>
+      <div className="w-full max-w-2xl bg-white rounded-xl overflow-hidden shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-slate-100 animate-in zoom-in-95 flex flex-col h-[500px]" onClick={e => e.stopPropagation()}>
+        <div className="flex flex-1 overflow-hidden">
+          <div className="w-48 bg-slate-50 border-r border-slate-100 p-3 flex flex-col gap-1 overflow-y-auto">
+            <button onClick={() => onChange('settingsTab', 'speech')} className={`text-left px-3 py-2 rounded-md text-xs font-medium transition-colors ${settings.settingsTab === 'speech' ? 'bg-white text-slate-900 shadow-sm border border-slate-200' : 'text-slate-600 hover:bg-slate-100'}`}>Speech</button>
+            {isElectron && (
+              <button onClick={() => onChange('settingsTab', 'observers')} className={`text-left px-3 py-2 rounded-md text-xs font-medium transition-colors ${settings.settingsTab === 'observers' ? 'bg-white text-slate-900 shadow-sm border border-slate-200' : 'text-slate-600 hover:bg-slate-100'}`}>Observers</button>
+            )}
+            <button onClick={() => onChange('settingsTab', 'api')} className={`text-left px-3 py-2 rounded-md text-xs font-medium transition-colors ${settings.settingsTab === 'api' ? 'bg-white text-slate-900 shadow-sm border border-slate-200' : 'text-slate-600 hover:bg-slate-100'}`}>API Config</button>
+          </div>
+
+          <div className="flex-1 p-6 overflow-y-auto">
+            {settings.settingsTab === 'api' && (
+              <div className="flex flex-col gap-4">
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-medium text-slate-700">Gemini API Key</label>
+                  <Input type="password" value={settings.geminiKey} onChange={e => onChange('geminiKey', e.target.value)} className="bg-[#f9f9f9] border-slate-200 text-sm focus-visible:ring-slate-300" placeholder="AIzaSy..." />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-medium text-slate-700">Cartesia API Key (TTS)</label>
+                  <Input type="password" value={settings.cartesiaKey} onChange={e => onChange('cartesiaKey', e.target.value)} className="bg-[#f9f9f9] border-slate-200 text-sm focus-visible:ring-slate-300" placeholder="sk-..." />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-medium text-slate-700">Soniox API Key (STT)</label>
+                  <Input type="password" value={settings.sonioxKey} onChange={e => onChange('sonioxKey', e.target.value)} className="bg-[#f9f9f9] border-slate-200 text-sm focus-visible:ring-slate-300" placeholder="soniox-..." />
+                </div>
+              </div>
+            )}
+
+            {settings.settingsTab === 'speech' && (
+              <div className="flex flex-col gap-4">
+                <div className="pt-1 pb-2 border-b border-slate-100">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Speech Output (TTS)</span>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-medium text-slate-700">Voice ID</label>
+                  <Input value={settings.ttsVoice} onChange={e => onChange('ttsVoice', e.target.value)} className="bg-[#f9f9f9] border-slate-200 text-sm focus-visible:ring-slate-300" placeholder="79a125e8-..." />
+                </div>
+                <div className="flex items-center gap-4">
+                  <div className="flex-1 flex flex-col gap-1.5">
+                    <label className="text-xs font-medium text-slate-700 flex justify-between">Volume <span>{settings.ttsVolume}</span></label>
+                    <input type="range" min="0.5" max="2.0" step="0.1" value={settings.ttsVolume} onChange={e => onChange('ttsVolume', parseFloat(e.target.value))} className="w-full accent-slate-900" />
+                  </div>
+                  <div className="flex-1 flex flex-col gap-1.5">
+                    <label className="text-xs font-medium text-slate-700 flex justify-between">Speed <span>{settings.ttsSpeed}</span></label>
+                    <input type="range" min="0.6" max="1.5" step="0.1" value={settings.ttsSpeed} onChange={e => onChange('ttsSpeed', parseFloat(e.target.value))} className="w-full accent-slate-900" />
+                  </div>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-medium text-slate-700">Emotion</label>
+                  <select value={settings.ttsEmotion} onChange={e => onChange('ttsEmotion', e.target.value)} className="bg-[#f9f9f9] border border-slate-200 text-sm focus-visible:ring-slate-300 rounded-md h-9 px-3 outline-none">
+                    {['calm', 'happy', 'excited', 'enthusiastic', 'curious', 'content', 'peaceful', 'serene', 'grateful', 'affectionate', 'flirtatious', 'sarcastic', 'sad', 'wistful', 'apologetic', 'confident', 'neutral'].map(emotion => (
+                      <option key={emotion} value={emotion}>{emotion.charAt(0).toUpperCase() + emotion.slice(1)}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-medium text-slate-700">TTS Language</label>
+                  <select value={settings.ttsLanguage} onChange={e => onChange('ttsLanguage', e.target.value)} className="bg-[#f9f9f9] border border-slate-200 text-sm focus-visible:ring-slate-300 rounded-md h-9 px-3 outline-none">
+                    {[
+                      { code: 'en', label: 'English' }, { code: 'zh', label: 'Chinese' }, { code: 'ja', label: 'Japanese' },
+                      { code: 'es', label: 'Spanish' }, { code: 'fr', label: 'French' }, { code: 'de', label: 'German' },
+                      { code: 'pt', label: 'Portuguese' }, { code: 'it', label: 'Italian' }
+                    ].map(lang => (
+                      <option key={lang.code} value={lang.code}>{lang.label}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="pt-4 pb-2 border-b border-slate-100">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Speech Input (STT)</span>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-medium text-slate-700">Provider</label>
+                  <select value={settings.sttProvider} onChange={e => onChange('sttProvider', e.target.value)} className="bg-[#f9f9f9] border border-slate-200 text-sm focus-visible:ring-slate-300 rounded-md h-9 px-3 outline-none">
+                    <option value="soniox">Soniox (Recommended)</option>
+                    <option value="cartesia">Cartesia</option>
+                  </select>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-medium text-slate-700">Transcription Language</label>
+                  <select value={settings.sttLanguage} onChange={e => onChange('sttLanguage', e.target.value)} className="bg-[#f9f9f9] border border-slate-200 text-sm focus-visible:ring-slate-300 rounded-md h-9 px-3 outline-none">
+                    {[
+                      { code: 'en', label: 'English' }, { code: 'zh', label: 'Chinese' }, { code: 'ja', label: 'Japanese' },
+                      { code: 'es', label: 'Spanish' }, { code: 'fr', label: 'French' }, { code: 'de', label: 'German' },
+                      { code: 'pt', label: 'Portuguese' }, { code: 'it', label: 'Italian' }
+                    ].map(lang => (
+                      <option key={lang.code} value={lang.code}>{lang.label}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            )}
+
+            {settings.settingsTab === 'observers' && (
+              <div className="flex flex-col gap-4 animate-in fade-in duration-200">
+                <div className="flex items-center justify-between p-3.5 bg-slate-50 border border-slate-200/60 rounded-xl">
+                  <div className="flex flex-col">
+                    <span className="text-xs font-bold text-slate-800">Screen Capture Observer</span>
+                    <span className="text-[10px] text-slate-400 mt-0.5 font-medium">Periodically capture your active workspace</span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={settings.observerScreenActive}
+                    onChange={e => onChange('observerScreenActive', e.target.checked)}
+                    className="w-4.5 h-4.5 accent-slate-900 cursor-pointer rounded"
+                  />
+                </div>
+
+                <div className="flex items-center justify-between p-3.5 bg-slate-50 border border-slate-200/60 rounded-xl">
+                  <div className="flex flex-col">
+                    <span className="text-xs font-bold text-slate-800">Camera Snaps Observer</span>
+                    <span className="text-[10px] text-slate-400 mt-0.5 font-medium">Periodically capture camera frame</span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={settings.observerCameraActive}
+                    onChange={e => onChange('observerCameraActive', e.target.checked)}
+                    className="w-4.5 h-4.5 accent-slate-900 cursor-pointer rounded"
+                  />
+                </div>
+
+                <div className="flex flex-col gap-1.5 pt-2">
+                  <label className="text-xs font-semibold text-slate-700 flex justify-between">
+                    Capture Interval <span>{settings.observerCaptureInterval}s</span>
+                  </label>
+                  <select
+                    value={settings.observerCaptureInterval}
+                    onChange={e => onChange('observerCaptureInterval', parseInt(e.target.value))}
+                    className="bg-[#f9f9f9] border border-slate-200 text-sm focus-visible:ring-slate-350 rounded-lg h-9.5 px-3 outline-none"
+                  >
+                    <option value={30}>30 Seconds</option>
+                    <option value={60}>1 Minute (Default)</option>
+                    <option value={120}>2 Minutes</option>
+                    <option value={300}>5 Minutes</option>
+                  </select>
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-slate-700 flex justify-between">
+                    Gemini Processing Interval <span>{settings.observerProcessInterval / 60}m</span>
+                  </label>
+                  <select
+                    value={settings.observerProcessInterval}
+                    onChange={e => onChange('observerProcessInterval', parseInt(e.target.value))}
+                    className="bg-[#f9f9f9] border border-slate-200 text-sm focus-visible:ring-slate-350 rounded-lg h-9.5 px-3 outline-none"
+                  >
+                    <option value={120}>2 Minutes</option>
+                    <option value={300}>5 Minutes (Default)</option>
+                    <option value={600}>10 Minutes</option>
+                    <option value={900}>15 Minutes</option>
+                  </select>
+                </div>
+
+                {settings.debugMode && (
+                  <div className="flex flex-col gap-2 pt-4 border-t border-amber-200 mt-2">
+                    <span className="text-[10px] font-bold text-amber-600 uppercase tracking-wider flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 bg-amber-500 rounded-full" /> Debug Actions
+                    </span>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={async () => { await triggerObservationsCapture(); fetchObservations('screen', true) }}
+                        className="text-[10px] font-semibold text-amber-700 hover:text-amber-900 bg-amber-50 border border-amber-200 px-3 py-1.5 rounded-lg transition-all"
+                      >
+                        Capture Now
+                      </button>
+                      <button
+                        onClick={async () => {
+                          try {
+                            await fetch(`${API_URL}/api/processor/trigger`, { method: 'POST' })
+                            fetchObservations('insights', true)
+                          } catch (e) { console.error('Processor trigger failed:', e) }
+                        }}
+                        className="text-[10px] font-semibold text-amber-700 hover:text-amber-900 bg-amber-50 border border-amber-200 px-3 py-1.5 rounded-lg transition-all"
+                      >
+                        Process Now
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}

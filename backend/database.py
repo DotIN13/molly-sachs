@@ -1,5 +1,6 @@
 import asyncio
 import datetime
+import json
 import os
 from typing import Any, List, Optional
 
@@ -7,9 +8,7 @@ import aiosqlite
 import chromadb
 from loguru import logger
 
-DATA_DIR = os.path.join("..", "data")
-SQLITE_PATH = os.path.join(DATA_DIR, "app.db")
-CHROMA_PATH = os.path.join(DATA_DIR, "chroma.db")
+from config import DATA_DIR, SQLITE_PATH, CHROMA_PATH
 
 os.makedirs(DATA_DIR, exist_ok=True)
 
@@ -33,6 +32,12 @@ class AppDB:
             await db.execute("PRAGMA journal_mode=WAL")
             await db.execute("PRAGMA busy_timeout=5000")
             await db.executescript("""
+                CREATE TABLE IF NOT EXISTS users (
+                    id          TEXT PRIMARY KEY,
+                    name        TEXT NOT NULL DEFAULT 'Default User',
+                    settings    TEXT NOT NULL DEFAULT '{}',
+                    created_at  TEXT NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS user_events (
                     id          INTEGER PRIMARY KEY AUTOINCREMENT,
                     timestamp   TEXT    NOT NULL,
@@ -62,6 +67,34 @@ class AppDB:
                     processed   INTEGER DEFAULT 0
                 );
             """)
+            now = datetime.datetime.utcnow().isoformat()
+            await db.execute(
+                "INSERT OR IGNORE INTO users (id, name, settings, created_at) "
+                "VALUES ('default', 'Default User', '{}', ?)",
+                (now,),
+            )
+            await db.commit()
+
+    # ── users ────────────────────────────────
+
+    async def get_user_settings(self, user_id: str = "default") -> dict:
+        async with aiosqlite.connect(self._path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT settings FROM users WHERE id = ?", (user_id,),
+            )
+            row = await cursor.fetchone()
+            if row and row["settings"]:
+                return json.loads(row["settings"])
+            return {}
+
+    async def save_user_settings(self, user_id: str, settings_text: str) -> None:
+        async with aiosqlite.connect(self._path) as db:
+            await db.execute(
+                "UPDATE users SET settings = ? WHERE id = ?",
+                (settings_text, user_id),
+            )
+            await db.commit()
 
     # ── user events ───────────────────────────
 
@@ -191,6 +224,20 @@ class AppDB:
                 )
             rows = await cursor.fetchall()
             return [dict(r) for r in rows]
+
+    async def mark_observations_processed(self, filenames: list) -> None:
+        """Mark observations as processed by filename match."""
+        if not filenames:
+            return
+        async with aiosqlite.connect(self._path) as db:
+            placeholders = ",".join(["?" for _ in filenames])
+            paths = [f"observations/{f}" for f in filenames]
+            await db.execute(
+                f"UPDATE observations SET processed = 1 "
+                f"WHERE image_path IN ({placeholders})",
+                paths,
+            )
+            await db.commit()
 
 
 # ──────────────────────────────────────────────
