@@ -1,5 +1,6 @@
 import os
 
+from aiortc import RTCIceServer
 from dotenv import load_dotenv
 
 _env_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
@@ -51,14 +52,16 @@ def fernet_key() -> str:
 
 
 def ice_servers() -> list:
-    servers: list = [{'urls': 'stun:stun.l.google.com:19302'}]
+    servers = [RTCIceServer(urls='stun:stun.l.google.com:19302')]
     turn_url = os.environ.get("TURN_SERVER", "").strip()
     turn_username = os.environ.get("TURN_USERNAME", "").strip()
     turn_password = os.environ.get("TURN_PASSWORD", "").strip()
     if turn_url and turn_username and turn_password:
-        servers.append({
-            'urls': turn_url,
-            'username': turn_username,
-            'credential': turn_password
-        })
+        if not turn_url.startswith('turn:') and not turn_url.startswith('turns:'):
+            turn_url = f'turn:{turn_url}'
+        servers.append(RTCIceServer(
+            urls=turn_url,
+            username=turn_username,
+            credential=turn_password
+        ))
     return servers
