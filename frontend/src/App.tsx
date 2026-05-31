@@ -29,6 +29,9 @@ export default function App() {
   const [geminiKey, setGeminiKey] = useState('')
   const [cartesiaKey, setCartesiaKey] = useState('')
   const [sonioxKey, setSonioxKey] = useState('')
+  const [geminiKeyConfigured, setGeminiKeyConfigured] = useState(false)
+  const [cartesiaKeyConfigured, setCartesiaKeyConfigured] = useState(false)
+  const [sonioxKeyConfigured, setSonioxKeyConfigured] = useState(false)
 
   const [ttsVoice, setTtsVoice] = useState('6eb8965c-e295-47bd-a9e4-3eeebb3abcff')
   const [ttsVolume, setTtsVolume] = useState(1.0)
@@ -107,6 +110,9 @@ export default function App() {
         setGeminiKey(data.gemini_api_key || '')
         setCartesiaKey(data.cartesia_api_key || '')
         setSonioxKey(data.soniox_api_key || '')
+        setGeminiKeyConfigured(data.gemini_key_configured || false)
+        setCartesiaKeyConfigured(data.cartesia_key_configured || false)
+        setSonioxKeyConfigured(data.soniox_key_configured || false)
         setTtsVoice(data.tts_voice || '79a125e8-cd45-4c13-8a67-188112f4dd22')
         setTtsVolume(data.tts_volume ?? 1.0)
         setTtsSpeed(data.tts_speed ?? 1.0)
@@ -289,27 +295,34 @@ export default function App() {
 
   const saveSettings = async () => {
     try {
+      const body: Record<string, unknown> = {
+        tts_voice: ttsVoice,
+        tts_volume: ttsVolume,
+        tts_speed: ttsSpeed,
+        tts_emotion: ttsEmotion,
+        stt_language: sttLanguage,
+        tts_language: ttsLanguage,
+        stt_provider: sttProvider,
+        observer_screen_active: observerScreenActive,
+        observer_camera_active: observerCameraActive,
+        observer_screen_interval: observerScreenInterval,
+        observer_camera_interval: observerCameraInterval,
+        observer_capture_interval: observerCaptureInterval,
+        observer_process_interval: observerProcessInterval
+      }
+      if (geminiKey && geminiKey !== appliedSettingsRef.current?.geminiKey) {
+        body.gemini_api_key = geminiKey
+      }
+      if (cartesiaKey && cartesiaKey !== appliedSettingsRef.current?.cartesiaKey) {
+        body.cartesia_api_key = cartesiaKey
+      }
+      if (sonioxKey && sonioxKey !== appliedSettingsRef.current?.sonioxKey) {
+        body.soniox_api_key = sonioxKey
+      }
       await auth.authFetch(`${API_URL}/api/settings`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          gemini_api_key: geminiKey,
-          cartesia_api_key: cartesiaKey,
-          soniox_api_key: sonioxKey,
-          tts_voice: ttsVoice,
-          tts_volume: ttsVolume,
-          tts_speed: ttsSpeed,
-          tts_emotion: ttsEmotion,
-          stt_language: sttLanguage,
-          tts_language: ttsLanguage,
-          stt_provider: sttProvider,
-          observer_screen_active: observerScreenActive,
-          observer_camera_active: observerCameraActive,
-          observer_screen_interval: observerScreenInterval,
-          observer_camera_interval: observerCameraInterval,
-          observer_capture_interval: observerCaptureInterval,
-          observer_process_interval: observerProcessInterval
-        })
+        body: JSON.stringify(body)
       })
       updateObserverConfig({
         screenActive: observerScreenActive,
@@ -397,7 +410,9 @@ export default function App() {
   }
 
   const settingsData = {
-    geminiKey, cartesiaKey, sonioxKey, ttsVoice, ttsVolume, ttsSpeed, ttsEmotion,
+    geminiKey, cartesiaKey, sonioxKey,
+    geminiKeyConfigured, cartesiaKeyConfigured, sonioxKeyConfigured,
+    ttsVoice, ttsVolume, ttsSpeed, ttsEmotion,
     sttLanguage, sttProvider, ttsLanguage,
     observerScreenActive, observerCameraActive, observerScreenInterval,
     observerCameraInterval, observerCaptureInterval, observerProcessInterval,
@@ -620,7 +635,7 @@ export default function App() {
                     <div key={cap.id} className="border border-slate-100 rounded-2xl overflow-hidden shadow-sm bg-white hover:shadow-md transition-all hover:scale-[1.01] duration-300 group">
                       <div className="relative aspect-video w-full bg-slate-950 overflow-hidden">
                         <img
-                          src={`${API_URL}/static/${cap.image_path}?t=${lastRefresh}`}
+                          src={`${API_URL}/api/observations/file?path=${encodeURIComponent(cap.image_path)}&token=${encodeURIComponent(auth.accessToken ?? '')}&t=${lastRefresh}`}
                           alt={t('screen.alt')}
                           loading="lazy"
                           className="w-full h-full object-cover transition-transform group-hover:scale-105 duration-500"
@@ -682,7 +697,7 @@ export default function App() {
                     <div key={cap.id} className="border border-slate-100 rounded-2xl overflow-hidden shadow-sm bg-white hover:shadow-md transition-all hover:scale-[1.01] duration-300 group">
                       <div className="relative aspect-video w-full bg-slate-950 overflow-hidden">
                         <img
-                          src={`${API_URL}/static/${cap.image_path}?t=${lastRefresh}`}
+                          src={`${API_URL}/api/observations/file?path=${encodeURIComponent(cap.image_path)}&token=${encodeURIComponent(auth.accessToken ?? '')}&t=${lastRefresh}`}
                           alt={t('camera.alt')}
                           loading="lazy"
                           className="w-full h-full object-cover transition-transform group-hover:scale-105 duration-500"

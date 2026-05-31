@@ -41,14 +41,9 @@ ALGORITHM = "HS256"
 def _get_secret() -> str:
     key = os.environ.get("JWT_SECRET", "").strip()
     if not key:
-        key = secrets.token_hex(32)
-        os.environ["JWT_SECRET"] = key
-        env_path = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)), ".env"
+        raise RuntimeError(
+            "JWT_SECRET is not set. Run 'python generate_keys.py' to create one."
         )
-        with open(env_path, "a") as f:
-            f.write(f"\nJWT_SECRET={key}\n")
-        logger.info("Generated new JWT_SECRET and appended to .env")
     return key
 
 

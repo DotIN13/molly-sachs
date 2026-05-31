@@ -9,12 +9,10 @@ import secrets
 import datetime
 from datetime import timedelta, timezone
 from loguru import logger
-from cryptography.fernet import Fernet
-
-from fastapi import FastAPI, BackgroundTasks, HTTPException, Depends
-from pydantic import BaseModel
+from fastapi import FastAPI, BackgroundTasks, HTTPException, Depends, Query, Request
+from fastapi.responses import FileResponse
+from pydantic import BaseModel, field_validator
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 
 from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
 from pipecat.transports.smallwebrtc.request_handler import (
@@ -30,6 +28,7 @@ import config
 from db.settings import Settings
 import auth
 import mailer
+from ratelimit import rate_limit
 
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 sys.stderr.reconfigure(encoding='utf-8', errors='replace')
@@ -39,6 +38,15 @@ if config.is_debug():
     logger.add(sys.stderr, level="DEBUG")
 else:
     logger.add(sys.stderr, level="INFO")
+
+
+def mask_key(key: str) -> str:
+    if not key:
+        return ""
+    if len(key) <= 8:
+        return key[:2] + "***"
+    return key[:3] + "***" + key[-4:]
+
 
 app = FastAPI(
     title="Molly Sachs Assistant Backend",
@@ -55,7 +63,6 @@ app.add_middleware(
 )
 
 os.makedirs(config.OBSERVATIONS_DIR, exist_ok=True)
-app.mount("/static", StaticFiles(directory=config.DATA_DIR), name="static")
 
 # Per-user voice/speaker state
 global_states: dict[str, dict] = {}
@@ -91,6 +98,19 @@ class RegisterReq(BaseModel):
     password: str
     name: str | None = None
 
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, v: str) -> str:
+        if len(v) < 8:
+            raise ValueError("Password must be at least 8 characters")
+        if not any(c.islower() for c in v):
+            raise ValueError("Password must contain at least one lowercase letter")
+        if not any(c.isupper() for c in v):
+            raise ValueError("Password must contain at least one uppercase letter")
+        if not any(c.isdigit() for c in v):
+            raise ValueError("Password must contain at least one digit")
+        return v
+
 class VerifyReq(BaseModel):
     email: str
     code: str
@@ -124,13 +144,16 @@ def _get_user_state(user_id: str) -> dict:
 
 # ── Auth Endpoints ──────────────────────────
 
+_auth_limiter = rate_limit(max_requests=5, window_seconds=60)
+_register_limiter = rate_limit(max_requests=3, window_seconds=300)
+
+
 @app.post("/api/auth/register", summary="Register a new user account")
-async def register(req: RegisterReq):
+async def register(req: RegisterReq, _rate: None = Depends(_register_limiter)):
     existing = await database.app.get_user_by_email(req.email)
     if existing:
         if existing.get("email_verified"):
-            raise HTTPException(status_code=409, detail="Email already registered")
-        # Unverified — remove stale account so user can re-register
+            return {"status": "ok", "message": "If the email is not registered, a verification code has been sent."}
         await database.app.delete_user(existing["id"])
 
     password_hash = auth.hash_password(req.password)
@@ -147,7 +170,7 @@ async def register(req: RegisterReq):
 
 
 @app.post("/api/auth/verify", summary="Verify email with code and receive tokens")
-async def verify_email(req: VerifyReq):
+async def verify_email(req: VerifyReq, _rate: None = Depends(_auth_limiter)):
     user = await database.app.get_user_by_email(req.email)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -172,7 +195,7 @@ async def verify_email(req: VerifyReq):
 
 
 @app.post("/api/auth/login", summary="Login with email and password")
-async def login(req: LoginReq):
+async def login(req: LoginReq, _rate: None = Depends(_auth_limiter)):
     user = await database.app.get_user_by_email(req.email)
     if not user:
         raise HTTPException(status_code=401, detail="Invalid credentials")
@@ -209,7 +232,7 @@ async def refresh_token(req: RefreshReq):
 
 
 @app.post("/api/auth/resend-verification", summary="Resend verification code")
-async def resend_verification(req: ResendReq):
+async def resend_verification(req: ResendReq, _rate: None = Depends(_register_limiter)):
     user = await database.app.get_user_by_email(req.email)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -276,9 +299,12 @@ async def save_settings(req: SettingsReq,
 async def get_settings(current_user: dict = Depends(auth.get_current_user)):
     s = await Settings(current_user["id"]).load()
     return {
-        "gemini_api_key": s.get("gemini_api_key", ""),
-        "cartesia_api_key": s.get("cartesia_api_key", ""),
-        "soniox_api_key": s.get("soniox_api_key", ""),
+        "gemini_api_key": mask_key(s.get("gemini_api_key", "")),
+        "gemini_key_configured": bool(s.get("gemini_api_key", "")),
+        "cartesia_api_key": mask_key(s.get("cartesia_api_key", "")),
+        "cartesia_key_configured": bool(s.get("cartesia_api_key", "")),
+        "soniox_api_key": mask_key(s.get("soniox_api_key", "")),
+        "soniox_key_configured": bool(s.get("soniox_api_key", "")),
         "tts_voice": s.get("tts_voice"),
         "tts_volume": float(s.get("tts_volume", "1.0")),
         "tts_speed": float(s.get("tts_speed", "1.0")),
@@ -392,6 +418,23 @@ async def get_observations(type: str | None = None, limit: int = 15,
     except Exception as e:
         logger.error(f"Failed to retrieve observations: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/observations/file", summary="Serve an observation image file")
+async def serve_observation_file(
+    path: str = Query(..., description="Relative path to the image file"),
+    token: str = Query(..., description="Access token for authentication"),
+):
+    payload = auth.decode_token_safe(token, "access")
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    filedir = os.path.realpath(config.DATA_DIR)
+    filepath = os.path.realpath(os.path.join(config.DATA_DIR, path))
+    if not filepath.startswith(filedir + os.sep):
+        raise HTTPException(status_code=403, detail="Access denied")
+    if not os.path.isfile(filepath):
+        raise HTTPException(status_code=404, detail="File not found")
+    return FileResponse(filepath)
 
 
 @app.get("/api/insights", summary="Retrieve past Gemini summaries and activity insights")
@@ -543,15 +586,6 @@ async def startup_event():
     asyncio.create_task(heartbeat())
 
     await database.init()
-    auth._get_secret()  # ensure JWT_SECRET exists
-
-    if not config.fernet_key():
-        key = Fernet.generate_key().decode()
-        os.environ["FERNET_KEY"] = key
-        env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
-        with open(env_path, "a") as f:
-            f.write(f"\nFERNET_KEY={key}\n")
-        logger.info("Generated new FERNET_KEY and appended to .env")
 
     logger.info("Server startup complete")
 

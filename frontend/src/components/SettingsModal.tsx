@@ -25,6 +25,9 @@ export interface SettingsData {
   geminiKey: string
   cartesiaKey: string
   sonioxKey: string
+  geminiKeyConfigured: boolean
+  cartesiaKeyConfigured: boolean
+  sonioxKeyConfigured: boolean
   ttsVoice: string
   ttsVolume: number
   ttsSpeed: number
@@ -79,15 +82,30 @@ export default function SettingsModal({ isOpen, onClose, onSave, settings, onCha
               <div className="flex flex-col gap-4">
                 <div className="flex flex-col gap-1.5">
                   <label className="text-xs font-medium text-slate-700">{t('settings.geminiApiKey')}</label>
-                  <Input type="password" value={settings.geminiKey} onChange={e => onChange('geminiKey', e.target.value)} className="bg-[#f9f9f9] border-slate-200 text-sm focus-visible:ring-slate-300" placeholder={t('settings.placeholderGemini')} />
+                  <div className="relative">
+                    <Input type="password" value={settings.geminiKey} onChange={e => onChange('geminiKey', e.target.value)} className="bg-[#f9f9f9] border-slate-200 text-sm focus-visible:ring-slate-300" placeholder={t('settings.placeholderGemini')} />
+                    {settings.geminiKeyConfigured && (
+                      <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100 pointer-events-none">Configured</span>
+                    )}
+                  </div>
                 </div>
                 <div className="flex flex-col gap-1.5">
                   <label className="text-xs font-medium text-slate-700">{t('settings.cartesiaApiKey')}</label>
-                  <Input type="password" value={settings.cartesiaKey} onChange={e => onChange('cartesiaKey', e.target.value)} className="bg-[#f9f9f9] border-slate-200 text-sm focus-visible:ring-slate-300" placeholder={t('settings.placeholderCartesia')} />
+                  <div className="relative">
+                    <Input type="password" value={settings.cartesiaKey} onChange={e => onChange('cartesiaKey', e.target.value)} className="bg-[#f9f9f9] border-slate-200 text-sm focus-visible:ring-slate-300" placeholder={t('settings.placeholderCartesia')} />
+                    {settings.cartesiaKeyConfigured && (
+                      <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100 pointer-events-none">Configured</span>
+                    )}
+                  </div>
                 </div>
                 <div className="flex flex-col gap-1.5">
                   <label className="text-xs font-medium text-slate-700">{t('settings.sonioxApiKey')}</label>
-                  <Input type="password" value={settings.sonioxKey} onChange={e => onChange('sonioxKey', e.target.value)} className="bg-[#f9f9f9] border-slate-200 text-sm focus-visible:ring-slate-300" placeholder={t('settings.placeholderSoniox')} />
+                  <div className="relative">
+                    <Input type="password" value={settings.sonioxKey} onChange={e => onChange('sonioxKey', e.target.value)} className="bg-[#f9f9f9] border-slate-200 text-sm focus-visible:ring-slate-300" placeholder={t('settings.placeholderSoniox')} />
+                    {settings.sonioxKeyConfigured && (
+                      <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100 pointer-events-none">Configured</span>
+                    )}
+                  </div>
                 </div>
               </div>
             )}
