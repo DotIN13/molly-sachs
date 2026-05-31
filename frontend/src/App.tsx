@@ -1,19 +1,21 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { Input } from '@/components/ui/input'
 import { Settings, PenSquare, Search, FileText, Clock, Bird, Mic, Volume2, VolumeX, RefreshCw, LogOut } from 'lucide-react'
 import { updateObserverConfig } from './observers'
 import { API_URL, isElectron } from './config'
 import useAudioVisualizer from './hooks/useAudioVisualizer'
 import useWebRTC from './hooks/useWebRTC'
 import SettingsModal from './components/SettingsModal'
+import Markdown from './components/Markdown'
+
 import { useAuth } from './contexts/AuthContext'
 import Login from './pages/Login'
+import 'katex/dist/katex.min.css'
 
 export default function App() {
   const auth = useAuth()
 
   const [messages, setMessages] = useState<{ role: string, content: string }[]>([
-    { role: 'assistant', content: 'I love using this AI companion. For my meetings and beyond.' }
+    { role: 'assistant', content: "Hi, I'm Molly!" }
   ])
   const [input, setInput] = useState('')
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
@@ -58,6 +60,7 @@ export default function App() {
   const scrollRef = useRef<HTMLDivElement>(null)
   const refreshConversationsRef = useRef<() => void>(() => { })
   const appliedSettingsRef = useRef<Record<string, any>>({})
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   const { dcRef, pcRef, disconnectWebRTC, connectWebRTC, sendChatMessage } = useWebRTC({
     backendStatus,
@@ -217,7 +220,7 @@ export default function App() {
         setMessages(data);
       } else {
         setMessages([
-          { role: 'assistant', content: 'I love using this AI companion. For my meetings and beyond.' }
+          { role: 'assistant', content: "Hi, I'm Molly!" }
         ]);
       }
     } catch (e) {
@@ -241,7 +244,7 @@ export default function App() {
         setActiveConversationId(data.id);
       }
       setMessages([
-        { role: 'assistant', content: 'I love using this AI companion. For my meetings and beyond.' }
+        { role: 'assistant', content: "Hi, I'm Molly!" }
       ]);
     } catch (e) {
       console.error("Failed to create new conversation");
@@ -272,6 +275,14 @@ export default function App() {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [messages])
+
+  useEffect(() => {
+    const el = textareaRef.current
+    if (el) {
+      el.style.height = 'auto'
+      el.style.height = el.scrollHeight + 'px'
+    }
+  }, [input])
 
   const saveSettings = async () => {
     try {
@@ -538,7 +549,7 @@ export default function App() {
             {messages.map((m, i) => (
               <div key={i} className={`flex w-full ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                 <div className={`px-4 py-2.5 ${m.role === 'user' ? 'lux-bubble-user' : 'lux-bubble-ai'}`}>
-                  {m.content}
+                  {m.role === 'user' ? m.content : <Markdown content={m.content} />}
                 </div>
               </div>
             ))}
@@ -745,22 +756,29 @@ export default function App() {
 
         {/* Input Area */}
         <div className={`p-6 bg-gradient-to-t from-white via-white to-transparent flex-shrink-0 border-t border-slate-50 ${activeTab === 'chat' ? '' : 'hidden'}`}>
-          <div className="max-w-2xl mx-auto flex items-center gap-2 bg-[#f9f9f9] border border-slate-200 rounded-full px-4 py-1.5 shadow-sm focus-within:ring-1 focus-within:ring-slate-350 transition-all">
-            <div className="text-slate-400 flex items-center justify-center">
+          <div className="max-w-2xl mx-auto flex items-end gap-2 bg-[#f9f9f9] border border-slate-200 rounded-2xl px-4 py-2 shadow-sm focus-within:ring-1 focus-within:ring-slate-350 transition-all">
+            <div className="text-slate-400 flex items-center justify-center h-8">
               <span className="text-lg leading-none mb-1 opacity-60">...</span>
             </div>
-            <Input
+            <textarea
+              ref={textareaRef}
               value={input}
               onChange={e => setInput(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && sendMessage()}
-              className="flex-1 bg-transparent border-0 focus-visible:ring-0 focus-visible:ring-offset-0 px-2 text-slate-700 text-sm shadow-none"
+              onKeyDown={e => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault()
+                  sendMessage()
+                }
+              }}
+              className="flex-1 bg-transparent border-0 focus-visible:ring-0 focus-visible:ring-offset-0 px-2 text-slate-700 text-sm shadow-none resize-none outline-none min-h-[32px] max-h-[200px] py-1 leading-6"
               placeholder="Ask Molly about your context..."
               disabled={voiceMode}
+              rows={1}
             />
             <button
               onClick={() => setVoiceMode(!voiceMode)}
               className={`flex items-center justify-center transition-all border ${voiceMode
-                ? 'px-3 py-1.5 rounded-full bg-rose-50 border-rose-200 shadow-sm gap-2 ring-1 ring-rose-100'
+                ? 'px-3 h-8 rounded-full bg-rose-50 border-rose-200 shadow-sm gap-2 ring-1 ring-rose-100'
                 : 'w-8 h-8 rounded-full bg-slate-50 text-slate-500 hover:text-slate-800 border-slate-200 hover:bg-slate-100'
                 }`}
               title={voiceMode ? "Turn Off Voice Mode" : "Turn On Voice Mode"}
@@ -790,7 +808,7 @@ export default function App() {
             <button
               onClick={sendMessage}
               disabled={voiceMode || !input.trim()}
-              className="flex items-center gap-1.5 text-xs font-semibold text-slate-700 bg-white border border-slate-200 px-3.5 py-1.5 rounded-full shadow-sm hover:bg-slate-50 transition-all disabled:opacity-50"
+              className="flex items-center gap-1.5 text-xs font-semibold text-slate-700 bg-white border border-slate-200 px-3.5 h-8 rounded-full shadow-sm hover:bg-slate-50 transition-all disabled:opacity-50"
             >
               <div className="w-2 h-2 bg-slate-900 rounded-sm"></div>
               Send
