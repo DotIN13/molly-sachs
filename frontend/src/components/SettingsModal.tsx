@@ -1,16 +1,25 @@
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Input } from '@/components/ui/input'
 import { triggerObservationsCapture } from '../observers'
 import { API_URL, isElectron } from '../config'
 
 const VOICE_PRESETS = [
-  { id: '6eb8965c-e295-47bd-a9e4-3eeebb3abcff', name: 'Jing - Clear Coordinator', label: 'Clear Mandarin female for reliable business communication.', lang: 'Chinese, Mandarin' },
-  { id: 'db6b0ed5-d5d3-463d-ae85-518a07d3c2b4', name: 'Skylar - Friendly Guide', label: 'Approachable American female ideal for customer care and support.', lang: 'English, American' },
-  { id: '62ae83ad-4f6a-430b-af41-a9bede9286ca', name: 'Gemma - Decisive Agent', label: 'Confident, emotive British female for professional assistance.', lang: 'English, British' },
-  { id: 'f786b574-daa5-4673-aa0c-cbe3e8534c02', name: 'Katie - Friendly Fixer', label: 'Enunciating young adult female for conversational support use cases.', lang: 'English, American' },
-  { id: 'ef191366-f52f-447a-a398-ed8c0f2943a1', name: 'Archie - Approachable Mate', label: 'Warm, conversational British male for casual and engaging dialogue.', lang: 'English, British' },
-  { id: '78386a09-04ef-484d-9b9d-efd13087b792', name: 'Lee - Adorable Friend', label: 'Chinese Mandarin voice.', lang: 'Chinese, Mandarin' },
+  { id: '6eb8965c-e295-47bd-a9e4-3eeebb3abcff', nameKey: 'voices:jing', descKey: 'voices:jingDesc', langKey: 'voiceLanguages:chineseMandarin' },
+  { id: 'db6b0ed5-d5d3-463d-ae85-518a07d3c2b4', nameKey: 'voices:skylar', descKey: 'voices:skylarDesc', langKey: 'voiceLanguages:englishAmerican' },
+  { id: '62ae83ad-4f6a-430b-af41-a9bede9286ca', nameKey: 'voices:gemma', descKey: 'voices:gemmaDesc', langKey: 'voiceLanguages:englishBritish' },
+  { id: 'f786b574-daa5-4673-aa0c-cbe3e8534c02', nameKey: 'voices:katie', descKey: 'voices:katieDesc', langKey: 'voiceLanguages:englishAmerican' },
+  { id: 'ef191366-f52f-447a-a398-ed8c0f2943a1', nameKey: 'voices:archie', descKey: 'voices:archieDesc', langKey: 'voiceLanguages:englishBritish' },
+  { id: '78386a09-04ef-484d-9b9d-efd13087b792', nameKey: 'voices:lee', descKey: 'voices:leeDesc', langKey: 'voiceLanguages:chineseMandarin' },
 ]
+
+const TTS_LANGUAGES = [
+  { code: 'en', key: 'languages:en' }, { code: 'zh', key: 'languages:zh' }, { code: 'ja', key: 'languages:ja' },
+  { code: 'es', key: 'languages:es' }, { code: 'fr', key: 'languages:fr' }, { code: 'de', key: 'languages:de' },
+  { code: 'pt', key: 'languages:pt' }, { code: 'it', key: 'languages:it' },
+]
+
+const EMOTIONS = ['calm', 'happy', 'excited', 'enthusiastic', 'curious', 'content', 'peaceful', 'serene', 'grateful', 'affectionate', 'flirtatious', 'sarcastic', 'sad', 'wistful', 'apologetic', 'confident', 'neutral']
 
 export interface SettingsData {
   geminiKey: string
@@ -43,6 +52,7 @@ interface Props {
 }
 
 export default function SettingsModal({ isOpen, onClose, onSave, settings, onChange, fetchObservations }: Props) {
+  const { t } = useTranslation()
   const [customVoiceId, setCustomVoiceId] = useState('')
 
   if (!isOpen) return null
@@ -57,27 +67,27 @@ export default function SettingsModal({ isOpen, onClose, onSave, settings, onCha
       <div className="w-full max-w-2xl bg-white rounded-xl overflow-hidden shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-slate-100 animate-in zoom-in-95 flex flex-col h-[500px]" onClick={e => e.stopPropagation()}>
         <div className="flex flex-1 overflow-hidden">
           <div className="w-48 bg-slate-50 border-r border-slate-100 px-3 py-8 flex flex-col gap-1 overflow-y-auto">
-            <button onClick={() => onChange('settingsTab', 'speech')} className={`text-left px-3 py-2 rounded-md text-xs font-medium transition-colors ${settings.settingsTab === 'speech' ? 'bg-white text-slate-900 shadow-sm border border-slate-200' : 'text-slate-600 hover:bg-slate-100'}`}>Speech</button>
+            <button onClick={() => onChange('settingsTab', 'speech')} className={`text-left px-3 py-2 rounded-md text-xs font-medium transition-colors ${settings.settingsTab === 'speech' ? 'bg-white text-slate-900 shadow-sm border border-slate-200' : 'text-slate-600 hover:bg-slate-100'}`}>{t('settings.speech')}</button>
             {isElectron && (
-              <button onClick={() => onChange('settingsTab', 'observers')} className={`text-left px-3 py-2 rounded-md text-xs font-medium transition-colors ${settings.settingsTab === 'observers' ? 'bg-white text-slate-900 shadow-sm border border-slate-200' : 'text-slate-600 hover:bg-slate-100'}`}>Observers</button>
+              <button onClick={() => onChange('settingsTab', 'observers')} className={`text-left px-3 py-2 rounded-md text-xs font-medium transition-colors ${settings.settingsTab === 'observers' ? 'bg-white text-slate-900 shadow-sm border border-slate-200' : 'text-slate-600 hover:bg-slate-100'}`}>{t('settings.observers')}</button>
             )}
-            <button onClick={() => onChange('settingsTab', 'api')} className={`text-left px-3 py-2 rounded-md text-xs font-medium transition-colors ${settings.settingsTab === 'api' ? 'bg-white text-slate-900 shadow-sm border border-slate-200' : 'text-slate-600 hover:bg-slate-100'}`}>API Config</button>
+            <button onClick={() => onChange('settingsTab', 'api')} className={`text-left px-3 py-2 rounded-md text-xs font-medium transition-colors ${settings.settingsTab === 'api' ? 'bg-white text-slate-900 shadow-sm border border-slate-200' : 'text-slate-600 hover:bg-slate-100'}`}>{t('settings.apiConfig')}</button>
           </div>
 
           <div className="flex-1 px-6 py-10 overflow-y-auto">
             {settings.settingsTab === 'api' && (
               <div className="flex flex-col gap-4">
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-medium text-slate-700">Gemini API Key</label>
-                  <Input type="password" value={settings.geminiKey} onChange={e => onChange('geminiKey', e.target.value)} className="bg-[#f9f9f9] border-slate-200 text-sm focus-visible:ring-slate-300" placeholder="AIzaSy..." />
+                  <label className="text-xs font-medium text-slate-700">{t('settings.geminiApiKey')}</label>
+                  <Input type="password" value={settings.geminiKey} onChange={e => onChange('geminiKey', e.target.value)} className="bg-[#f9f9f9] border-slate-200 text-sm focus-visible:ring-slate-300" placeholder={t('settings.placeholderGemini')} />
                 </div>
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-medium text-slate-700">Cartesia API Key (TTS)</label>
-                  <Input type="password" value={settings.cartesiaKey} onChange={e => onChange('cartesiaKey', e.target.value)} className="bg-[#f9f9f9] border-slate-200 text-sm focus-visible:ring-slate-300" placeholder="sk-..." />
+                  <label className="text-xs font-medium text-slate-700">{t('settings.cartesiaApiKey')}</label>
+                  <Input type="password" value={settings.cartesiaKey} onChange={e => onChange('cartesiaKey', e.target.value)} className="bg-[#f9f9f9] border-slate-200 text-sm focus-visible:ring-slate-300" placeholder={t('settings.placeholderCartesia')} />
                 </div>
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-medium text-slate-700">Soniox API Key (STT)</label>
-                  <Input type="password" value={settings.sonioxKey} onChange={e => onChange('sonioxKey', e.target.value)} className="bg-[#f9f9f9] border-slate-200 text-sm focus-visible:ring-slate-300" placeholder="soniox-..." />
+                  <label className="text-xs font-medium text-slate-700">{t('settings.sonioxApiKey')}</label>
+                  <Input type="password" value={settings.sonioxKey} onChange={e => onChange('sonioxKey', e.target.value)} className="bg-[#f9f9f9] border-slate-200 text-sm focus-visible:ring-slate-300" placeholder={t('settings.placeholderSoniox')} />
                 </div>
               </div>
             )}
@@ -85,10 +95,10 @@ export default function SettingsModal({ isOpen, onClose, onSave, settings, onCha
             {settings.settingsTab === 'speech' && (
               <div className="flex flex-col gap-4">
                 <div className="pt-1 pb-2 border-b border-slate-100">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Speech Output (TTS)</span>
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{t('settings.ttsSection')}</span>
                 </div>
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-medium text-slate-700">Voice</label>
+                  <label className="text-xs font-medium text-slate-700">{t('settings.voice')}</label>
                   <select
                     value={VOICE_PRESETS.some(v => v.id === settings.ttsVoice) ? settings.ttsVoice : '__custom__'}
                     onChange={e => {
@@ -101,13 +111,13 @@ export default function SettingsModal({ isOpen, onClose, onSave, settings, onCha
                     className="bg-[#f9f9f9] border border-slate-200 text-sm focus-visible:ring-slate-300 rounded-md h-9 px-3 outline-none"
                   >
                     {VOICE_PRESETS.map(v => (
-                      <option key={v.id} value={v.id}>{v.name} ({v.lang})</option>
+                      <option key={v.id} value={v.id}>{t(v.nameKey)} ({t(v.langKey)})</option>
                     ))}
-                    <option value="__custom__">Custom...</option>
+                    <option value="__custom__">{t('settings.customVoice')}</option>
                   </select>
                   {!VOICE_PRESETS.some(v => v.id === settings.ttsVoice) && (
                     <div className="flex flex-col gap-1">
-                      <label className="text-[10px] font-medium text-slate-500">Custom Voice ID</label>
+                      <label className="text-[10px] font-medium text-slate-500">{t('settings.customVoiceId')}</label>
                       <Input
                         value={settings.ttsVoice}
                         onChange={e => {
@@ -115,61 +125,53 @@ export default function SettingsModal({ isOpen, onClose, onSave, settings, onCha
                           onChange('ttsVoice', e.target.value)
                         }}
                         className="bg-[#f9f9f9] border-slate-200 text-sm focus-visible:ring-slate-300 font-mono"
-                        placeholder="6eb8965c-e295-..."
+                        placeholder={t('settings.placeholderCustomVoice')}
                       />
                     </div>
                   )}
                 </div>
                 <div className="flex items-center gap-4">
                   <div className="flex-1 flex flex-col gap-1.5">
-                    <label className="text-xs font-medium text-slate-700 flex justify-between">Volume <span>{settings.ttsVolume}</span></label>
+                    <label className="text-xs font-medium text-slate-700 flex justify-between">{t('settings.volume')} <span>{settings.ttsVolume}</span></label>
                     <input type="range" min="0.5" max="2.0" step="0.1" value={settings.ttsVolume} onChange={e => onChange('ttsVolume', parseFloat(e.target.value))} className="w-full accent-slate-900" />
                   </div>
                   <div className="flex-1 flex flex-col gap-1.5">
-                    <label className="text-xs font-medium text-slate-700 flex justify-between">Speed <span>{settings.ttsSpeed}</span></label>
+                    <label className="text-xs font-medium text-slate-700 flex justify-between">{t('settings.speed')} <span>{settings.ttsSpeed}</span></label>
                     <input type="range" min="0.6" max="1.5" step="0.1" value={settings.ttsSpeed} onChange={e => onChange('ttsSpeed', parseFloat(e.target.value))} className="w-full accent-slate-900" />
                   </div>
                 </div>
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-medium text-slate-700">Emotion</label>
+                  <label className="text-xs font-medium text-slate-700">{t('settings.emotion')}</label>
                   <select value={settings.ttsEmotion} onChange={e => onChange('ttsEmotion', e.target.value)} className="bg-[#f9f9f9] border border-slate-200 text-sm focus-visible:ring-slate-300 rounded-md h-9 px-3 outline-none">
-                    {['calm', 'happy', 'excited', 'enthusiastic', 'curious', 'content', 'peaceful', 'serene', 'grateful', 'affectionate', 'flirtatious', 'sarcastic', 'sad', 'wistful', 'apologetic', 'confident', 'neutral'].map(emotion => (
-                      <option key={emotion} value={emotion}>{emotion.charAt(0).toUpperCase() + emotion.slice(1)}</option>
+                    {EMOTIONS.map(emotion => (
+                      <option key={emotion} value={emotion}>{t(`emotions:${emotion}`)}</option>
                     ))}
                   </select>
                 </div>
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-medium text-slate-700">TTS Language</label>
+                  <label className="text-xs font-medium text-slate-700">{t('settings.ttsLanguage')}</label>
                   <select value={settings.ttsLanguage} onChange={e => onChange('ttsLanguage', e.target.value)} className="bg-[#f9f9f9] border border-slate-200 text-sm focus-visible:ring-slate-300 rounded-md h-9 px-3 outline-none">
-                    {[
-                      { code: 'en', label: 'English' }, { code: 'zh', label: 'Chinese' }, { code: 'ja', label: 'Japanese' },
-                      { code: 'es', label: 'Spanish' }, { code: 'fr', label: 'French' }, { code: 'de', label: 'German' },
-                      { code: 'pt', label: 'Portuguese' }, { code: 'it', label: 'Italian' }
-                    ].map(lang => (
-                      <option key={lang.code} value={lang.code}>{lang.label}</option>
+                    {TTS_LANGUAGES.map(lang => (
+                      <option key={lang.code} value={lang.code}>{t(lang.key)}</option>
                     ))}
                   </select>
                 </div>
 
                 <div className="pt-4 pb-2 border-b border-slate-100">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Speech Input (STT)</span>
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{t('settings.sttSection')}</span>
                 </div>
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-medium text-slate-700">Provider</label>
+                  <label className="text-xs font-medium text-slate-700">{t('settings.provider')}</label>
                   <select value={settings.sttProvider} onChange={e => onChange('sttProvider', e.target.value)} className="bg-[#f9f9f9] border border-slate-200 text-sm focus-visible:ring-slate-300 rounded-md h-9 px-3 outline-none">
-                    <option value="soniox">Soniox (Recommended)</option>
-                    <option value="cartesia">Cartesia</option>
+                    <option value="soniox">{t('settings.sonioxRecommended')}</option>
+                    <option value="cartesia">{t('settings.cartesia')}</option>
                   </select>
                 </div>
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-medium text-slate-700">Transcription Language</label>
+                  <label className="text-xs font-medium text-slate-700">{t('settings.transcriptionLanguage')}</label>
                   <select value={settings.sttLanguage} onChange={e => onChange('sttLanguage', e.target.value)} className="bg-[#f9f9f9] border border-slate-200 text-sm focus-visible:ring-slate-300 rounded-md h-9 px-3 outline-none">
-                    {[
-                      { code: 'en', label: 'English' }, { code: 'zh', label: 'Chinese' }, { code: 'ja', label: 'Japanese' },
-                      { code: 'es', label: 'Spanish' }, { code: 'fr', label: 'French' }, { code: 'de', label: 'German' },
-                      { code: 'pt', label: 'Portuguese' }, { code: 'it', label: 'Italian' }
-                    ].map(lang => (
-                      <option key={lang.code} value={lang.code}>{lang.label}</option>
+                    {TTS_LANGUAGES.map(lang => (
+                      <option key={lang.code} value={lang.code}>{t(lang.key)}</option>
                     ))}
                   </select>
                 </div>
@@ -180,8 +182,8 @@ export default function SettingsModal({ isOpen, onClose, onSave, settings, onCha
               <div className="flex flex-col gap-4 animate-in fade-in duration-200">
                 <div className="flex items-center justify-between p-3.5 bg-slate-50 border border-slate-200/60 rounded-xl">
                   <div className="flex flex-col">
-                    <span className="text-xs font-bold text-slate-800">Screen Capture Observer</span>
-                    <span className="text-[10px] text-slate-400 mt-0.5 font-medium">Periodically capture your active workspace</span>
+                    <span className="text-xs font-bold text-slate-800">{t('settings.screenObserver')}</span>
+                    <span className="text-[10px] text-slate-400 mt-0.5 font-medium">{t('settings.screenObserverDesc')}</span>
                   </div>
                   <input
                     type="checkbox"
@@ -193,8 +195,8 @@ export default function SettingsModal({ isOpen, onClose, onSave, settings, onCha
 
                 <div className="flex items-center justify-between p-3.5 bg-slate-50 border border-slate-200/60 rounded-xl">
                   <div className="flex flex-col">
-                    <span className="text-xs font-bold text-slate-800">Camera Snaps Observer</span>
-                    <span className="text-[10px] text-slate-400 mt-0.5 font-medium">Periodically capture camera frame</span>
+                    <span className="text-xs font-bold text-slate-800">{t('settings.cameraObserver')}</span>
+                    <span className="text-[10px] text-slate-400 mt-0.5 font-medium">{t('settings.cameraObserverDesc')}</span>
                   </div>
                   <input
                     type="checkbox"
@@ -206,65 +208,65 @@ export default function SettingsModal({ isOpen, onClose, onSave, settings, onCha
 
                 <div className="flex flex-col gap-1.5 pt-2">
                   <label className="text-xs font-semibold text-slate-700 flex justify-between">
-                    Screen Capture Interval <span>{settings.observerScreenInterval}s</span>
+                    {t('settings.screenInterval')} <span>{settings.observerScreenInterval}s</span>
                   </label>
                   <select
                     value={settings.observerScreenInterval}
                     onChange={e => onChange('observerScreenInterval', parseInt(e.target.value))}
                     className="bg-[#f9f9f9] border border-slate-200 text-sm focus-visible:ring-slate-350 rounded-lg h-9.5 px-3 outline-none"
                   >
-                    <option value={15}>15 Seconds</option>
-                    <option value={30}>30 Seconds</option>
-                    <option value={60}>1 Minute (Default)</option>
-                    <option value={120}>2 Minutes</option>
-                    <option value={300}>5 Minutes</option>
+                    <option value={15}>{t('settings.seconds15')}</option>
+                    <option value={30}>{t('settings.seconds30')}</option>
+                    <option value={60}>{t('settings.minute1')}</option>
+                    <option value={120}>{t('settings.minutes2')}</option>
+                    <option value={300}>{t('settings.minutes5')}</option>
                   </select>
                 </div>
 
                 <div className="flex flex-col gap-1.5 pt-2">
                   <label className="text-xs font-semibold text-slate-700 flex justify-between">
-                    Camera Capture Interval <span>{settings.observerCameraInterval}s</span>
+                    {t('settings.cameraInterval')} <span>{settings.observerCameraInterval}s</span>
                   </label>
                   <select
                     value={settings.observerCameraInterval}
                     onChange={e => onChange('observerCameraInterval', parseInt(e.target.value))}
                     className="bg-[#f9f9f9] border border-slate-200 text-sm focus-visible:ring-slate-350 rounded-lg h-9.5 px-3 outline-none"
                   >
-                    <option value={30}>30 Seconds</option>
-                    <option value={60}>1 Minute</option>
-                    <option value={120}>2 Minutes (Default)</option>
-                    <option value={300}>5 Minutes</option>
-                    <option value={600}>10 Minutes</option>
+                    <option value={30}>{t('settings.seconds30')}</option>
+                    <option value={60}>{t('settings.minute1Short')}</option>
+                    <option value={120}>{t('settings.minutes2Default')}</option>
+                    <option value={300}>{t('settings.minutes5')}</option>
+                    <option value={600}>{t('settings.minutes10')}</option>
                   </select>
                 </div>
 
                 <div className="flex flex-col gap-1.5">
                   <label className="text-xs font-semibold text-slate-700 flex justify-between">
-                    Gemini Processing Interval <span>{settings.observerProcessInterval / 60}m</span>
+                    {t('settings.processInterval')} <span>{settings.observerProcessInterval / 60}m</span>
                   </label>
                   <select
                     value={settings.observerProcessInterval}
                     onChange={e => onChange('observerProcessInterval', parseInt(e.target.value))}
                     className="bg-[#f9f9f9] border border-slate-200 text-sm focus-visible:ring-slate-350 rounded-lg h-9.5 px-3 outline-none"
                   >
-                    <option value={120}>2 Minutes</option>
-                    <option value={300}>5 Minutes (Default)</option>
-                    <option value={600}>10 Minutes</option>
-                    <option value={900}>15 Minutes</option>
+                    <option value={120}>{t('settings.minutes2')}</option>
+                    <option value={300}>{t('settings.minutes5Default')}</option>
+                    <option value={600}>{t('settings.minutes10')}</option>
+                    <option value={900}>{t('settings.minutes15')}</option>
                   </select>
                 </div>
 
                 {settings.debugMode && (
                   <div className="flex flex-col gap-2 pt-4 border-t border-amber-200 mt-2">
                     <span className="text-[10px] font-bold text-amber-600 uppercase tracking-wider flex items-center gap-1.5">
-                      <span className="w-1.5 h-1.5 bg-amber-500 rounded-full" /> Debug Actions
+                      <span className="w-1.5 h-1.5 bg-amber-500 rounded-full" /> {t('settings.debugActions')}
                     </span>
                     <div className="flex gap-2">
                       <button
                         onClick={async () => { await triggerObservationsCapture(); fetchObservations('screen', true) }}
                         className="text-[10px] font-semibold text-amber-700 hover:text-amber-900 bg-amber-50 border border-amber-200 px-3 py-1.5 rounded-lg transition-all"
                       >
-                        Capture Now
+                        {t('settings.captureNow')}
                       </button>
                       <button
                         onClick={async () => {
@@ -279,7 +281,7 @@ export default function SettingsModal({ isOpen, onClose, onSave, settings, onCha
                         }}
                         className="text-[10px] font-semibold text-amber-700 hover:text-amber-900 bg-amber-50 border border-amber-200 px-3 py-1.5 rounded-lg transition-all"
                       >
-                        Process Now
+                        {t('settings.processNow')}
                       </button>
                     </div>
                   </div>

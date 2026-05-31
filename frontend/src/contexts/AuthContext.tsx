@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react'
+import i18n from '../i18n/config'
 import { API_URL } from '../config'
 
 interface User {
@@ -157,8 +158,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       body: JSON.stringify({ email, password }),
     })
     if (!res.ok) {
-      const err = await res.json().catch(() => ({ detail: 'Login failed' }))
-      throw new Error(err.detail || 'Login failed')
+      const err = await res.json().catch(() => ({ detail: i18n.t('login.loginFailed') }))
+      throw new Error(err.detail || i18n.t('login.loginFailed'))
     }
     const data = await res.json()
     setUser(data.user)
@@ -174,8 +175,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       body: JSON.stringify({ email, password, name }),
     })
     if (!res.ok) {
-      const err = await res.json().catch(() => ({ detail: 'Registration failed' }))
-      throw new Error(err.detail || 'Registration failed')
+      const err = await res.json().catch(() => ({ detail: i18n.t('login.registrationFailed') }))
+      throw new Error(err.detail || i18n.t('login.registrationFailed'))
     }
     return await res.json()
   }, [])
@@ -187,8 +188,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       body: JSON.stringify({ email, code }),
     })
     if (!res.ok) {
-      const err = await res.json().catch(() => ({ detail: 'Verification failed' }))
-      throw new Error(err.detail || 'Verification failed')
+      const err = await res.json().catch(() => ({ detail: i18n.t('login.verificationFailed') }))
+      throw new Error(err.detail || i18n.t('login.verificationFailed'))
     }
     const data = await res.json()
     setUser(data.user)

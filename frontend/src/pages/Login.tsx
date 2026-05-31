@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useAuth } from '../contexts/AuthContext'
 import { Input } from '@/components/ui/input'
 import { API_URL } from '../config'
@@ -7,6 +8,7 @@ type Stage = 'login' | 'register' | 'verify'
 
 export default function Login() {
   const auth = useAuth()
+  const { t } = useTranslation()
 
   const [stage, setStage] = useState<Stage>('login')
   const [email, setEmail] = useState('')
@@ -67,9 +69,9 @@ export default function Login() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email }),
       })
-      setError('Verification code resent')
+      setError(t('login.codeResent'))
     } catch {
-      setError('Failed to resend code')
+      setError(t('login.codeResendFailed'))
     } finally {
       setBusy(false)
     }
@@ -81,16 +83,16 @@ export default function Login() {
         <div className="w-full max-w-sm space-y-6">
           <div className="text-center space-y-2">
             <div className="flex justify-center mb-4">
-              <img src="./logo.jpg" alt="Molly Logo" className="w-16 h-16 rounded-full object-cover border border-slate-200 shadow-sm" />
+              <img src="./logo.jpg" alt={t('login.title')} className="w-16 h-16 rounded-full object-cover border border-slate-200 shadow-sm" />
             </div>
-            <h1 className="text-2xl font-bold text-slate-800">Check Your Email</h1>
+            <h1 className="text-2xl font-bold text-slate-800">{t('login.checkEmailTitle')}</h1>
             <p className="text-slate-500 text-sm">
-              We sent a 6-digit code to <strong className="text-slate-700">{email}</strong>
+              {t('login.sentCodeTo')} <strong className="text-slate-700">{email}</strong>
             </p>
           </div>
           <form onSubmit={handleVerify} className="space-y-4">
             <Input
-              placeholder="Verification code"
+              placeholder={t('login.placeholderCode')}
               value={code}
               onChange={(e) => setCode(e.target.value)}
               maxLength={6}
@@ -103,7 +105,7 @@ export default function Login() {
               disabled={busy || code.length < 6}
               className="w-full py-2.5 bg-slate-900 text-white rounded-lg font-medium hover:bg-slate-800 disabled:opacity-50 transition-colors"
             >
-              {busy ? 'Verifying...' : 'Verify Email'}
+              {busy ? t('login.verifying') : t('login.verifyEmail')}
             </button>
           </form>
           <button
@@ -111,13 +113,13 @@ export default function Login() {
             disabled={busy}
             className="w-full text-slate-400 text-sm hover:text-slate-600 transition-colors"
           >
-            Resend code
+            {t('login.resendCode')}
           </button>
           <button
             onClick={() => { setStage('register'); setError('') }}
             className="w-full text-slate-400 text-sm hover:text-slate-600 transition-colors"
           >
-            Back to sign up
+            {t('login.backToSignup')}
           </button>
         </div>
       </div>
@@ -131,11 +133,11 @@ export default function Login() {
       <div className="w-full max-w-sm space-y-6">
         <div className="text-center space-y-3">
           <div className="flex justify-center">
-            <img src="./logo.jpg" alt="Molly Logo" className="w-16 h-16 rounded-full object-cover border border-slate-200 shadow-sm" />
+            <img src="./logo.jpg" alt={t('login.title')} className="w-16 h-16 rounded-full object-cover border border-slate-200 shadow-sm" />
           </div>
-          <h1 className="text-2xl font-bold text-slate-800">Molly Sachs</h1>
+          <h1 className="text-2xl font-bold text-slate-800">{t('login.title')}</h1>
           <p className="text-slate-500 text-sm">
-            {isRegister ? 'Create your account' : 'Sign in to continue'}
+            {isRegister ? t('login.createAccount') : t('login.signInPrompt')}
           </p>
         </div>
         <form
@@ -144,7 +146,7 @@ export default function Login() {
         >
           {isRegister && (
             <Input
-              placeholder="Display name (optional)"
+              placeholder={t('login.placeholderName')}
               value={name}
               onChange={(e) => setName(e.target.value)}
               className="bg-white border-slate-200"
@@ -152,7 +154,7 @@ export default function Login() {
           )}
           <Input
             type="email"
-            placeholder="Email"
+            placeholder={t('login.placeholderEmail')}
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             required
@@ -161,7 +163,7 @@ export default function Login() {
           />
           <Input
             type="password"
-            placeholder="Password"
+            placeholder={t('login.placeholderPassword')}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             required
@@ -175,15 +177,15 @@ export default function Login() {
             className="w-full py-2.5 bg-slate-900 text-white rounded-lg font-medium hover:bg-slate-800 disabled:opacity-50 transition-colors"
           >
             {busy
-              ? (isRegister ? 'Creating account...' : 'Signing in...')
-              : (isRegister ? 'Create account' : 'Sign in')}
+              ? (isRegister ? t('login.creating') : t('login.signingIn'))
+              : (isRegister ? t('login.createAccountBtn') : t('login.signInBtn'))}
           </button>
         </form>
         <button
           onClick={() => { setStage(isRegister ? 'login' : 'register'); setError('') }}
           className="w-full text-slate-400 text-sm hover:text-slate-600 transition-colors"
         >
-          {isRegister ? 'Already have an account? Sign in' : "Don't have an account? Sign up"}
+          {isRegister ? t('login.switchToSignin') : t('login.switchToSignup')}
         </button>
       </div>
     </div>

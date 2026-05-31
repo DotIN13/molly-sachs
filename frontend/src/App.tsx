@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { Settings, PenSquare, Search, FileText, Clock, Bird, Mic, Volume2, VolumeX, RefreshCw, LogOut } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
+import { Settings, PenSquare, Search, FileText, Clock, Bird, Mic, Volume2, VolumeX, RefreshCw, LogOut, Languages } from 'lucide-react'
 import { updateObserverConfig } from './observers'
 import { API_URL, isElectron } from './config'
 import useAudioVisualizer from './hooks/useAudioVisualizer'
@@ -13,9 +14,10 @@ import 'katex/dist/katex.min.css'
 
 export default function App() {
   const auth = useAuth()
+  const { t, i18n } = useTranslation()
 
   const [messages, setMessages] = useState<{ role: string, content: string }[]>([
-    { role: 'assistant', content: "Hi, I'm Molly!" }
+    { role: 'assistant', content: t('app.helloDefault') }
   ])
   const [input, setInput] = useState('')
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
@@ -220,7 +222,7 @@ export default function App() {
         setMessages(data);
       } else {
         setMessages([
-          { role: 'assistant', content: "Hi, I'm Molly!" }
+          { role: 'assistant', content: t('app.helloDefault') }
         ]);
       }
     } catch (e) {
@@ -244,7 +246,7 @@ export default function App() {
         setActiveConversationId(data.id);
       }
       setMessages([
-        { role: 'assistant', content: "Hi, I'm Molly!" }
+        { role: 'assistant', content: t('app.helloDefault') }
       ]);
     } catch (e) {
       console.error("Failed to create new conversation");
@@ -411,7 +413,7 @@ export default function App() {
   if (auth.isLoading) {
     return (
       <div className="h-screen w-full bg-[#fafafa] flex items-center justify-center">
-        <div className="text-slate-500 text-lg">Loading...</div>
+        <div className="text-slate-500 text-lg">{t('app.loading')}</div>
       </div>
     )
   }
@@ -426,26 +428,26 @@ export default function App() {
       {/* Sidebar */}
       <div className="w-64 border-r border-slate-100 bg-[#fafafa] hidden lg:flex flex-col pt-12 pb-4">
         <div className="px-5 mb-8 flex items-center gap-3">
-          <img src="./logo.jpg" alt="Molly Logo" className="w-12 h-12 rounded-full object-cover border border-slate-100 shadow-sm" />
-          <span className="font-semibold text-slate-800 text-sm tracking-wide">Molly</span>
+          <img src="./logo.jpg" alt={t('app.title')} className="w-12 h-12 rounded-full object-cover border border-slate-100 shadow-sm" />
+          <span className="font-semibold text-slate-800 text-sm tracking-wide">{t('app.title')}</span>
         </div>
 
         <div className="flex-1 overflow-y-auto px-3 space-y-0.5">
           <button onClick={createNewConversation} className="w-full flex items-center gap-2 px-3 py-1 text-sm text-slate-600 hover:bg-slate-100 rounded-md transition-colors">
-            <PenSquare className="w-3.5 h-3.5" /> New Chat
+            <PenSquare className="w-3.5 h-3.5" /> {t('app.newChat')}
           </button>
           <button className="w-full flex items-center gap-2 px-3 py-1 text-sm text-slate-600 hover:bg-slate-100 rounded-md transition-colors">
-            <Search className="w-3.5 h-3.5" /> Search
+            <Search className="w-3.5 h-3.5" /> {t('app.search')}
           </button>
           <button className="w-full flex items-center justify-between px-3 py-1 text-sm font-medium text-slate-800 bg-[#eef2fc] rounded-md transition-colors">
-            <div className="flex items-center gap-2"><FileText className="w-3.5 h-3.5 text-blue-600" /> Active Context</div>
-            <span className="text-[9px] uppercase tracking-wider bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded">Beta</span>
+            <div className="flex items-center gap-2"><FileText className="w-3.5 h-3.5 text-blue-600" /> {t('app.activeContext')}</div>
+            <span className="text-[9px] uppercase tracking-wider bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded">{t('app.beta')}</span>
           </button>
           <button className="w-full flex items-center gap-2 px-3 py-1 text-sm text-slate-600 hover:bg-slate-100 rounded-md transition-colors">
-            <Clock className="w-3.5 h-3.5" /> Routines
+            <Clock className="w-3.5 h-3.5" /> {t('app.routines')}
           </button>
 
-          <div className="pt-6 pb-2 px-3 text-[10px] uppercase font-semibold tracking-wider text-slate-400">Conversations</div>
+          <div className="pt-6 pb-2 px-3 text-[10px] uppercase font-semibold tracking-wider text-slate-400">{t('app.conversations')}</div>
           <div className="space-y-0 overflow-y-auto max-h-[300px] pr-1">
             {conversations.map(conv => (
               <div
@@ -477,13 +479,22 @@ export default function App() {
 
 
         <div className="px-4 mt-auto space-y-2">
+          <div className="flex items-center gap-1 px-1">
+            <button
+              onClick={() => i18n.changeLanguage(i18n.language === 'zh' ? 'en' : 'zh')}
+              className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 text-[10px] font-medium rounded-md border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 transition-colors"
+            >
+              <Languages className="w-3 h-3" />
+              {i18n.language === 'zh' ? 'English' : '中文'}
+            </button>
+          </div>
           <button onClick={() => setIsSettingsOpen(true)} className="w-full flex items-center gap-2 px-2 py-2 text-xs border border-slate-200 rounded-md shadow-sm text-slate-600 hover:bg-slate-50 transition-colors">
             <div className="w-5 h-5 rounded bg-slate-200 flex items-center justify-center text-slate-600 font-medium text-[10px]">
               {auth.user?.name?.charAt(0)?.toUpperCase() || 'U'}
             </div>
             <div className="flex flex-col items-start flex-1 text-[10px]">
               <span className="font-semibold leading-tight">{auth.user?.name || 'Settings'}</span>
-              <span className="text-slate-400 leading-tight">API Config</span>
+              <span className="text-slate-400 leading-tight">{t('app.apiConfig')}</span>
             </div>
             <Settings className="w-3.5 h-3.5 opacity-50" />
           </button>
@@ -492,7 +503,7 @@ export default function App() {
             className="w-full flex items-center gap-2 px-2 py-2 text-xs border border-slate-200 rounded-md shadow-sm text-slate-500 hover:text-rose-600 hover:bg-rose-50 transition-colors"
           >
             <LogOut className="w-3 h-3" />
-            <span className="text-[10px]">Sign out</span>
+            <span className="text-[10px]">{t('app.signOut')}</span>
           </button>
         </div>
       </div>
@@ -512,7 +523,7 @@ export default function App() {
                     : 'text-slate-500 hover:text-slate-800 hover:bg-slate-200/50'
                     }`}
                 >
-                  {tab}
+                  {t(`tabs.${tab}`)}
                 </button>
               ))}
             </div>
@@ -529,14 +540,14 @@ export default function App() {
                     }`}
                 >
                   {speakText ? <Volume2 className="w-3.5 h-3.5 text-indigo-500" /> : <VolumeX className="w-3.5 h-3.5" />}
-                  {speakText ? "AI Speaking" : "AI Muted"}
+                  {speakText ? t('app.aiSpeaking') : t('app.aiMuted')}
                 </button>
 
                 <button
                   onClick={() => setMessages([])}
                   className="border border-slate-200 px-3.5 py-1.5 rounded-lg shadow-sm hover:bg-slate-50 transition-colors text-xs font-medium text-slate-500"
                 >
-                  Clear Chat
+                  {t('app.clearChat')}
                 </button>
               </>
             )}
@@ -563,15 +574,15 @@ export default function App() {
             <div className="max-w-6xl mx-auto w-full animate-in fade-in duration-300">
               <div className="flex justify-between items-center mb-6">
                 <div>
-                  <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider">Desktop Capture History</h3>
-                  <p className="text-[10px] text-slate-400 mt-0.5">Automated timestamped screenshots of your workspace to provide Molly with workspace context.</p>
+                  <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider">{t('screen.title')}</h3>
+                  <p className="text-[10px] text-slate-400 mt-0.5">{t('screen.desc')}</p>
                 </div>
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => fetchObservations('screen', true)}
                     className="text-[10px] font-semibold text-slate-500 hover:text-slate-800 bg-white border border-slate-200 px-3 py-1.5 rounded-full shadow-sm hover:shadow transition-all flex items-center gap-1.5"
                   >
-                    <RefreshCw className="w-3 h-3" /> Refresh
+                    <RefreshCw className="w-3 h-3" /> {t('app.refresh')}
                   </button>
                 </div>
               </div>
@@ -581,9 +592,9 @@ export default function App() {
                   <div className="w-12 h-12 rounded-full bg-slate-50 flex items-center justify-center mb-3">
                     <Clock className="w-6 h-6 text-slate-400" />
                   </div>
-                  <span className="text-slate-600 font-medium text-sm">No Desktop captures logged yet.</span>
+                  <span className="text-slate-600 font-medium text-sm">{t('screen.empty')}</span>
                   <span className="text-[11px] text-slate-400 mt-1 max-w-xs text-center leading-normal">
-                    Enable the Screen Capture toggle in the settings menu to initiate the automated background observation system.
+                    {t('screen.emptyHint')}
                   </span>
                 </div>
               ) : (
@@ -593,7 +604,7 @@ export default function App() {
                       <div className="relative aspect-video w-full bg-slate-950 overflow-hidden">
                         <img
                           src={`${API_URL}/static/${cap.image_path}?t=${lastRefresh}`}
-                          alt="Desktop Capture"
+                          alt={t('screen.alt')}
                           loading="lazy"
                           className="w-full h-full object-cover transition-transform group-hover:scale-105 duration-500"
                         />
@@ -603,12 +614,12 @@ export default function App() {
                       </div>
                       <div className="p-4 bg-white">
                         <div className="flex items-center justify-between">
-                          <span className="text-[10px] font-bold tracking-wider text-slate-400 uppercase">Screen Source</span>
+                          <span className="text-[10px] font-bold tracking-wider text-slate-400 uppercase">{t('screen.source')}</span>
                           <span className={`text-[9px] uppercase tracking-wider px-2 py-0.5 rounded-full font-bold ${cap.processed
                             ? 'bg-emerald-50 text-emerald-600 border border-emerald-100'
                             : 'bg-amber-50 text-amber-600 border border-amber-100'
                             }`}>
-                            {cap.processed ? 'Processed' : 'Pending'}
+                            {cap.processed ? t('status.processed') : t('status.pending')}
                           </span>
                         </div>
                         <p className="text-[10px] text-slate-500 mt-2 font-mono flex items-center gap-1.5 bg-slate-50 px-2 py-1 rounded">
@@ -627,14 +638,14 @@ export default function App() {
             <div className="max-w-6xl mx-auto w-full animate-in fade-in duration-300">
               <div className="flex justify-between items-center mb-6">
                 <div>
-                  <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider">Camera Snapshot History</h3>
-                  <p className="text-[10px] text-slate-400 mt-0.5">Continuous visual recordings of webcam environment snapshots.</p>
+                  <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider">{t('camera.title')}</h3>
+                  <p className="text-[10px] text-slate-400 mt-0.5">{t('camera.desc')}</p>
                 </div>
                 <button
                   onClick={() => fetchObservations('camera', true)}
                   className="text-[10px] font-semibold text-slate-500 hover:text-slate-800 bg-white border border-slate-200 px-3 py-1.5 rounded-full shadow-sm hover:shadow transition-all flex items-center gap-1.5"
                 >
-                  <RefreshCw className="w-3 h-3" /> Refresh
+                  <RefreshCw className="w-3 h-3" /> {t('app.refresh')}
                 </button>
               </div>
 
@@ -643,9 +654,9 @@ export default function App() {
                   <div className="w-12 h-12 rounded-full bg-slate-50 flex items-center justify-center mb-3">
                     <Clock className="w-6 h-6 text-slate-400" />
                   </div>
-                  <span className="text-slate-600 font-medium text-sm">No Camera snaps logged yet.</span>
+                  <span className="text-slate-600 font-medium text-sm">{t('camera.empty')}</span>
                   <span className="text-[11px] text-slate-400 mt-1 max-w-xs text-center leading-normal">
-                    Enable the Camera Snaps toggle in the settings menu to initiate the automated background capture loops.
+                    {t('camera.emptyHint')}
                   </span>
                 </div>
               ) : (
@@ -655,7 +666,7 @@ export default function App() {
                       <div className="relative aspect-video w-full bg-slate-950 overflow-hidden">
                         <img
                           src={`${API_URL}/static/${cap.image_path}?t=${lastRefresh}`}
-                          alt="Camera Snapshot"
+                          alt={t('camera.alt')}
                           loading="lazy"
                           className="w-full h-full object-cover transition-transform group-hover:scale-105 duration-500"
                         />
@@ -665,12 +676,12 @@ export default function App() {
                       </div>
                       <div className="p-4 bg-white">
                         <div className="flex items-center justify-between">
-                          <span className="text-[10px] font-bold tracking-wider text-slate-400 uppercase">Camera Snaps</span>
+                          <span className="text-[10px] font-bold tracking-wider text-slate-400 uppercase">{t('camera.label')}</span>
                           <span className={`text-[9px] uppercase tracking-wider px-2 py-0.5 rounded-full font-bold ${cap.processed
                             ? 'bg-emerald-50 text-emerald-600 border border-emerald-100'
                             : 'bg-amber-50 text-amber-600 border border-amber-100'
                             }`}>
-                            {cap.processed ? 'Processed' : 'Pending'}
+                            {cap.processed ? t('status.processed') : t('status.pending')}
                           </span>
                         </div>
                         <p className="text-[10px] text-slate-500 mt-2 font-mono flex items-center gap-1.5 bg-slate-50 px-2 py-1 rounded">
@@ -689,14 +700,14 @@ export default function App() {
             <div className="max-w-3xl mx-auto w-full pb-8 animate-in fade-in duration-300">
               <div className="flex justify-between items-center mb-8">
                 <div>
-                  <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider">Gemini Context Timeline</h3>
-                  <p className="text-[10px] text-slate-400 mt-0.5">Proactive activity logs, application usage audits, and lifestyle tips generated by Gemini.</p>
+                  <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider">{t('insights.title')}</h3>
+                  <p className="text-[10px] text-slate-400 mt-0.5">{t('insights.desc')}</p>
                 </div>
                 <button
                   onClick={() => fetchObservations('insights', true)}
                   className="text-[10px] font-semibold text-slate-500 hover:text-slate-800 bg-white border border-slate-200 px-3 py-1.5 rounded-full shadow-sm hover:shadow transition-all flex items-center gap-1.5"
                 >
-                  <RefreshCw className="w-3 h-3" /> Refresh
+                  <RefreshCw className="w-3 h-3" /> {t('app.refresh')}
                 </button>
               </div>
 
@@ -705,9 +716,9 @@ export default function App() {
                   <div className="w-12 h-12 rounded-full bg-slate-50 flex items-center justify-center mb-3">
                     <Bird className="w-6 h-6 text-slate-400" />
                   </div>
-                  <span className="text-slate-600 font-medium text-sm">No Gemini Insights compiled yet.</span>
+                  <span className="text-slate-600 font-medium text-sm">{t('insights.empty')}</span>
                   <span className="text-[11px] text-slate-400 mt-1 max-w-xs text-center leading-normal">
-                    Molly will periodically process pending screen captures in the background to log reports and provide tips.
+                    {t('insights.emptyHint')}
                   </span>
                 </div>
               ) : (
@@ -718,7 +729,7 @@ export default function App() {
 
                       <div className="flex flex-wrap justify-between items-center gap-2 pb-3 border-b border-slate-50">
                         <span className="text-[10px] font-extrabold uppercase tracking-wider bg-slate-900 text-white px-2.5 py-0.5 rounded-md">
-                          Molly Report #{ins.id}
+                          {t('insights.reportBadge', { id: ins.id })}
                         </span>
                         <span className="text-[10px] font-mono text-slate-400 flex items-center gap-1">
                           <Clock className="w-3 h-3 text-slate-400" />
@@ -727,7 +738,7 @@ export default function App() {
                       </div>
 
                       <div className="mt-4">
-                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Activity Summary</span>
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{t('insights.activitySummary')}</span>
                         <p className="text-xs text-slate-700 leading-relaxed mt-1.5 font-medium">
                           {ins.activity_summary}
                         </p>
@@ -739,7 +750,7 @@ export default function App() {
                             💡
                           </div>
                           <div>
-                            <span className="text-[10px] font-extrabold text-indigo-600 uppercase tracking-wider block">Molly's Suggestion</span>
+                            <span className="text-[10px] font-extrabold text-indigo-600 uppercase tracking-wider block">{t('insights.suggestion')}</span>
                             <span className="text-xs text-indigo-800 font-semibold italic mt-0.5 block">
                               "{ins.context}"
                             </span>
@@ -771,7 +782,7 @@ export default function App() {
                 }
               }}
               className="flex-1 bg-transparent border-0 focus-visible:ring-0 focus-visible:ring-offset-0 px-2 text-slate-700 text-sm shadow-none resize-none outline-none min-h-[32px] max-h-[200px] py-1 leading-6"
-              placeholder="Ask Molly about your context..."
+              placeholder={t('app.inputPlaceholder')}
               disabled={voiceMode}
               rows={1}
             />
@@ -781,7 +792,7 @@ export default function App() {
                 ? 'px-3 h-8 rounded-full bg-rose-50 border-rose-200 shadow-sm gap-2 ring-1 ring-rose-100'
                 : 'w-8 h-8 rounded-full bg-slate-50 text-slate-500 hover:text-slate-800 border-slate-200 hover:bg-slate-100'
                 }`}
-              title={voiceMode ? "Turn Off Voice Mode" : "Turn On Voice Mode"}
+              title={voiceMode ? t('app.toggleVoiceOff') : t('app.toggleVoiceOn')}
             >
               {voiceMode ? (
                 <>
@@ -811,7 +822,7 @@ export default function App() {
               className="flex items-center gap-1.5 text-xs font-semibold text-slate-700 bg-white border border-slate-200 px-3.5 h-8 rounded-full shadow-sm hover:bg-slate-50 transition-all disabled:opacity-50"
             >
               <div className="w-2 h-2 bg-slate-900 rounded-sm"></div>
-              Send
+              {t('app.send')}
             </button>
           </div>
         </div>

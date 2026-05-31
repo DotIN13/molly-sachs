@@ -1,4 +1,5 @@
 import { useCallback, useRef, useEffect } from 'react'
+import i18n from '../i18n/config'
 import { API_URL } from '../config'
 
 interface UseWebRTCOptions {
@@ -61,7 +62,7 @@ export default function useWebRTC(opts: UseWebRTCOptions): UseWebRTCReturn {
         if (data.messages && data.messages.length > 0) {
           setMessages(data.messages)
         } else {
-          setMessages([{ role: 'assistant', content: 'I love using this AI companion. For my meetings and beyond.' }])
+          setMessages([{ role: 'assistant', content: i18n.t('app.helloDefault') }])
         }
       } else if (data.type === 'audio_level') {
         // locally captured via AudioContext analyser
