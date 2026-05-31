@@ -899,7 +899,7 @@ export default function App() {
             <button
               onClick={sendMessage}
               disabled={voiceMode || !input.trim()}
-              className="flex items-center justify-center gap-1.5 text-sm font-semibold text-slate-700 bg-white border border-slate-200 w-10 sm:w-auto sm:px-4 h-10 rounded-full shadow-sm hover:bg-slate-50 transition-all disabled:opacity-50"
+              className={`flex items-center justify-center gap-1.5 text-sm font-semibold text-slate-700 bg-white border border-slate-200 w-10 sm:w-auto sm:px-4 h-10 rounded-full shadow-sm hover:bg-slate-50 transition-all disabled:opacity-50 ${voiceMode ? 'max-sm:hidden' : ''}`}
             >
               <ArrowUp className="w-5 h-5 sm:hidden" />
               <div className="w-2 h-2 bg-slate-900 rounded-sm hidden sm:block"></div>
