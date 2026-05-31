@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Settings, PenSquare, Search, FileText, Clock, Bird, Mic, Volume2, VolumeX, RefreshCw, LogOut, Languages } from 'lucide-react'
+import { Settings, PenSquare, Search, FileText, Clock, Bird, Mic, Volume2, VolumeX, RefreshCw, LogOut, Languages, Menu, X } from 'lucide-react'
 import { updateObserverConfig } from './observers'
 import { API_URL, isElectron } from './config'
 import useAudioVisualizer from './hooks/useAudioVisualizer'
@@ -56,6 +56,7 @@ export default function App() {
   const [cameraSnapshots, setCameraSnapshots] = useState<any[]>([])
   const [geminiInsights, setGeminiInsights] = useState<any[]>([])
   const [lastRefresh, setLastRefresh] = useState(0)
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
 
   const audioBars = useAudioVisualizer(voiceMode, 5)
 
@@ -425,15 +426,29 @@ export default function App() {
   return (
     <div className="h-screen w-full bg-white flex overflow-hidden font-sans relative">
 
+      {/* Mobile Menu Overlay */}
+      {mobileMenuOpen && (
+        <div className="fixed inset-0 z-40 bg-black/20 backdrop-blur-sm lg:hidden" onClick={() => setMobileMenuOpen(false)} />
+      )}
+
       {/* Sidebar */}
-      <div className="w-64 border-r border-slate-100 bg-[#fafafa] hidden lg:flex flex-col pt-12 pb-4">
+      <div className={`w-64 max-w-[85vw] border-r border-slate-100 bg-[#fafafa] flex-col pt-12 pb-4 z-50 transition-transform duration-300
+        lg:flex lg:relative lg:translate-x-0
+        ${mobileMenuOpen ? 'fixed inset-y-0 left-0 flex translate-x-0' : 'fixed inset-y-0 left-0 -translate-x-full lg:hidden'}
+      `}>
+        <button
+          className="absolute top-4 right-4 lg:hidden text-slate-500 hover:text-slate-800"
+          onClick={() => setMobileMenuOpen(false)}
+        >
+          <X className="w-5 h-5" />
+        </button>
         <div className="px-5 mb-8 flex items-center gap-3">
           <img src="./logo.jpg" alt={t('app.title')} className="w-12 h-12 rounded-full object-cover border border-slate-100 shadow-sm" />
           <span className="font-semibold text-slate-800 text-sm tracking-wide">{t('app.title')}</span>
         </div>
 
         <div className="flex-1 overflow-y-auto px-3 space-y-0.5">
-          <button onClick={createNewConversation} className="w-full flex items-center gap-2 px-3 py-1 text-sm text-slate-600 hover:bg-slate-100 rounded-md transition-colors">
+          <button onClick={() => { createNewConversation(); setMobileMenuOpen(false) }} className="w-full flex items-center gap-2 px-3 py-1 text-sm text-slate-600 hover:bg-slate-100 rounded-md transition-colors">
             <PenSquare className="w-3.5 h-3.5" /> {t('app.newChat')}
           </button>
           <button className="w-full flex items-center gap-2 px-3 py-1 text-sm text-slate-600 hover:bg-slate-100 rounded-md transition-colors">
@@ -458,7 +473,7 @@ export default function App() {
                   }`}
               >
                 <button
-                  onClick={() => loadConversation(conv.id)}
+                  onClick={() => { loadConversation(conv.id); setMobileMenuOpen(false) }}
                   className="flex-1 text-left truncate mr-2"
                 >
                   {conv.title}
@@ -476,8 +491,6 @@ export default function App() {
           </div>
         </div>
 
-
-
         <div className="px-4 mt-auto space-y-2">
           <div className="flex items-center gap-1 px-1">
             <button
@@ -488,7 +501,7 @@ export default function App() {
               {i18n.language === 'zh' ? 'English' : '中文'}
             </button>
           </div>
-          <button onClick={() => setIsSettingsOpen(true)} className="w-full flex items-center gap-2 px-2 py-2 text-xs border border-slate-200 rounded-md shadow-sm text-slate-600 hover:bg-slate-50 transition-colors">
+          <button onClick={() => { setIsSettingsOpen(true); setMobileMenuOpen(false) }} className="w-full flex items-center gap-2 px-2 py-2 text-xs border border-slate-200 rounded-md shadow-sm text-slate-600 hover:bg-slate-50 transition-colors">
             <div className="w-5 h-5 rounded bg-slate-200 flex items-center justify-center text-slate-600 font-medium text-[10px]">
               {auth.user?.name?.charAt(0)?.toUpperCase() || 'U'}
             </div>
@@ -509,43 +522,47 @@ export default function App() {
       </div>
 
       {/* Main Content */}
-      <div className="flex-1 bg-white flex flex-col pt-12 relative">
+      <div className="flex-1 bg-white flex flex-col pt-2 lg:pt-12 relative">
         {/* Header */}
-        <div className="px-8 pb-4 flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-slate-100 flex-shrink-0">
-          <div className="flex flex-col lg:flex-row lg:items-center gap-6 w-full lg:w-auto">
-            <div className="flex gap-1 bg-slate-100/80 p-1 rounded-xl border border-slate-200/40 backdrop-blur-sm shadow-inner self-center">
-              {(['chat', 'screen', 'camera', 'insights'] as const).map(tab => (
-                <button
-                  key={tab}
-                  onClick={() => setActiveTab(tab)}
-                  className={`text-xs font-semibold px-4 py-1.5 rounded-lg transition-all uppercase tracking-wider text-[10px] ${activeTab === tab
-                    ? 'bg-slate-900 text-white shadow-md'
-                    : 'text-slate-500 hover:text-slate-800 hover:bg-slate-200/50'
-                    }`}
-                >
-                  {t(`tabs.${tab}`)}
-                </button>
-              ))}
-            </div>
+        <div className="px-3 sm:px-4 lg:px-8 pb-3 lg:pb-4 flex items-center gap-2 lg:gap-4 border-b border-slate-100 flex-shrink-0 flex-wrap">
+          <button
+            onClick={() => setMobileMenuOpen(true)}
+            className="lg:hidden flex items-center justify-center w-8 h-8 rounded-lg hover:bg-slate-100 text-slate-600 flex-shrink-0"
+          >
+            <Menu className="w-5 h-5" />
+          </button>
+          <div className="flex overflow-x-auto gap-1 bg-slate-100/80 p-1 rounded-xl border border-slate-200/40 backdrop-blur-sm shadow-inner flex-shrink-0">
+            {(['chat', 'screen', 'camera', 'insights'] as const).map(tab => (
+              <button
+                key={tab}
+                onClick={() => setActiveTab(tab)}
+                className={`text-xs font-semibold px-2.5 sm:px-3 lg:px-4 py-1.5 rounded-lg transition-all uppercase tracking-wider text-[10px] whitespace-nowrap ${activeTab === tab
+                  ? 'bg-slate-900 text-white shadow-md'
+                  : 'text-slate-500 hover:text-slate-800 hover:bg-slate-200/50'
+                  }`}
+              >
+                {t(`tabs.${tab}`)}
+              </button>
+            ))}
           </div>
 
-          <div className="flex items-center gap-2 flex-wrap self-center lg:self-auto">
+          <div className="flex items-center gap-2 flex-wrap ml-auto">
             {activeTab === 'chat' && (
               <>
                 <button
                   onClick={() => setSpeakText(!speakText)}
-                  className={`flex items-center gap-1.5 text-xs font-medium transition-all px-3 py-1.5 rounded-lg border ${speakText
+                  className={`flex items-center gap-1 sm:gap-1.5 text-[10px] sm:text-xs font-medium transition-all px-2 sm:px-3 py-1.5 rounded-lg border ${speakText
                     ? 'bg-indigo-50 text-indigo-600 border-indigo-100 shadow-sm'
                     : 'bg-slate-50 text-slate-500 border-slate-200'
                     }`}
                 >
-                  {speakText ? <Volume2 className="w-3.5 h-3.5 text-indigo-500" /> : <VolumeX className="w-3.5 h-3.5" />}
-                  {speakText ? t('app.aiSpeaking') : t('app.aiMuted')}
+                  {speakText ? <Volume2 className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-indigo-500" /> : <VolumeX className="w-3 h-3 sm:w-3.5 sm:h-3.5" />}
+                  <span className="hidden sm:inline">{speakText ? t('app.aiSpeaking') : t('app.aiMuted')}</span>
                 </button>
 
                 <button
                   onClick={() => setMessages([])}
-                  className="border border-slate-200 px-3.5 py-1.5 rounded-lg shadow-sm hover:bg-slate-50 transition-colors text-xs font-medium text-slate-500"
+                  className="border border-slate-200 px-2 sm:px-3.5 py-1.5 rounded-lg shadow-sm hover:bg-slate-50 transition-colors text-[10px] sm:text-xs font-medium text-slate-500"
                 >
                   {t('app.clearChat')}
                 </button>
@@ -555,8 +572,8 @@ export default function App() {
         </div>
 
         {/* Chat Tab - original styling preserved */}
-        <div className={`flex-1 overflow-y-auto px-4 md:px-8 py-4 ${activeTab === 'chat' ? '' : 'hidden'}`} ref={scrollRef}>
-          <div className="flex flex-col gap-5 max-w-3xl mx-auto w-full">
+        <div className={`flex-1 overflow-y-auto px-3 md:px-8 py-3 ${activeTab === 'chat' ? '' : 'hidden'}`} ref={scrollRef}>
+          <div className="flex flex-col gap-4 sm:gap-5 max-w-3xl mx-auto w-full">
             {messages.map((m, i) => (
               <div key={i} className={`flex w-full ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                 <div className={`px-4 py-2.5 ${m.role === 'user' ? 'lux-bubble-user' : 'lux-bubble-ai'}`}>
@@ -568,7 +585,7 @@ export default function App() {
         </div>
 
         {/* Observer Tabs Viewport */}
-        <div className={`flex-1 overflow-y-auto px-6 md:px-10 py-6 bg-slate-50/40 ${activeTab !== 'chat' ? '' : 'hidden'}`}>
+        <div className={`flex-1 overflow-y-auto px-3 sm:px-6 md:px-10 py-4 sm:py-6 bg-slate-50/40 ${activeTab !== 'chat' ? '' : 'hidden'}`}>
 
           <div className={`${activeTab === 'screen' ? '' : 'hidden'}`}>
             <div className="max-w-6xl mx-auto w-full animate-in fade-in duration-300">
@@ -588,7 +605,7 @@ export default function App() {
               </div>
 
               {screenCaptures.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-[350px] border-2 border-dashed border-slate-200 rounded-2xl bg-white shadow-sm">
+                <div className="flex flex-col items-center justify-center min-h-[200px] sm:min-h-[350px] border-2 border-dashed border-slate-200 rounded-2xl bg-white shadow-sm">
                   <div className="w-12 h-12 rounded-full bg-slate-50 flex items-center justify-center mb-3">
                     <Clock className="w-6 h-6 text-slate-400" />
                   </div>
@@ -598,7 +615,7 @@ export default function App() {
                   </span>
                 </div>
               ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
                   {screenCaptures.map(cap => (
                     <div key={cap.id} className="border border-slate-100 rounded-2xl overflow-hidden shadow-sm bg-white hover:shadow-md transition-all hover:scale-[1.01] duration-300 group">
                       <div className="relative aspect-video w-full bg-slate-950 overflow-hidden">
@@ -650,7 +667,7 @@ export default function App() {
               </div>
 
               {cameraSnapshots.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-[350px] border-2 border-dashed border-slate-200 rounded-2xl bg-white shadow-sm">
+                <div className="flex flex-col items-center justify-center min-h-[200px] sm:min-h-[350px] border-2 border-dashed border-slate-200 rounded-2xl bg-white shadow-sm">
                   <div className="w-12 h-12 rounded-full bg-slate-50 flex items-center justify-center mb-3">
                     <Clock className="w-6 h-6 text-slate-400" />
                   </div>
@@ -660,7 +677,7 @@ export default function App() {
                   </span>
                 </div>
               ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
                   {cameraSnapshots.map(cap => (
                     <div key={cap.id} className="border border-slate-100 rounded-2xl overflow-hidden shadow-sm bg-white hover:shadow-md transition-all hover:scale-[1.01] duration-300 group">
                       <div className="relative aspect-video w-full bg-slate-950 overflow-hidden">
@@ -712,7 +729,7 @@ export default function App() {
               </div>
 
               {geminiInsights.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-[350px] border-2 border-dashed border-slate-200 rounded-2xl bg-white shadow-sm">
+                <div className="flex flex-col items-center justify-center min-h-[200px] sm:min-h-[350px] border-2 border-dashed border-slate-200 rounded-2xl bg-white shadow-sm">
                   <div className="w-12 h-12 rounded-full bg-slate-50 flex items-center justify-center mb-3">
                     <Bird className="w-6 h-6 text-slate-400" />
                   </div>
@@ -722,10 +739,10 @@ export default function App() {
                   </span>
                 </div>
               ) : (
-                <div className="relative border-l-2 border-slate-200/80 ml-4 pl-8 space-y-8 py-2">
+                <div className="relative border-l-2 border-slate-200/80 ml-2 sm:ml-4 pl-4 sm:pl-8 space-y-6 sm:space-y-8 py-2">
                   {geminiInsights.map(ins => (
                     <div key={ins.id} className="relative bg-white rounded-2xl border border-slate-100 p-6 shadow-sm hover:shadow-md transition-all duration-300">
-                      <div className="absolute w-4 h-4 bg-slate-900 rounded-full -left-[41px] top-6 border-4 border-slate-50 flex items-center justify-center shadow-sm" />
+                      <div className="absolute w-3.5 h-3.5 sm:w-4 sm:h-4 bg-slate-900 rounded-full -left-[26px] sm:-left-[41px] top-4 sm:top-6 border-2 sm:border-4 border-slate-50 flex items-center justify-center shadow-sm" />
 
                       <div className="flex flex-wrap justify-between items-center gap-2 pb-3 border-b border-slate-50">
                         <span className="text-[10px] font-extrabold uppercase tracking-wider bg-slate-900 text-white px-2.5 py-0.5 rounded-md">
@@ -766,8 +783,8 @@ export default function App() {
         </div>
 
         {/* Input Area */}
-        <div className={`p-6 bg-gradient-to-t from-white via-white to-transparent flex-shrink-0 border-t border-slate-50 ${activeTab === 'chat' ? '' : 'hidden'}`}>
-          <div className="max-w-2xl mx-auto flex items-end gap-2 bg-[#f9f9f9] border border-slate-200 rounded-2xl px-4 py-2 shadow-sm focus-within:ring-1 focus-within:ring-slate-350 transition-all">
+        <div className={`p-3 sm:p-4 lg:p-6 bg-gradient-to-t from-white via-white to-transparent flex-shrink-0 border-t border-slate-50 ${activeTab === 'chat' ? '' : 'hidden'}`}>
+          <div className="max-w-2xl mx-auto flex items-end gap-1.5 sm:gap-2 bg-[#f9f9f9] border border-slate-200 rounded-2xl px-2.5 sm:px-4 py-2 shadow-sm focus-within:ring-1 focus-within:ring-slate-350 transition-all">
             <div className="text-slate-400 flex items-center justify-center h-8">
               <span className="text-lg leading-none mb-1 opacity-60">...</span>
             </div>
