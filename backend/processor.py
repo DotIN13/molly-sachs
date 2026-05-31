@@ -29,14 +29,8 @@ async def process_pending_observations(user_id: str, prefs: dict[str, str]) -> d
     def _artefact_to_entry(p: str) -> str:
         return p.replace("/artefacts/", "/entries/").rsplit(".", 1)[0] + ".json"
 
-    contents = [
-        "You are Molly, a personal AI companion analyzing what the user is doing right now. "
-        "Here are the screenshots and camera pictures from the last few minutes. "
-        "Write a concise summary of the user's activities, focusing on context, apps used, "
-        "desktop states, and general intent."
-    ]
-
     image_paths = []
+    all_windows = set()
     for row in rows:
         image_path = row["image_path"]
         image_paths.append(image_path)
@@ -47,10 +41,24 @@ async def process_pending_observations(user_id: str, prefs: dict[str, str]) -> d
         if os.path.exists(entry_abs):
             with open(entry_abs, "r", encoding="utf-8") as f:
                 entry = json.load(f)
-            prompt_text = entry.get("prompt_text", "")
-            if prompt_text:
-                contents.append(prompt_text)
+            if entry.get("type") == "screen":
+                windows = entry.get("windows") or []
+                all_windows.update(windows)
 
+    deduped_text = ""
+    if all_windows:
+        win_list = "\n  ".join(sorted(all_windows))
+        deduped_text = f"Open windows in the screenshots:\n  {win_list}"
+
+    contents = [
+        "You are Molly, a personal AI companion analyzing what the user is doing right now. "
+        "Here are the screenshots and camera pictures from the last few minutes. "
+        "Write a concise summary of the user's activities, focusing on context, apps used, "
+        "desktop states, and general intent."
+        + (f"\n\n{deduped_text}" if deduped_text else "")
+    ]
+
+    for image_path in image_paths:
         artefact_abs = os.path.join(config.DATA_DIR, image_path)
         if os.path.exists(artefact_abs):
             with open(artefact_abs, "rb") as f:
