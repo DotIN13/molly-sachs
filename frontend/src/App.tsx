@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Settings, PenSquare, Search, FileText, Clock, Bird, Mic, Volume2, VolumeX, RefreshCw, LogOut, Menu, X } from 'lucide-react'
+import { Settings, PenSquare, Search, FileText, Clock, Bird, Mic, Volume2, VolumeX, RefreshCw, LogOut, Menu, X, ChevronDown } from 'lucide-react'
 import { updateObserverConfig } from './observers'
 import { API_URL, isElectron } from './config'
 import useAudioVisualizer from './hooks/useAudioVisualizer'
@@ -61,6 +61,7 @@ export default function App() {
   const [geminiInsights, setGeminiInsights] = useState<any[]>([])
   const [lastRefresh, setLastRefresh] = useState(0)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+  const [mobileTabOpen, setMobileTabOpen] = useState(false)
 
   const audioBars = useAudioVisualizer(voiceMode, 5)
 
@@ -158,7 +159,7 @@ export default function App() {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ timezone: detected })
-          }).then(() => setTimezone(detected)).catch(() => {})
+          }).then(() => setTimezone(detected)).catch(() => { })
         }
 
         updateObserverConfig({
@@ -547,26 +548,54 @@ export default function App() {
       {/* Main Content */}
       <div className="flex-1 bg-white flex flex-col pt-2 lg:pt-12 relative">
         {/* Header */}
-        <div className="px-3 sm:px-4 lg:px-8 pb-3 lg:pb-4 flex items-center gap-2 lg:gap-4 border-b border-slate-100 flex-shrink-0 flex-wrap">
+        <div className="px-3 sm:px-4 lg:px-8 pt-3.5 pb-4 lg:py-4 flex items-center gap-2 lg:gap-4 border-b border-slate-100 flex-shrink-0 flex-wrap">
           <button
             onClick={() => setMobileMenuOpen(true)}
             className="lg:hidden flex items-center justify-center w-8 h-8 rounded-lg hover:bg-slate-100 text-slate-600 flex-shrink-0"
           >
             <Menu className="w-5 h-5" />
           </button>
-          <div className="flex overflow-x-auto gap-1 bg-slate-100/80 p-1 rounded-xl border border-slate-200/40 backdrop-blur-sm shadow-inner flex-shrink-0">
-            {(['chat', 'screen', 'camera', 'insights'] as const).map(tab => (
-              <button
-                key={tab}
-                onClick={() => setActiveTab(tab)}
-                className={`text-xs font-semibold px-2.5 sm:px-3 lg:px-4 py-1.5 rounded-lg transition-all uppercase tracking-wider text-[10px] whitespace-nowrap ${activeTab === tab
-                  ? 'bg-slate-900 text-white shadow-md'
-                  : 'text-slate-500 hover:text-slate-800 hover:bg-slate-200/50'
-                  }`}
-              >
-                {t(`tabs.${tab}`)}
-              </button>
-            ))}
+          <div className="flex-shrink-0 relative">
+            <button
+              onClick={() => setMobileTabOpen(!mobileTabOpen)}
+              className="lg:hidden flex items-center gap-2 text-xs font-semibold uppercase tracking-wider bg-slate-100/80 border border-slate-200/40 rounded-xl px-3 py-2 shadow-inner cursor-pointer text-slate-700"
+            >
+              {t(`tabs.${activeTab}`)}
+              <ChevronDown className={`w-3.5 h-3.5 transition-transform ${mobileTabOpen ? 'rotate-180' : ''}`} />
+            </button>
+            {mobileTabOpen && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setMobileTabOpen(false)} />
+                <div className="absolute top-full left-0 mt-1 z-50 bg-white border border-slate-200 rounded-xl shadow-lg overflow-hidden min-w-[140px]">
+                  {(['chat', 'screen', 'camera', 'insights'] as const).map(tab => (
+                    <button
+                      key={tab}
+                      onClick={() => { setActiveTab(tab); setMobileTabOpen(false) }}
+                      className={`w-full text-left px-4 py-2.5 text-xs font-semibold uppercase tracking-wider transition-colors ${activeTab === tab
+                        ? 'bg-slate-100 text-slate-900'
+                        : 'text-slate-500 hover:bg-slate-50 hover:text-slate-800'
+                        }`}
+                    >
+                      {t(`tabs.${tab}`)}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+            <div className="hidden lg:flex overflow-x-auto gap-1 bg-slate-100/80 p-1 rounded-xl border border-slate-200/40 backdrop-blur-sm shadow-inner">
+              {(['chat', 'screen', 'camera', 'insights'] as const).map(tab => (
+                <button
+                  key={tab}
+                  onClick={() => setActiveTab(tab)}
+                  className={`text-xs font-semibold px-4 py-1.5 rounded-lg transition-all uppercase tracking-wider text-[10px] whitespace-nowrap ${activeTab === tab
+                    ? 'bg-slate-900 text-white shadow-md'
+                    : 'text-slate-500 hover:text-slate-800 hover:bg-slate-200/50'
+                    }`}
+                >
+                  {t(`tabs.${tab}`)}
+                </button>
+              ))}
+            </div>
           </div>
 
           <div className="flex items-center gap-2 flex-wrap ml-auto">
@@ -595,7 +624,7 @@ export default function App() {
         </div>
 
         {/* Chat Tab - original styling preserved */}
-        <div className={`flex-1 overflow-y-auto px-3 md:px-8 py-3 ${activeTab === 'chat' ? '' : 'hidden'}`} ref={scrollRef}>
+        <div className={`flex-1 overflow-y-auto px-3 md:px-8 py-9 ${activeTab === 'chat' ? '' : 'hidden'}`} ref={scrollRef}>
           <div className="flex flex-col gap-4 sm:gap-5 max-w-3xl mx-auto w-full">
             {messages.map((m, i) => (
               <div key={i} className={`flex w-full ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
@@ -842,23 +871,23 @@ export default function App() {
                   <div className="flex items-center gap-[3px] h-5 px-1">
                     {pipelineReady
                       ? audioBars.map((level, i) => (
-                          <span
-                            key={i}
-                            className="w-[3px] rounded-full bg-rose-500/90 shadow-[0_0_8px_rgba(244,63,94,0.28)] transition-[height,opacity,transform] duration-100 ease-out"
-                            style={{
-                              height: `${5 + level * 18}px`,
-                              opacity: 0.42 + level * 0.58,
-                              transform: `scaleY(${0.92 + level * 0.12})`
-                            }}
-                          />
-                        ))
+                        <span
+                          key={i}
+                          className="w-[3px] rounded-full bg-rose-500/90 shadow-[0_0_8px_rgba(244,63,94,0.28)] transition-[height,opacity,transform] duration-100 ease-out"
+                          style={{
+                            height: `${5 + level * 18}px`,
+                            opacity: 0.42 + level * 0.58,
+                            transform: `scaleY(${0.92 + level * 0.12})`
+                          }}
+                        />
+                      ))
                       : Array.from({ length: 5 }).map((_, i) => (
-                          <span
-                            key={i}
-                            className="w-[3px] rounded-full bg-amber-400/80 animate-level-bar-idle"
-                            style={{ animationDelay: `${i * 0.15}s` }}
-                          />
-                        ))
+                        <span
+                          key={i}
+                          className="w-[3px] rounded-full bg-amber-400/80 animate-level-bar-idle"
+                          style={{ animationDelay: `${i * 0.15}s` }}
+                        />
+                      ))
                     }
                   </div>
                 </>
