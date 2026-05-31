@@ -7,6 +7,8 @@ import useAudioVisualizer from './hooks/useAudioVisualizer'
 import useWebRTC from './hooks/useWebRTC'
 import SettingsModal from './components/SettingsModal'
 import Markdown from './components/Markdown'
+import EmptyState from './components/EmptyState'
+import ObservationCard from './components/ObservationCard'
 
 import { useAuth } from './contexts/AuthContext'
 import Login from './pages/Login'
@@ -90,7 +92,7 @@ export default function App() {
           }
         }
         if (active) setBackendStatus('disconnected');
-      } catch (e) {
+      } catch {
         if (active) setBackendStatus('disconnected');
       }
     };
@@ -115,7 +117,7 @@ export default function App() {
         setGeminiKeyConfigured(data.gemini_key_configured || false)
         setCartesiaKeyConfigured(data.cartesia_key_configured || false)
         setSonioxKeyConfigured(data.soniox_key_configured || false)
-        setTtsVoice(data.tts_voice || '79a125e8-cd45-4c13-8a67-188112f4dd22')
+        setTtsVoice(data.tts_voice || '6eb8965c-e295-47bd-a9e4-3eeebb3abcff')
         setTtsVolume(data.tts_volume ?? 1.0)
         setTtsSpeed(data.tts_speed ?? 1.0)
         setTtsEmotion(data.tts_emotion || 'neutral')
@@ -127,7 +129,7 @@ export default function App() {
           geminiKey: data.gemini_api_key || '',
           cartesiaKey: data.cartesia_api_key || '',
           sonioxKey: data.soniox_api_key || '',
-          ttsVoice: data.tts_voice || '79a125e8-cd45-4c13-8a67-188112f4dd22',
+          ttsVoice: data.tts_voice || '6eb8965c-e295-47bd-a9e4-3eeebb3abcff',
           ttsVolume: data.tts_volume ?? 1.0,
           ttsSpeed: data.tts_speed ?? 1.0,
           ttsEmotion: data.tts_emotion || 'neutral',
@@ -210,27 +212,13 @@ export default function App() {
       .then(res => res.json())
       .then(data => setConversations(Array.isArray(data) ? data : []))
       .catch(() => { });
-  }, [auth.isAuthenticated]);
-  refreshConversationsRef.current = refreshConversations;
+  }, [auth]);
 
-  // Load conversations list
   useEffect(() => {
-    if (backendStatus !== 'connected' || !auth.isAuthenticated) return;
-    auth.authFetch(`${API_URL}/api/conversations`)
-      .then(res => res.json())
-      .then(data => {
-        if (!Array.isArray(data)) return;
-        setConversations(data);
-        if (data && data.length > 0 && !activeConversationId) {
-          loadConversation(data[0].id);
-        } else if ((!data || data.length === 0) && !activeConversationId) {
-          createNewConversation();
-        }
-      })
-      .catch(console.error);
-  }, [backendStatus, auth.isAuthenticated]);
+    refreshConversationsRef.current = refreshConversations;
+  }, [refreshConversations]);
 
-  const loadConversation = async (id: string) => {
+  const loadConversation = useCallback(async (id: string) => {
     try {
       // Reuse existing pipeline if connected
       if (dcRef.current && dcRef.current.readyState === 'open') {
@@ -250,10 +238,10 @@ export default function App() {
           { role: 'assistant', content: t('app.helloDefault') }
         ]);
       }
-    } catch (e) {
+    } catch {
       console.error("Failed to load conversation messages");
     }
-  };
+  }, [dcRef, pcRef, disconnectWebRTC, auth, t]);
 
   const createNewConversation = async () => {
     try {
@@ -273,7 +261,7 @@ export default function App() {
       setMessages([
         { role: 'assistant', content: t('app.helloDefault') }
       ]);
-    } catch (e) {
+    } catch {
       console.error("Failed to create new conversation");
     }
   };
@@ -292,10 +280,26 @@ export default function App() {
           createNewConversation();
         }
       }
-    } catch (e) {
+    } catch {
       console.error("Failed to delete conversation");
     }
   };
+
+  useEffect(() => {
+    if (backendStatus !== 'connected' || !auth.isAuthenticated) return;
+    auth.authFetch(`${API_URL}/api/conversations`)
+      .then(res => res.json())
+      .then(data => {
+        if (!Array.isArray(data)) return;
+        setConversations(data);
+        if (data && data.length > 0 && !activeConversationId) {
+          loadConversation(data[0].id);
+        } else if ((!data || data.length === 0) && !activeConversationId) {
+          createNewConversation();
+        }
+      })
+      .catch(console.error);
+  }, [backendStatus, auth]);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -310,6 +314,12 @@ export default function App() {
       el.style.height = el.scrollHeight + 'px'
     }
   }, [input])
+
+  const hasPipelineChanged = (curr: Record<string, any>) => {
+    const prev = appliedSettingsRef.current as Record<string, any>
+    const keys = Object.keys(curr)
+    return keys.some(k => String(curr[k]) !== String(prev[k] ?? ''))
+  }
 
   const saveSettings = async () => {
     try {
@@ -353,31 +363,25 @@ export default function App() {
       })
       setIsSettingsOpen(false)
 
-      const prev = appliedSettingsRef.current
       const curr = {
         geminiKey, cartesiaKey, sonioxKey,
         ttsVoice, ttsVolume, ttsSpeed, ttsEmotion, ttsLanguage,
         sttProvider, sttLanguage,
       }
-      const keys = Object.keys(curr) as (keyof typeof curr)[]
-      const pipelineChanged = keys.some(k => String(curr[k]) !== String(prev[k] ?? ''))
+      const pipelineChanged = hasPipelineChanged(curr)
       if (pipelineChanged) {
         disconnectWebRTC()
         setTimeout(() => connectWebRTC(), 200)
       } else if (dcRef.current && dcRef.current.readyState === 'open') {
         const sessionChanges: Record<string, unknown> = {}
-        if (body.timezone !== undefined) {
-          sessionChanges.timezone = body.timezone
-        }
-        if (body.speak_text !== undefined) {
-          sessionChanges.speak_text = body.speak_text
-        }
+        if (body.timezone !== undefined) sessionChanges.timezone = body.timezone
+        if (body.speak_text !== undefined) sessionChanges.speak_text = body.speak_text
         if (Object.keys(sessionChanges).length > 0) {
           dcRef.current.send(JSON.stringify({ type: 'session_state_updated', changes: sessionChanges }))
         }
       }
       appliedSettingsRef.current = curr
-    } catch (e) {
+    } catch {
       console.error("Failed to save settings")
     }
   }
@@ -410,7 +414,7 @@ export default function App() {
     } catch (err) {
       console.error("Failed to fetch observations or insights:", err);
     }
-  }, []);
+  }, [auth.isAuthenticated, auth.accessToken, auth.authFetch]);
 
   useEffect(() => {
     if (backendStatus === 'connected' && activeTab !== 'chat') {
@@ -418,11 +422,14 @@ export default function App() {
     }
   }, [activeTab, backendStatus, fetchObservations]);
 
-  const handleSettingsChange = (key: string, value: any) => {
-    const setters: Record<string, any> = {
+  const handleSettingsChange = (key: keyof typeof settingsData, value: any) => {
+    const setters: Record<keyof typeof settingsData, any> = {
       geminiKey: setGeminiKey,
       cartesiaKey: setCartesiaKey,
       sonioxKey: setSonioxKey,
+      geminiKeyConfigured: setGeminiKeyConfigured,
+      cartesiaKeyConfigured: setCartesiaKeyConfigured,
+      sonioxKeyConfigured: setSonioxKeyConfigured,
       ttsVoice: setTtsVoice,
       ttsVolume: setTtsVolume,
       ttsSpeed: setTtsSpeed,
@@ -437,6 +444,7 @@ export default function App() {
       observerCameraInterval: setObserverCameraInterval,
       observerProcessInterval: setObserverProcessInterval,
       settingsTab: setSettingsTab,
+      debugMode: setDebugMode,
       timezone: setTimezone,
     }
     setters[key]?.(value)
@@ -672,46 +680,25 @@ export default function App() {
               </div>
 
               {screenCaptures.length === 0 ? (
-                <div className="flex flex-col items-center justify-center min-h-[200px] sm:min-h-[350px] border-2 border-dashed border-slate-200 rounded-2xl bg-white shadow-sm">
-                  <div className="w-12 h-12 rounded-full bg-slate-50 flex items-center justify-center mb-3">
-                    <Clock className="w-6 h-6 text-slate-400" />
-                  </div>
-                  <span className="text-slate-600 font-medium text-sm">{t('screen.empty')}</span>
-                  <span className="text-[11px] text-slate-400 mt-1 max-w-xs text-center leading-normal">
-                    {t('screen.emptyHint')}
-                  </span>
-                </div>
+                <EmptyState
+                  icon={<Clock className="w-6 h-6 text-slate-400" />}
+                  title={t('screen.empty')}
+                  hint={t('screen.emptyHint')}
+                />
               ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
                   {screenCaptures.map(cap => (
-                    <div key={cap.id} className="border border-slate-100 rounded-2xl overflow-hidden shadow-sm bg-white hover:shadow-md transition-all hover:scale-[1.01] duration-300 group">
-                      <div className="relative aspect-video w-full bg-slate-950 overflow-hidden">
-                        <img
-                          src={`${API_URL}/api/observations/file?path=${encodeURIComponent(cap.image_path)}&token=${encodeURIComponent(auth.accessToken ?? '')}&t=${lastRefresh}`}
-                          alt={t('screen.alt')}
-                          loading="lazy"
-                          className="w-full h-full object-cover transition-transform group-hover:scale-105 duration-500"
-                        />
-                        <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-3">
-                          <span className="text-[10px] font-mono text-white/90">ID: #{cap.id}</span>
-                        </div>
-                      </div>
-                      <div className="p-4 bg-white">
-                        <div className="flex items-center justify-between">
-                          <span className="text-[10px] font-bold tracking-wider text-slate-400 uppercase">{t('screen.source')}</span>
-                          <span className={`text-[9px] uppercase tracking-wider px-2 py-0.5 rounded-full font-bold ${cap.processed
-                            ? 'bg-emerald-50 text-emerald-600 border border-emerald-100'
-                            : 'bg-amber-50 text-amber-600 border border-amber-100'
-                            }`}>
-                            {cap.processed ? t('status.processed') : t('status.pending')}
-                          </span>
-                        </div>
-                        <p className="text-[10px] text-slate-500 mt-2 font-mono flex items-center gap-1.5 bg-slate-50 px-2 py-1 rounded">
-                          <Clock className="w-3 h-3 text-slate-400" />
-                          {new Date(cap.timestamp).toLocaleString()}
-                        </p>
-                      </div>
-                    </div>
+                    <ObservationCard
+                      key={cap.id}
+                      id={cap.id}
+                      imagePath={cap.image_path}
+                      timestamp={cap.timestamp}
+                      processed={cap.processed}
+                      sourceLabel={t('screen.source')}
+                      altText={t('screen.alt')}
+                      accessToken={auth.accessToken}
+                      lastRefresh={lastRefresh}
+                    />
                   ))}
                 </div>
               )}
@@ -734,46 +721,25 @@ export default function App() {
               </div>
 
               {cameraSnapshots.length === 0 ? (
-                <div className="flex flex-col items-center justify-center min-h-[200px] sm:min-h-[350px] border-2 border-dashed border-slate-200 rounded-2xl bg-white shadow-sm">
-                  <div className="w-12 h-12 rounded-full bg-slate-50 flex items-center justify-center mb-3">
-                    <Clock className="w-6 h-6 text-slate-400" />
-                  </div>
-                  <span className="text-slate-600 font-medium text-sm">{t('camera.empty')}</span>
-                  <span className="text-[11px] text-slate-400 mt-1 max-w-xs text-center leading-normal">
-                    {t('camera.emptyHint')}
-                  </span>
-                </div>
+                <EmptyState
+                  icon={<Clock className="w-6 h-6 text-slate-400" />}
+                  title={t('camera.empty')}
+                  hint={t('camera.emptyHint')}
+                />
               ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
                   {cameraSnapshots.map(cap => (
-                    <div key={cap.id} className="border border-slate-100 rounded-2xl overflow-hidden shadow-sm bg-white hover:shadow-md transition-all hover:scale-[1.01] duration-300 group">
-                      <div className="relative aspect-video w-full bg-slate-950 overflow-hidden">
-                        <img
-                          src={`${API_URL}/api/observations/file?path=${encodeURIComponent(cap.image_path)}&token=${encodeURIComponent(auth.accessToken ?? '')}&t=${lastRefresh}`}
-                          alt={t('camera.alt')}
-                          loading="lazy"
-                          className="w-full h-full object-cover transition-transform group-hover:scale-105 duration-500"
-                        />
-                        <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-3">
-                          <span className="text-[10px] font-mono text-white/90">ID: #{cap.id}</span>
-                        </div>
-                      </div>
-                      <div className="p-4 bg-white">
-                        <div className="flex items-center justify-between">
-                          <span className="text-[10px] font-bold tracking-wider text-slate-400 uppercase">{t('camera.label')}</span>
-                          <span className={`text-[9px] uppercase tracking-wider px-2 py-0.5 rounded-full font-bold ${cap.processed
-                            ? 'bg-emerald-50 text-emerald-600 border border-emerald-100'
-                            : 'bg-amber-50 text-amber-600 border border-amber-100'
-                            }`}>
-                            {cap.processed ? t('status.processed') : t('status.pending')}
-                          </span>
-                        </div>
-                        <p className="text-[10px] text-slate-500 mt-2 font-mono flex items-center gap-1.5 bg-slate-50 px-2 py-1 rounded">
-                          <Clock className="w-3 h-3 text-slate-400" />
-                          {new Date(cap.timestamp).toLocaleString()}
-                        </p>
-                      </div>
-                    </div>
+                    <ObservationCard
+                      key={cap.id}
+                      id={cap.id}
+                      imagePath={cap.image_path}
+                      timestamp={cap.timestamp}
+                      processed={cap.processed}
+                      sourceLabel={t('camera.label')}
+                      altText={t('camera.alt')}
+                      accessToken={auth.accessToken}
+                      lastRefresh={lastRefresh}
+                    />
                   ))}
                 </div>
               )}
@@ -796,15 +762,11 @@ export default function App() {
               </div>
 
               {geminiInsights.length === 0 ? (
-                <div className="flex flex-col items-center justify-center min-h-[200px] sm:min-h-[350px] border-2 border-dashed border-slate-200 rounded-2xl bg-white shadow-sm">
-                  <div className="w-12 h-12 rounded-full bg-slate-50 flex items-center justify-center mb-3">
-                    <Bird className="w-6 h-6 text-slate-400" />
-                  </div>
-                  <span className="text-slate-600 font-medium text-sm">{t('insights.empty')}</span>
-                  <span className="text-[11px] text-slate-400 mt-1 max-w-xs text-center leading-normal">
-                    {t('insights.emptyHint')}
-                  </span>
-                </div>
+                <EmptyState
+                  icon={<Bird className="w-6 h-6 text-slate-400" />}
+                  title={t('insights.empty')}
+                  hint={t('insights.emptyHint')}
+                />
               ) : (
                 <div className="relative border-l-2 border-slate-200/80 ml-2 sm:ml-4 pl-4 sm:pl-8 space-y-6 sm:space-y-8 py-2">
                   {geminiInsights.map(ins => (

@@ -1,5 +1,3 @@
-import os
-import sys
 import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -162,7 +160,7 @@ class MicFilterProcessor(FrameProcessor):
 
 
 class AudioLevelProcessor(FrameProcessor):
-    """Calculates microphone audio level, sends to frontend, and gates noise when bot is speaking."""
+    """Calculates microphone audio level, sends to frontend (~10 msg/sec), and gates noise when bot is speaking."""
     def __init__(self, transport: SmallWebRTCTransport):
         super().__init__()
         self._transport = transport
@@ -183,7 +181,7 @@ class AudioLevelProcessor(FrameProcessor):
                 samples = np.frombuffer(audio, dtype=np.int16).astype(np.float64)
                 rms = float(np.sqrt(np.mean(np.square(samples))))
                 level = min(1.0, rms / 8000.0)
-            if self._frame_count % 3 == 0:
+            if self._frame_count % 10 == 0:
                 await self._transport._client.send_message(
                     OutputTransportMessageFrame(message={
                         "type": "audio_level",
@@ -318,7 +316,7 @@ async def start_pipecat_session(
 
         tts_provider = prefs.get("tts_provider", "cartesia")
         if tts_provider == "cartesia":
-            tts_voice = prefs.get("tts_voice", "79a125e8-cd45-4c13-8a67-188112f4dd22")
+            tts_voice = prefs.get("tts_voice", "6eb8965c-e295-47bd-a9e4-3eeebb3abcff")
             tts_volume = float(prefs.get("tts_volume", "1.0"))
             tts_speed = float(prefs.get("tts_speed", "1.0"))
             tts_emotion = prefs.get("tts_emotion")

@@ -2,11 +2,12 @@ import asyncio
 import json
 import os
 import datetime
+from datetime import timezone as tz
 import secrets
-from typing import Optional, List, Any
 
 import aiosqlite
 import chromadb
+from chromadb import ClientAPI, Collection
 from loguru import logger
 
 from config import SQLITE_PATH, CHROMA_PATH
@@ -122,7 +123,7 @@ class AppDB:
     async def create_user(self, email: str, password_hash: str,
                           name: str | None = None, timezone: str = "") -> dict:
         user_id = secrets.token_hex(16)
-        now = datetime.datetime.utcnow().isoformat()
+        now = datetime.datetime.now(tz.utc).isoformat()
         display_name = name or email.split("@")[0]
         initial_settings = json.dumps({"timezone": timezone}) if timezone else "{}"
         async with self._write_lock:
@@ -166,7 +167,7 @@ class AppDB:
                 "UPDATE users SET email_verified = 1, "
                 "verification_code = NULL, verification_expires = NULL, "
                 "updated_at = ? WHERE id = ?",
-                (datetime.datetime.utcnow().isoformat(), user_id),
+                (datetime.datetime.now(tz.utc).isoformat(), user_id),
             )
             await self._conn.commit()
 
@@ -180,7 +181,7 @@ class AppDB:
         async with self._write_lock:
             await self._conn.execute(
                 "UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?",
-                (password_hash, datetime.datetime.utcnow().isoformat(), user_id),
+                (password_hash, datetime.datetime.now(tz.utc).isoformat(), user_id),
             )
             await self._conn.commit()
 
@@ -198,7 +199,7 @@ class AppDB:
         async with self._write_lock:
             await self._conn.execute(
                 "UPDATE users SET settings = ?, updated_at = ? WHERE id = ?",
-                (settings_text, datetime.datetime.utcnow().isoformat(), user_id),
+                (settings_text, datetime.datetime.now(tz.utc).isoformat(), user_id),
             )
             await self._conn.commit()
 
@@ -216,7 +217,7 @@ class AppDB:
             return cursor.lastrowid
 
     async def get_insights(self, user_id: str,
-                           limit: int = 15) -> List[dict]:
+                           limit: int = 15) -> list[dict]:
         cursor = await self._conn.execute(
             "SELECT id, timestamp, activity_summary, raw_transcripts, "
             "context FROM user_events WHERE user_id = ? "
@@ -230,7 +231,7 @@ class AppDB:
 
     async def create_conversation(self, conv_id: str, title: str,
                                   user_id: str) -> None:
-        created = datetime.datetime.utcnow().isoformat()
+        created = datetime.datetime.now(tz.utc).isoformat()
         async with self._write_lock:
             await self._conn.execute(
                 "INSERT OR IGNORE INTO conversations (id, title, created_at, "
@@ -239,7 +240,7 @@ class AppDB:
             )
             await self._conn.commit()
 
-    async def get_conversations(self, user_id: str) -> List[dict]:
+    async def get_conversations(self, user_id: str) -> list[dict]:
         cursor = await self._conn.execute(
             "SELECT id, title, created_at FROM conversations "
             "WHERE user_id = ? ORDER BY created_at DESC",
@@ -275,7 +276,7 @@ class AppDB:
 
     async def add_message(self, conv_id: str, role: str,
                           content: str, user_id: str) -> None:
-        created = datetime.datetime.utcnow().isoformat()
+        created = datetime.datetime.now(tz.utc).isoformat()
         async with self._write_lock:
             title = f"Chat on {datetime.datetime.now().strftime('%b %d %I:%M%p')}"
             await self._conn.execute(
@@ -302,7 +303,7 @@ class AppDB:
                         )
             await self._conn.commit()
 
-    async def get_messages(self, conv_id: str, user_id: str) -> List[dict]:
+    async def get_messages(self, conv_id: str, user_id: str) -> list[dict]:
         cursor = await self._conn.execute(
             "SELECT role, content FROM messages "
             "WHERE conversation_id = ? AND user_id = ? "
@@ -327,7 +328,7 @@ class AppDB:
 
     async def get_unprocessed_observations(self,
                                            user_id: str | None = None
-                                           ) -> List[dict]:
+                                           ) -> list[dict]:
         if user_id:
             cursor = await self._conn.execute(
                 "SELECT id, type, image_path, timestamp "
@@ -345,8 +346,8 @@ class AppDB:
         return [dict(r) for r in rows]
 
     async def get_observations(self, user_id: str,
-                               obs_type: Optional[str] = None,
-                               limit: int = 15) -> List[dict]:
+                               obs_type: str | None = None,
+                               limit: int = 15) -> list[dict]:
         if obs_type:
             cursor = await self._conn.execute(
                 "SELECT id, type, image_path, timestamp, processed "
@@ -370,7 +371,7 @@ class AppDB:
         async with self._write_lock:
             placeholders = ",".join(["?" for _ in image_paths])
             await self._conn.execute(
-                f"UPDATE observations SET processed = 1 "
+                "UPDATE observations SET processed = 1 "
                 f"WHERE image_path IN ({placeholders})",
                 image_paths,
             )
@@ -394,8 +395,8 @@ class VectorDB:
 
     def __init__(self, path: str = CHROMA_PATH):
         self._path = path
-        self._client: Any = None
-        self._collection: Any = None
+        self._client: ClientAPI | None = None
+        self._collection: Collection | None = None
         self._write_lock = asyncio.Lock()
 
     async def init(self) -> None:

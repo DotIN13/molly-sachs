@@ -2,17 +2,10 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Input } from '@/components/ui/input'
 import { triggerObservationsCapture } from '../observers'
-import { API_URL, isElectron } from '../config'
-
-const TOKEN_KEY = 'molly_access_token'
-const REFRESH_KEY = 'molly_refresh_token'
-
-function getStored(key: string): string | null {
-  try { return localStorage.getItem(key) } catch { return null }
-}
+import { API_URL, isElectron, getStoredToken, getStoredRefresh, refreshAccessToken } from '../config'
 
 async function doFetch(url: string, options: RequestInit): Promise<Response> {
-  let token = getStored(TOKEN_KEY)
+  const token = getStoredToken()
   const makeHeaders = (t: string | null) => {
     const h = new Headers(options.headers)
     if (t) h.set('Authorization', `Bearer ${t}`)
@@ -20,17 +13,11 @@ async function doFetch(url: string, options: RequestInit): Promise<Response> {
   }
   let res = await fetch(url, { ...options, headers: makeHeaders(token) })
   if (res.status === 401) {
-    const rToken = getStored(REFRESH_KEY)
+    const rToken = getStoredRefresh()
     if (rToken) {
-      const refreshRes = await fetch(`${API_URL}/api/auth/refresh`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ refresh_token: rToken }),
-      })
-      if (refreshRes.ok) {
-        const data = await refreshRes.json()
-        try { localStorage.setItem(TOKEN_KEY, data.access_token) } catch { /* noop */ }
-        res = await fetch(url, { ...options, headers: makeHeaders(data.access_token) })
+      const newToken = await refreshAccessToken()
+      if (newToken) {
+        res = await fetch(url, { ...options, headers: makeHeaders(newToken) })
       }
     }
   }
@@ -102,7 +89,7 @@ interface Props {
   onClose: () => void
   onSave: () => Promise<void>
   settings: SettingsData
-  onChange: (key: string, value: any) => void
+  onChange: (key: keyof SettingsData, value: any) => void
   fetchObservations: (tab: string, force?: boolean) => void
 }
 

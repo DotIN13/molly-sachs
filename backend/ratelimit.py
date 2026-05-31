@@ -30,4 +30,4 @@ def rate_limit(max_requests: int, window_seconds: float):
     async def dependency(request: Request):
         return await limiter(request)
 
-    return limiter
+    return dependency

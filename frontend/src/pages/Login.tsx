@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useAuth } from '../contexts/AuthContext'
 import { Input } from '@/components/ui/input'
@@ -9,6 +9,7 @@ type Stage = 'login' | 'register' | 'verify'
 export default function Login() {
   const auth = useAuth()
   const { t } = useTranslation()
+  const abortRef = useRef<AbortController | null>(null)
 
   const [stage, setStage] = useState<Stage>('login')
   const [email, setEmail] = useState('')
@@ -18,6 +19,13 @@ export default function Login() {
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
 
+  useEffect(() => {
+    return () => { abortRef.current?.abort() }
+  }, [])
+
+  const getErrorMessage = (err: unknown): string =>
+    err instanceof Error ? err.message : ''
+
   const clearError = () => setError('')
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -26,8 +34,8 @@ export default function Login() {
     setBusy(true)
     try {
       await auth.login(email, password)
-    } catch (err: any) {
-      setError(err.message)
+    } catch (err: unknown) {
+      setError(getErrorMessage(err))
     } finally {
       setBusy(false)
     }
@@ -40,8 +48,8 @@ export default function Login() {
     try {
       await auth.register(email, password, name || undefined)
       setStage('verify')
-    } catch (err: any) {
-      setError(err.message)
+    } catch (err: unknown) {
+      setError(getErrorMessage(err))
     } finally {
       setBusy(false)
     }
@@ -53,8 +61,8 @@ export default function Login() {
     setBusy(true)
     try {
       await auth.verifyEmail(email, code)
-    } catch (err: any) {
-      setError(err.message)
+    } catch (err: unknown) {
+      setError(getErrorMessage(err))
     } finally {
       setBusy(false)
     }
@@ -63,11 +71,14 @@ export default function Login() {
   const handleResend = async () => {
     clearError()
     setBusy(true)
+    abortRef.current?.abort()
+    abortRef.current = new AbortController()
     try {
       await fetch(`${API_URL}/api/auth/resend-verification`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email }),
+        signal: abortRef.current.signal,
       })
       setError(t('login.codeResent'))
     } catch {
@@ -167,7 +178,7 @@ export default function Login() {
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             required
-            minLength={6}
+            minLength={8}
             className="bg-white border-slate-200"
           />
           {error && <p className="text-rose-500 text-sm text-center">{error}</p>}

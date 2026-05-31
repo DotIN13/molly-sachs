@@ -1,6 +1,6 @@
 import json
 import os
-from typing import Optional
+import time
 
 from cryptography.fernet import Fernet
 from loguru import logger
@@ -33,10 +33,13 @@ _DEFAULTS: dict[str, str] = {
     "speak_text": "true",
 }
 
-_cipher: Optional[Fernet] = None
+DEFAULT_TTL = 5.0
+
+_cipher: Fernet | None = None
+_cache: dict[str, tuple[float, dict[str, str]]] = {}
 
 
-def _get_cipher() -> Optional[Fernet]:
+def _get_cipher() -> Fernet | None:
     global _cipher
     if _cipher is None:
         key = config.fernet_key()
@@ -56,11 +59,17 @@ class Settings:
         self.user_id = user_id
 
     async def load(self) -> dict[str, str]:
-        """Load from DB for this user, return merged dict. No instance cache."""
+        """Load from DB for this user, return merged dict. Uses in-memory cache with TTL."""
+        now = time.monotonic()
+        if self.user_id in _cache:
+            cached_at, cached = _cache[self.user_id]
+            if now - cached_at < DEFAULT_TTL:
+                return dict(cached)
+
         raw = await database.app.get_user_settings(self.user_id)
         cipher = _get_cipher()
 
-        secrets: dict = {}
+        secrets: dict[str, str] = {}
         if cipher and "secrets" in raw:
             try:
                 plain = cipher.decrypt(raw["secrets"].encode())
@@ -84,11 +93,13 @@ class Settings:
                 continue
             result[key] = default
 
+        _cache[self.user_id] = (now, dict(result))
         logger.info("Settings: loaded {} keys for user {}", len(result), self.user_id)
         return result
 
     async def save(self, values: dict[str, str | None]) -> None:
-        """Persist the given values for this user. Encrypts API keys."""
+        """Persist the given values for this user. Encrypts API keys. Invalidate cache."""
+        _cache.pop(self.user_id, None)
         current = await self.load()
 
         for k, v in values.items():
@@ -97,8 +108,8 @@ class Settings:
             else:
                 current.pop(k, None)
 
-        db_dict: dict = {}
-        secrets_to_encrypt: dict = {}
+        db_dict: dict[str, str] = {}
+        secrets_to_encrypt: dict[str, str] = {}
         for k, v in current.items():
             env_val = os.environ.get(k.upper())
             if env_val is not None and str(v) == env_val:

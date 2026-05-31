@@ -1,31 +1,6 @@
 import { useCallback, useRef, useEffect, useState } from 'react'
 import i18n from '../i18n/config'
-import { API_URL } from '../config'
-
-const TOKEN_KEY = 'molly_access_token'
-const REFRESH_KEY = 'molly_refresh_token'
-
-function getStoredToken(): string | null {
-  try { return localStorage.getItem(TOKEN_KEY) } catch { return null }
-}
-
-async function refreshToken(): Promise<string | null> {
-  const rToken = (() => { try { return localStorage.getItem(REFRESH_KEY) } catch { return null } })()
-  if (!rToken) return null
-  try {
-    const res = await fetch(`${API_URL}/api/auth/refresh`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refresh_token: rToken }),
-    })
-    if (res.ok) {
-      const data = await res.json()
-      try { localStorage.setItem(TOKEN_KEY, data.access_token) } catch { /* noop */ }
-      return data.access_token
-    }
-  } catch { /* offline */ }
-  return null
-}
+import { API_URL, getStoredToken, refreshAccessToken } from '../config'
 
 interface UseWebRTCOptions {
   backendStatus: string
@@ -95,7 +70,7 @@ export default function useWebRTC(opts: UseWebRTCOptions): UseWebRTCReturn {
       } else if (data.type === 'audio_level') {
         // locally captured via AudioContext analyser
       }
-    } catch (e) {
+    } catch {
       if (typeof event.data === 'string' && event.data === 'ping') {
         if (dcRef.current && dcRef.current.readyState === 'open') {
           dcRef.current.send('pong')
@@ -105,6 +80,7 @@ export default function useWebRTC(opts: UseWebRTCOptions): UseWebRTCReturn {
   }, [])
 
   const disconnectWebRTC = useCallback(() => {
+    skipDisconnectRef.current = true
     isConnectingRef.current = false
     isConnectedRef.current = false
     setPipelineReady(false)
@@ -284,7 +260,7 @@ export default function useWebRTC(opts: UseWebRTCOptions): UseWebRTCReturn {
         })
       let response = await doFetch(token)
       if (response.status === 401) {
-        const newToken = await refreshToken()
+        const newToken = await refreshAccessToken()
         if (newToken) {
           token = newToken
           response = await doFetch(token)

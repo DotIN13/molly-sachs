@@ -41,7 +41,7 @@ async function waitForBackend(url, retries = 30, delay = 1000) {
         console.log('[backend] ready');
         return true;
       }
-    } catch (_) {}
+    } catch {}
     await new Promise(r => setTimeout(r, delay));
   }
   console.error('[backend] failed to start');
@@ -77,12 +77,12 @@ app.whenReady().then(async () => {
     return await desktopCapturer.getSources({ types: ['window', 'screen'] });
   });
 
-  app.on('activate', function () {
+  app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
 });
 
-app.on('window-all-closed', function () {
+app.on('window-all-closed', () => {
   stopBackend();
   if (process.platform !== 'darwin') app.quit();
 });

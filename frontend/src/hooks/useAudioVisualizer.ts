@@ -84,7 +84,7 @@ export default function useAudioVisualizer(active: boolean, barCount = 9): numbe
         const tick = () => {
           if (!running || !analyser || !timeDataRef.current) return
 
-          analyser.getByteTimeDomainData(timeDataRef.current as any)
+          analyser.getByteTimeDomainData(timeDataRef.current as Uint8Array<ArrayBuffer>)
 
           let sum = 0
 
@@ -149,8 +149,8 @@ export default function useAudioVisualizer(active: boolean, barCount = 9): numbe
         }
 
         frameRef.current = requestAnimationFrame(tick)
-      } catch (e) {
-        console.warn('Audio visualizer: mic access denied', e)
+      } catch {
+        console.warn('Audio visualizer: mic access denied')
       }
     }
 

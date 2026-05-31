@@ -75,7 +75,6 @@ class SettingsReq(BaseModel):
     observer_camera_active: bool | None = None
     observer_screen_interval: int | None = None
     observer_camera_interval: int | None = None
-    observer_capture_interval: int | None = None  # deprecated — kept for compat
     observer_process_interval: int | None = None
     timezone: str | None = None
     speak_text: bool | None = None
@@ -266,8 +265,6 @@ async def save_settings(req: SettingsReq,
         data["observer_screen_active"] = "true" if req.observer_screen_active else "false"
     if req.observer_camera_active is not None:
         data["observer_camera_active"] = "true" if req.observer_camera_active else "false"
-    if req.observer_capture_interval is not None:
-        data["observer_capture_interval"] = str(req.observer_capture_interval)
     if req.observer_screen_interval is not None:
         data["observer_screen_interval"] = str(req.observer_screen_interval)
     if req.observer_camera_interval is not None:
@@ -287,11 +284,8 @@ async def save_settings(req: SettingsReq,
 async def get_settings(current_user: dict = Depends(auth.get_current_user)):
     s = await Settings(current_user["id"]).load()
     return {
-        "gemini_api_key": "",
         "gemini_key_configured": bool(s.get("gemini_api_key", "")),
-        "cartesia_api_key": "",
         "cartesia_key_configured": bool(s.get("cartesia_api_key", "")),
-        "soniox_api_key": "",
         "soniox_key_configured": bool(s.get("soniox_api_key", "")),
         "tts_voice": s.get("tts_voice"),
         "tts_volume": float(s.get("tts_volume", "1.0")),

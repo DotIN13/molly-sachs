@@ -83,21 +83,24 @@ async def process_pending_observations(user_id: str, prefs: dict[str, str]) -> d
             f"maybe suggest taking a break or a coding tip. If they are browsing, "
             f"maybe something relevant. Be very brief and friendly."
         )
-        tip_response = await asyncio.wait_for(
+
+        logger.info("Generating proactive tip and embedding in parallel...")
+        tip_task = asyncio.wait_for(
             client.aio.models.generate_content(
                 model='gemini-3.1-flash-lite',
                 contents=tip_prompt,
             ), timeout=30
         )
-        tip = tip_response.text
-        logger.info("Generated Proactive Tip: {}", tip[:120])
-
-        embed_response = await asyncio.wait_for(
+        embed_task = asyncio.wait_for(
             client.aio.models.embed_content(
                 model='gemini-embedding-2',
                 contents=summary,
             ), timeout=30
         )
+        tip_response, embed_response = await asyncio.gather(tip_task, embed_task)
+        tip = tip_response.text
+        logger.info("Generated Proactive Tip: {}", tip[:120])
+
         embedding = embed_response.embeddings[0].values
 
         timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())

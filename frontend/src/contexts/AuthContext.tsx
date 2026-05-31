@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react'
 import i18n from '../i18n/config'
-import { API_URL } from '../config'
+import { API_URL, getStoredToken, getStoredRefresh, storeTokens, clearTokens, refreshAccessToken } from '../config'
 
 interface User {
   id: string
@@ -36,50 +36,14 @@ function extractError(detail: unknown): string {
   return ''
 }
 
-const TOKEN_KEY = 'molly_access_token'
-const REFRESH_KEY = 'molly_refresh_token'
-
-function getStoredToken(): string | null {
-  try { return localStorage.getItem(TOKEN_KEY) } catch { return null }
-}
-
-function getStoredRefresh(): string | null {
-  try { return localStorage.getItem(REFRESH_KEY) } catch { return null }
-}
-
-function storeTokens(access: string, refresh: string) {
-  try {
-    localStorage.setItem(TOKEN_KEY, access)
-    localStorage.setItem(REFRESH_KEY, refresh)
-  } catch { /* noop */ }
-}
-
-function clearTokens() {
-  try {
-    localStorage.removeItem(TOKEN_KEY)
-    localStorage.removeItem(REFRESH_KEY)
-  } catch { /* noop */ }
-}
-
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [accessToken, setAccessToken] = useState<string | null>(getStoredToken)
   const [refreshToken, setRefreshToken] = useState<string | null>(getStoredRefresh)
   const [isLoading, setIsLoading] = useState(true)
 
-  const tryRefresh = useCallback(async (rToken: string): Promise<string | null> => {
-    try {
-      const res = await fetch(`${API_URL}/api/auth/refresh`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ refresh_token: rToken }),
-      })
-      if (res.ok) {
-        const data = await res.json()
-        return data.access_token
-      }
-    } catch { /* offline */ }
-    return null
+  const tryRefresh = useCallback(async (): Promise<string | null> => {
+    return refreshAccessToken()
   }, [])
 
   const fetchUser = useCallback(async (token: string): Promise<User | null> => {
@@ -110,7 +74,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       if (storedRefresh) {
-        const newAccess = await tryRefresh(storedRefresh)
+        const newAccess = await tryRefresh()
         if (newAccess) {
           const u = await fetchUser(newAccess)
           if (u && !cancelled) {
@@ -145,7 +109,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let res = await fetch(url, { ...options, headers })
 
     if (res.status === 401 && refreshToken) {
-      const newAccess = await tryRefresh(refreshToken)
+      const newAccess = await tryRefresh()
       if (newAccess) {
         setAccessToken(newAccess)
         storeTokens(newAccess, refreshToken!)
