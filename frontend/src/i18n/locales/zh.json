@@ -15,10 +15,10 @@
     "aiMuted": "AI 已静音",
     "clearChat": "清空对话",
     "refresh": "刷新",
-    "helloDefault": "你好，我是 Molly！",
+    "helloDefault": "你好呀，我是 Molly！",
     "toggleVoiceOn": "开启语音模式",
     "toggleVoiceOff": "关闭语音模式",
-    "inputPlaceholder": "询问 Molly 关于你的上下文..."
+    "inputPlaceholder": "来跟 Molly 聊聊你的日常吧..."
   },
   "tabs": {
     "chat": "聊天",

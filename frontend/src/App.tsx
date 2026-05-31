@@ -432,9 +432,9 @@ export default function App() {
       )}
 
       {/* Sidebar */}
-      <div className={`w-64 max-w-[85vw] border-r border-slate-100 bg-[#fafafa] flex-col pt-12 pb-4 z-50 transition-transform duration-300
-        lg:flex lg:relative lg:translate-x-0
-        ${mobileMenuOpen ? 'fixed inset-y-0 left-0 flex translate-x-0' : 'fixed inset-y-0 left-0 -translate-x-full lg:hidden'}
+      <div className={`border-r border-slate-100 bg-[#fafafa] flex-col pt-12 pb-4 z-50 transition-transform duration-300
+        lg:flex lg:relative lg:translate-x-0 lg:w-64
+        ${mobileMenuOpen ? 'fixed inset-y-0 left-0 flex translate-x-0 w-64 max-w-[85vw]' : 'hidden'}
       `}>
         <button
           className="absolute top-4 right-4 lg:hidden text-slate-500 hover:text-slate-800"
