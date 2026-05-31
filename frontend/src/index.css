@@ -45,11 +45,11 @@
 }
 
 .lux-bubble-ai {
-  @apply text-slate-800 text-base leading-relaxed font-serif;
+  @apply text-slate-800 text-base leading-relaxed font-serif max-w-[70%] break-words;
 }
 
 .lux-bubble-user {
-  @apply bg-[#eef2fc] text-slate-800 text-base leading-relaxed rounded-xl shadow-sm font-serif;
+  @apply bg-[#eef2fc] text-slate-800 text-base leading-relaxed rounded-xl shadow-sm font-serif max-w-[70%] break-words;
 }
 
 /* Custom minimal scrollbar */
