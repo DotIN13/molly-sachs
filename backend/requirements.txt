@@ -1,6 +1,6 @@
 fastapi
 uvicorn
-pipecat-ai[cartesia,silero,google,webrtc]
+pipecat-ai[cartesia,silero,google,webrtc,rnnoise]
 python-dotenv
 google-genai
 chromadb
@@ -13,3 +13,4 @@ pwdlib[argon2,bcrypt]>=0.3.0
 python-jose[cryptography]==3.3.0
 python-multipart==0.0.14
 aiosmtplib==3.0.1
+aiosqlite

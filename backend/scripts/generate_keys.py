@@ -24,10 +24,10 @@ existing_jwt = any(
 
 if existing_fernet:
     print("FERNET_KEY already set — skipped")
-else:
-    print(f'echo "FERNET_KEY={fernet_key}" >> .env')
+
+print(f'echo "FERNET_KEY={fernet_key}" >> .env')
 
 if existing_jwt:
     print("JWT_SECRET already set — skipped")
-else:
-    print(f'echo "JWT_SECRET={jwt_secret}" >> .env')
+
+print(f'echo "JWT_SECRET={jwt_secret}" >> .env')
