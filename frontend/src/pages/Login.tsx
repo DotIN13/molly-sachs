@@ -79,7 +79,7 @@ export default function Login() {
 
   if (stage === 'verify') {
     return (
-      <div className="h-screen w-full bg-[#fafafa] flex items-center justify-center p-4">
+      <div className="h-dvh w-full bg-[#fafafa] flex items-center justify-center p-4">
         <div className="w-full max-w-sm space-y-6">
           <div className="text-center space-y-2">
             <div className="flex justify-center mb-4">
@@ -129,7 +129,7 @@ export default function Login() {
   const isRegister = stage === 'register'
 
   return (
-    <div className="h-screen w-full bg-[#fafafa] flex items-center justify-center p-4">
+    <div className="h-dvh w-full bg-[#fafafa] flex items-center justify-center p-4">
       <div className="w-full max-w-sm space-y-6">
         <div className="text-center space-y-3">
           <div className="flex justify-center">

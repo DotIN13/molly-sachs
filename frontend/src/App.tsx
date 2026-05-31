@@ -446,7 +446,7 @@ export default function App() {
 
   if (auth.isLoading) {
     return (
-      <div className="h-screen w-full bg-[#fafafa] flex items-center justify-center">
+      <div className="h-dvh w-full bg-[#fafafa] flex items-center justify-center">
         <div className="text-slate-500 text-lg">{t('app.loading')}</div>
       </div>
     )
@@ -457,7 +457,7 @@ export default function App() {
   }
 
   return (
-    <div className="h-screen w-full bg-white flex overflow-hidden font-sans relative">
+    <div className="h-dvh w-full bg-white flex overflow-hidden font-sans relative">
 
       {/* Mobile Menu Overlay */}
       {mobileMenuOpen && (
