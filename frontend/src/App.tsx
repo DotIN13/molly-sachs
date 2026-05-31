@@ -191,10 +191,16 @@ export default function App() {
 
   useEffect(() => {
     if (backendStatus !== 'connected' || !auth.isAuthenticated) return;
-    auth.authFetch(`${API_URL}/api/state`, {
+    if (dcRef.current && dcRef.current.readyState === 'open') {
+      dcRef.current.send(JSON.stringify({
+        type: 'session_state_updated',
+        changes: { voice_mode: voiceMode, speak_text: speakText }
+      }))
+    }
+    auth.authFetch(`${API_URL}/api/settings`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ voice_mode: voiceMode, speak_text: speakText })
+      body: JSON.stringify({ speak_text: speakText })
     }).catch(console.error)
   }, [voiceMode, speakText, backendStatus, auth.isAuthenticated])
 
@@ -359,7 +365,16 @@ export default function App() {
         disconnectWebRTC()
         setTimeout(() => connectWebRTC(), 200)
       } else if (dcRef.current && dcRef.current.readyState === 'open') {
-        dcRef.current.send(JSON.stringify({ type: 'settings_updated' }))
+        const sessionChanges: Record<string, unknown> = {}
+        if (body.timezone !== undefined) {
+          sessionChanges.timezone = body.timezone
+        }
+        if (body.speak_text !== undefined) {
+          sessionChanges.speak_text = body.speak_text
+        }
+        if (Object.keys(sessionChanges).length > 0) {
+          dcRef.current.send(JSON.stringify({ type: 'session_state_updated', changes: sessionChanges }))
+        }
       }
       appliedSettingsRef.current = curr
     } catch (e) {

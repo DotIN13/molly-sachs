@@ -1,5 +1,30 @@
 import { API_URL, isElectron } from '../config'
 
+const TOKEN_KEY = 'molly_access_token'
+const REFRESH_KEY = 'molly_refresh_token'
+
+function getStored(key: string): string | null {
+  try { return localStorage.getItem(key) } catch { return null }
+}
+
+async function refreshAccessToken(): Promise<string | null> {
+  const rToken = getStored(REFRESH_KEY)
+  if (!rToken) return null
+  try {
+    const res = await fetch(`${API_URL}/api/auth/refresh`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refresh_token: rToken }),
+    })
+    if (res.ok) {
+      const data = await res.json()
+      try { localStorage.setItem(TOKEN_KEY, data.access_token) } catch { /* noop */ }
+      return data.access_token
+    }
+  } catch { /* offline */ }
+  return null
+}
+
 let screenTimerId: ReturnType<typeof setInterval> | null = null
 let cameraTimerId: ReturnType<typeof setInterval> | null = null
 
@@ -71,23 +96,36 @@ function captureStreamToBase64(stream: MediaStream): Promise<string> {
  */
 async function uploadCapture(type: 'screen' | 'camera', base64Data: string, windowTitles: string[] = []) {
   const timestamp = new Date().toISOString();
-  const token = (() => { try { return localStorage.getItem('molly_access_token') } catch { return null } })();
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json'
-  };
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
+  const makeHeaders = (token: string | null): Record<string, string> => {
+    const h: Record<string, string> = { 'Content-Type': 'application/json' }
+    if (token) h['Authorization'] = `Bearer ${token}`
+    return h
   }
-  const response = await fetch(`${API_URL}/api/observations`, {
+  const body = JSON.stringify({
+    type,
+    image_base64: base64Data,
+    timestamp,
+    window_titles: windowTitles
+  })
+
+  let token = getStored(TOKEN_KEY)
+  let response = await fetch(`${API_URL}/api/observations`, {
     method: 'POST',
-    headers,
-    body: JSON.stringify({
-      type,
-      image_base64: base64Data,
-      timestamp,
-      window_titles: windowTitles
-    })
-  });
+    headers: makeHeaders(token),
+    body,
+  })
+
+  if (response.status === 401) {
+    const newToken = await refreshAccessToken()
+    if (newToken) {
+      response = await fetch(`${API_URL}/api/observations`, {
+        method: 'POST',
+        headers: makeHeaders(newToken),
+        body,
+      })
+    }
+  }
+
   if (!response.ok) {
     throw new Error(`Upload API rejected: ${response.statusText}`);
   }

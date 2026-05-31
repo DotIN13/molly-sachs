@@ -30,6 +30,7 @@ _DEFAULTS: dict[str, str] = {
     "observer_process_interval": "300",
     "debug": "false",
     "timezone": "",
+    "speak_text": "true",
 }
 
 _cipher: Optional[Fernet] = None

@@ -1,6 +1,7 @@
 import os
 import sys
 import asyncio
+from dataclasses import dataclass, field
 from datetime import datetime
 from zoneinfo import ZoneInfo
 import numpy as np
@@ -54,6 +55,39 @@ SYSTEM_PROMPT = (
     "回复要简短自然，像好朋友间发微信一样。适当用一些emoji和口语化表达，但不要太频繁。"
     "你可以使用search_memory工具查找用户过去的活动和记忆。聊到过去的事情、回忆、习惯或需要context时，可以先调用search_memory查询后再回复。"
 )
+
+# Settings that require tearing down and rebuilding the pipeline
+_RESTART_KEYS = {
+    "gemini_api_key", "cartesia_api_key", "soniox_api_key",
+    "stt_provider", "stt_language",
+    "tts_provider", "tts_voice", "tts_volume", "tts_speed", "tts_emotion", "tts_language",
+}
+
+
+@dataclass
+class SessionState:
+    """Mutable state for a single WebRTC pipeline session.  Processors hold a
+    reference to this object so that live toggles (voice_mode, speak_text) are
+    visible without restarting the pipeline."""
+    conversation_id: str
+    user_id: str
+    voice_mode: bool = False
+    prefs: dict = field(default_factory=dict)
+
+    @classmethod
+    async def create(cls, user_id: str, conversation_id: str) -> "SessionState":
+        from db.settings import Settings
+        prefs = await Settings(user_id).load()
+        return cls(conversation_id=conversation_id, user_id=user_id, prefs=prefs)
+
+
+class PipelineRestartRequested(Exception):
+    """Raised when session_state_updated changes a setting that requires
+    rebuilding the pipeline (API keys, STT/TTS provider, etc.)."""
+
+    def __init__(self, changes: dict):
+        super().__init__(f"Pipeline restart required for: {list(changes.keys())}")
+        self.changes = changes
 
 
 def _build_messages(past_messages: list, timezone: str | None = None) -> list:
@@ -115,24 +149,23 @@ def make_search_memory(user_id: str, api_key: str):
 
 class MicFilterProcessor(FrameProcessor):
     """Filters outgoing microphone audio if voice mode is inactive."""
-    def __init__(self, global_state: dict):
+    def __init__(self, session: SessionState):
         super().__init__()
-        self._global_state = global_state
+        self._session = session
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
         if isinstance(frame, AudioRawFrame) and direction == FrameDirection.DOWNSTREAM:
-            if not self._global_state["voice_mode"]:
+            if not self._session.voice_mode:
                 return
         await self.push_frame(frame, direction)
 
 
 class AudioLevelProcessor(FrameProcessor):
     """Calculates microphone audio level, sends to frontend, and gates noise when bot is speaking."""
-    def __init__(self, transport: SmallWebRTCTransport, global_state: dict):
+    def __init__(self, transport: SmallWebRTCTransport):
         super().__init__()
         self._transport = transport
-        self._global_state = global_state
         self._frame_count = 0
         self._bot_speaking = False
 
@@ -162,14 +195,14 @@ class AudioLevelProcessor(FrameProcessor):
 
 class TTSFilterProcessor(FrameProcessor):
     """Filters outgoing TTS audio if the assistant should remain silent."""
-    def __init__(self, global_state: dict):
+    def __init__(self, session: SessionState):
         super().__init__()
-        self._global_state = global_state
+        self._session = session
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
         if isinstance(frame, AudioRawFrame) and direction == FrameDirection.DOWNSTREAM:
-            if not self._global_state["voice_mode"] and not self._global_state["speak_text"]:
+            if not self._session.voice_mode and self._session.prefs.get("speak_text", "true") != "true":
                 return
         await self.push_frame(frame, direction)
 
@@ -241,13 +274,12 @@ class AssistantBroadcaster(FrameProcessor):
 
 async def start_pipecat_session(
     connection: SmallWebRTCConnection,
-    global_state: dict,
-    conversation_id: str,
-    user_id: str,
-    prefs: dict[str, str],
+    session: SessionState,
 ):
     """Initializes and starts a single WebRTC Pipecat pipeline session."""
-    conv = {"id": conversation_id}
+    conv_id = session.conversation_id
+    user_id = session.user_id
+    prefs = session.prefs
     try:
         transport = SmallWebRTCTransport(
             params=TransportParams(
@@ -292,13 +324,9 @@ async def start_pipecat_session(
             tts_emotion = prefs.get("tts_emotion")
             if not tts_emotion or tts_emotion == "neutral":
                 tts_emotion = None
-
             generation_config = GenerationConfig(
-                volume=tts_volume,
-                speed=tts_speed,
-                emotion=tts_emotion
+                volume=tts_volume, speed=tts_speed, emotion=tts_emotion
             )
-
             tts_language = prefs.get("tts_language", "en")
             tts = CartesiaTTSService(
                 api_key=prefs.get("cartesia_api_key"),
@@ -310,16 +338,13 @@ async def start_pipecat_session(
                 )
             )
 
-        past_messages = await database.app.get_messages(conv["id"])
+        past_messages = await database.app.get_messages(conv_id, user_id)
         formatted_messages = _build_messages(past_messages, prefs.get("timezone"))
 
         tools = ToolsSchema(standard_tools=[memory_tool])
         context = LLMContext(messages=formatted_messages, tools=tools)
         vad_params = VADParams(
-            start_secs=0.2,
-            stop_secs=0.8,
-            confidence=0.75,
-            min_volume=0.1,
+            start_secs=0.2, stop_secs=0.8, confidence=0.75, min_volume=0.1,
         )
         user_aggregator, assistant_aggregator = LLMContextAggregatorPair(
             context,
@@ -331,11 +356,11 @@ async def start_pipecat_session(
             ),
         )
 
-        mic_filter = MicFilterProcessor(global_state)
-        tts_filter = TTSFilterProcessor(global_state)
-        user_broadcaster = UserBroadcaster(transport, conv["id"], user_id)
-        assistant_broadcaster = AssistantBroadcaster(transport, conv["id"], user_id)
-        audio_level = AudioLevelProcessor(transport, global_state)
+        mic_filter = MicFilterProcessor(session)
+        tts_filter = TTSFilterProcessor(session)
+        user_broadcaster = UserBroadcaster(transport, conv_id, user_id)
+        assistant_broadcaster = AssistantBroadcaster(transport, conv_id, user_id)
+        audio_level = AudioLevelProcessor(transport)
 
         pipeline = Pipeline([
             transport.input(),
@@ -373,11 +398,12 @@ async def start_pipecat_session(
 
         @transport.event_handler("on_app_message")
         async def on_app_message(transport, message, sender):
+            nonlocal conv_id
             if isinstance(message, dict) and message.get("type") == "chat":
                 text = message.get("text")
                 if text:
                     logger.info("Chat message received: {}", text)
-                    await database.app.add_message(conv["id"], "user", text, user_id)
+                    await database.app.add_message(conv_id, "user", text, user_id)
                     await task.queue_frames([
                         InterruptionFrame(),
                         LLMMessagesAppendFrame(messages=[{"role": "user", "content": text}]),
@@ -385,13 +411,17 @@ async def start_pipecat_session(
                     ])
             elif isinstance(message, dict) and message.get("type") == "switch_conversation":
                 new_id = message.get("conversation_id")
-                if new_id and new_id != conv["id"]:
-                    logger.info("Switching conversation: {} -> {}", conv["id"], new_id)
-                    conv["id"] = new_id
+                if new_id and new_id != conv_id:
+                    if not await database.app.verify_conversation_owner(new_id, user_id):
+                        logger.warning("Switch conversation denied: user {} does not own {}", user_id[:8], new_id)
+                        return
+                    logger.info("Switching conversation: {} -> {}", conv_id, new_id)
+                    conv_id = new_id
+                    session.conversation_id = new_id
                     user_broadcaster.set_conversation_id(new_id)
                     assistant_broadcaster.set_conversation_id(new_id)
-                    msgs = await database.app.get_messages(new_id)
-                    formatted = _build_messages(msgs, prefs.get("timezone"))
+                    msgs = await database.app.get_messages(new_id, user_id)
+                    formatted = _build_messages(msgs, session.prefs.get("timezone"))
                     await task.queue_frames([
                         InterruptionFrame(),
                         LLMMessagesUpdateFrame(messages=formatted, run_llm=False),
@@ -402,20 +432,37 @@ async def start_pipecat_session(
                             "messages": [{"role": m["role"], "content": m["content"]} for m in msgs]
                         })
                     )
-            elif isinstance(message, dict) and message.get("type") == "settings_updated":
-                fresh = await Settings(user_id).load()
-                prefs["timezone"] = fresh.get("timezone", "")
-                msgs = await database.app.get_messages(conv["id"])
-                formatted = _build_messages(msgs, prefs.get("timezone"))
-                await task.queue_frames([
-                    LLMMessagesUpdateFrame(messages=formatted, run_llm=False),
-                ])
-                logger.info("Settings refreshed mid-session")
+            elif isinstance(message, dict) and message.get("type") == "session_state_updated":
+                changes = message.get("changes", {})
+                if not isinstance(changes, dict):
+                    return
+
+                restart_keys = _RESTART_KEYS & set(changes.keys())
+                if restart_keys:
+                    session.prefs.update(changes)
+                    raise PipelineRestartRequested(changes)
+
+                if "voice_mode" in changes:
+                    session.voice_mode = bool(changes["voice_mode"])
+                if "speak_text" in changes:
+                    session.prefs["speak_text"] = "true" if changes["speak_text"] else "false"
+                if "timezone" in changes:
+                    session.prefs["timezone"] = str(changes["timezone"])
+                    msgs = await database.app.get_messages(conv_id, user_id)
+                    formatted = _build_messages(msgs, session.prefs.get("timezone"))
+                    await task.queue_frames([
+                        LLMMessagesUpdateFrame(messages=formatted, run_llm=False),
+                    ])
+
+                logger.info("Session state updated: {}", {k: v for k, v in changes.items()
+                            if k not in _RESTART_KEYS})
 
         runner = PipelineRunner()
         logger.info("Pipecat WebRTC Assistant running...")
         await runner.run(task)
         logger.info("Pipecat runner.run() returned")
+    except PipelineRestartRequested:
+        raise
     except asyncio.CancelledError:
         logger.info("Pipecat session cancelled.")
     except Exception as e:

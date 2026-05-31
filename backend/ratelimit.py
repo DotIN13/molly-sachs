@@ -16,6 +16,8 @@ class RateLimiter:
         self._hits[identifier] = [
             t for t in self._hits[identifier] if now - t < self.window_seconds
         ]
+        if not self._hits[identifier]:
+            del self._hits[identifier]
         if len(self._hits[identifier]) >= self.max_requests:
             raise HTTPException(status_code=429, detail="Too many requests")
         self._hits[identifier].append(now)

@@ -2,6 +2,31 @@ import { useCallback, useRef, useEffect, useState } from 'react'
 import i18n from '../i18n/config'
 import { API_URL } from '../config'
 
+const TOKEN_KEY = 'molly_access_token'
+const REFRESH_KEY = 'molly_refresh_token'
+
+function getStoredToken(): string | null {
+  try { return localStorage.getItem(TOKEN_KEY) } catch { return null }
+}
+
+async function refreshToken(): Promise<string | null> {
+  const rToken = (() => { try { return localStorage.getItem(REFRESH_KEY) } catch { return null } })()
+  if (!rToken) return null
+  try {
+    const res = await fetch(`${API_URL}/api/auth/refresh`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refresh_token: rToken }),
+    })
+    if (res.ok) {
+      const data = await res.json()
+      try { localStorage.setItem(TOKEN_KEY, data.access_token) } catch { /* noop */ }
+      return data.access_token
+    }
+  } catch { /* offline */ }
+  return null
+}
+
 interface UseWebRTCOptions {
   backendStatus: string
   activeConversationId: string
@@ -246,16 +271,25 @@ export default function useWebRTC(opts: UseWebRTCOptions): UseWebRTCReturn {
         return
       }
 
-      const token = (() => { try { return localStorage.getItem('molly_access_token') } catch { return null } })()
-      const tokenParam = token ? `&token=${encodeURIComponent(token)}` : ''
-      const response = await fetch(`${API_URL}/api/webrtc/connect?conversation_id=${activeConversationId}${tokenParam}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sdp: activePC.localDescription!.sdp,
-          type: activePC.localDescription!.type
+      let token = getStoredToken()
+      const makeTokenParam = (t: string | null) => t ? `&token=${encodeURIComponent(t)}` : ''
+      const doFetch = (t: string | null) =>
+        fetch(`${API_URL}/api/webrtc/connect?conversation_id=${activeConversationId}${makeTokenParam(t)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            sdp: activePC.localDescription!.sdp,
+            type: activePC.localDescription!.type
+          })
         })
-      })
+      let response = await doFetch(token)
+      if (response.status === 401) {
+        const newToken = await refreshToken()
+        if (newToken) {
+          token = newToken
+          response = await doFetch(token)
+        }
+      }
       if (curId !== connectionIdRef.current) {
         activeStream.getTracks().forEach(t => t.stop())
         activePC.close()

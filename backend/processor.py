@@ -8,9 +8,6 @@ from loguru import logger
 import database
 import config
 
-TIPS_QUEUE = []
-
-
 async def process_pending_observations(user_id: str, prefs: dict[str, str]) -> dict | None:
     api_key = prefs.get("gemini_api_key", "").strip()
     if not api_key:
@@ -93,7 +90,6 @@ async def process_pending_observations(user_id: str, prefs: dict[str, str]) -> d
             ), timeout=30
         )
         tip = tip_response.text
-        TIPS_QUEUE.append(tip)
         logger.info("Generated Proactive Tip: {}", tip[:120])
 
         embed_response = await asyncio.wait_for(

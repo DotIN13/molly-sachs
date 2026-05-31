@@ -21,7 +21,7 @@ from pipecat.transports.smallwebrtc.request_handler import (
     SmallWebRTCPatchRequest
 )
 
-from bot import start_pipecat_session
+from bot import start_pipecat_session, SessionState, PipelineRestartRequested
 from processor import process_pending_observations
 import database
 import config
@@ -56,16 +56,9 @@ app.add_middleware(
 
 os.makedirs(config.OBSERVATIONS_DIR, exist_ok=True)
 
-# Per-user voice/speaker state
-global_states: dict[str, dict] = {}
-
 webrtc_handler = SmallWebRTCRequestHandler(esp32_mode=False, ice_servers=config.ice_servers())
 
 # ── FastAPI Models ───────────────────────────
-
-class StateConfigReq(BaseModel):
-    voice_mode: bool
-    speak_text: bool
 
 class SettingsReq(BaseModel):
     gemini_api_key: str | None = None
@@ -85,6 +78,7 @@ class SettingsReq(BaseModel):
     observer_capture_interval: int | None = None  # deprecated — kept for compat
     observer_process_interval: int | None = None
     timezone: str | None = None
+    speak_text: bool | None = None
 
 class RegisterReq(BaseModel):
     email: str
@@ -130,13 +124,7 @@ class ConversationCreateReq(BaseModel):
     title: str | None = None
 
 
-def _get_user_state(user_id: str) -> dict:
-    if user_id not in global_states:
-        global_states[user_id] = {"voice_mode": False, "speak_text": True}
-    return global_states[user_id]
-
-
-# ── Auth Endpoints ──────────────────────────
+# ── Health ──────────────────────────────────
 
 _auth_limiter = rate_limit(max_requests=5, window_seconds=60)
 _register_limiter = rate_limit(max_requests=3, window_seconds=300)
@@ -288,6 +276,8 @@ async def save_settings(req: SettingsReq,
         data["observer_process_interval"] = str(req.observer_process_interval)
     if req.timezone is not None:
         data["timezone"] = req.timezone
+    if req.speak_text is not None:
+        data["speak_text"] = "true" if req.speak_text else "false"
 
     await Settings(current_user["id"]).save(data)
     return {"status": "ok"}
@@ -318,6 +308,7 @@ async def get_settings(current_user: dict = Depends(auth.get_current_user)):
         "observer_process_interval": int(s.get("observer_process_interval", "300")),
         "debug": s.get("debug", "false").lower() == "true",
         "timezone": s.get("timezone", ""),
+        "speak_text": s.get("speak_text", "true").lower() == "true",
     }
 
 # ── Health ──────────────────────────────────
@@ -325,22 +316,6 @@ async def get_settings(current_user: dict = Depends(auth.get_current_user)):
 @app.get("/api/health", summary="Health check endpoint")
 async def health_check():
     return {"status": "healthy"}
-
-# ── State ───────────────────────────────────
-
-@app.post("/api/state", summary="Update voice mode and speaker state")
-async def update_state(req: StateConfigReq,
-                       current_user: dict = Depends(auth.get_current_user)):
-    state = _get_user_state(current_user["id"])
-    state["voice_mode"] = req.voice_mode
-    state["speak_text"] = req.speak_text
-    logger.info("Updated state for user {}: {}", current_user["id"][:8], state)
-    return {"status": "ok", "state": state}
-
-
-@app.get("/api/state", summary="Get current voice mode and speaker state")
-async def get_state(current_user: dict = Depends(auth.get_current_user)):
-    return _get_user_state(current_user["id"])
 
 # ── Observations ────────────────────────────
 
@@ -432,6 +407,8 @@ async def serve_observation_file(
     if not filepath.startswith(filedir + os.sep):
         raise HTTPException(status_code=403, detail="Access denied")
     if not os.path.isfile(filepath):
+        raise HTTPException(status_code=404, detail="File not found")
+    if not await database.app.verify_observation_owner(path, payload["sub"]):
         raise HTTPException(status_code=404, detail="File not found")
     return FileResponse(filepath)
 
@@ -538,20 +515,26 @@ async def webrtc_connect(
         if not user:
             raise HTTPException(status_code=401, detail="User not found")
 
-        prefs = await Settings(user["id"]).load()
-        if not prefs.get("gemini_api_key") or not prefs.get("cartesia_api_key"):
-            raise HTTPException(status_code=400, detail="Missing API keys. Configure in Settings.")
-
         conv_id = conversation_id or str(uuid.uuid4())
+        if conversation_id and not await database.app.verify_conversation_owner(conversation_id, user["id"]):
+            raise HTTPException(status_code=404, detail="Conversation not found")
         await database.app.create_conversation(conv_id, database.default_conversation_title(), user["id"])
 
-        user_state = _get_user_state(user["id"])
+        session = await SessionState.create(user["id"], conv_id)
+        if not session.prefs.get("gemini_api_key") or not session.prefs.get("cartesia_api_key"):
+            raise HTTPException(status_code=400, detail="Missing API keys. Configure in Settings.")
 
         async def webrtc_connection_callback(connection: SmallWebRTCConnection):
-            background_tasks.add_task(
-                start_pipecat_session, connection, user_state, conv_id,
-                user["id"], prefs
-            )
+            async def run_pipeline(sess):
+                while True:
+                    try:
+                        await start_pipecat_session(connection, sess)
+                        break
+                    except PipelineRestartRequested as e:
+                        logger.info("Restarting pipeline due to changed keys: {}",
+                                    list(e.changes.keys()))
+                        sess = await SessionState.create(user["id"], conv_id)
+            background_tasks.add_task(run_pipeline, session)
 
         answer = await webrtc_handler.handle_web_request(
             request=request,
@@ -593,6 +576,7 @@ async def startup_event():
 async def shutdown_event():
     logger.info("Server shutting down, closing WebRTC handler")
     await webrtc_handler.close()
+    await database.app.close()
 
 
 if __name__ == "__main__":

@@ -4,6 +4,39 @@ import { Input } from '@/components/ui/input'
 import { triggerObservationsCapture } from '../observers'
 import { API_URL, isElectron } from '../config'
 
+const TOKEN_KEY = 'molly_access_token'
+const REFRESH_KEY = 'molly_refresh_token'
+
+function getStored(key: string): string | null {
+  try { return localStorage.getItem(key) } catch { return null }
+}
+
+async function doFetch(url: string, options: RequestInit): Promise<Response> {
+  let token = getStored(TOKEN_KEY)
+  const makeHeaders = (t: string | null) => {
+    const h = new Headers(options.headers)
+    if (t) h.set('Authorization', `Bearer ${t}`)
+    return h
+  }
+  let res = await fetch(url, { ...options, headers: makeHeaders(token) })
+  if (res.status === 401) {
+    const rToken = getStored(REFRESH_KEY)
+    if (rToken) {
+      const refreshRes = await fetch(`${API_URL}/api/auth/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refresh_token: rToken }),
+      })
+      if (refreshRes.ok) {
+        const data = await refreshRes.json()
+        try { localStorage.setItem(TOKEN_KEY, data.access_token) } catch { /* noop */ }
+        res = await fetch(url, { ...options, headers: makeHeaders(data.access_token) })
+      }
+    }
+  }
+  return res
+}
+
 const TIMEZONES: { value: string; label: string }[] = (() => {
   const tzs: string[] = (() => {
     try { return (Intl as any).supportedValuesOf?.('timeZone') as string[] || [] }
@@ -337,11 +370,7 @@ export default function SettingsModal({ isOpen, onClose, onSave, settings, onCha
                       <button
                         onClick={async () => {
                           try {
-                            const token = (() => { try { return localStorage.getItem('molly_access_token') } catch { return null } })()
-                            await fetch(`${API_URL}/api/processor/trigger`, {
-                              method: 'POST',
-                              headers: token ? { Authorization: `Bearer ${token}` } : {},
-                            })
+                            await doFetch(`${API_URL}/api/processor/trigger`, { method: 'POST' })
                             fetchObservations('insights', true)
                           } catch (e) { console.error('Processor trigger failed:', e) }
                         }}
