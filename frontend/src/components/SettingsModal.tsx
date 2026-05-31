@@ -1,6 +1,16 @@
+import { useState } from 'react'
 import { Input } from '@/components/ui/input'
 import { triggerObservationsCapture } from '../observers'
 import { API_URL, isElectron } from '../config'
+
+const VOICE_PRESETS = [
+  { id: '6eb8965c-e295-47bd-a9e4-3eeebb3abcff', name: 'Jing - Clear Coordinator', label: 'Clear Mandarin female for reliable business communication.', lang: 'Chinese, Mandarin' },
+  { id: 'db6b0ed5-d5d3-463d-ae85-518a07d3c2b4', name: 'Skylar - Friendly Guide', label: 'Approachable American female ideal for customer care and support.', lang: 'English, American' },
+  { id: '62ae83ad-4f6a-430b-af41-a9bede9286ca', name: 'Gemma - Decisive Agent', label: 'Confident, emotive British female for professional assistance.', lang: 'English, British' },
+  { id: 'f786b574-daa5-4673-aa0c-cbe3e8534c02', name: 'Katie - Friendly Fixer', label: 'Enunciating young adult female for conversational support use cases.', lang: 'English, American' },
+  { id: 'ef191366-f52f-447a-a398-ed8c0f2943a1', name: 'Archie - Approachable Mate', label: 'Warm, conversational British male for casual and engaging dialogue.', lang: 'English, British' },
+  { id: '78386a09-04ef-484d-9b9d-efd13087b792', name: 'Lee - Adorable Friend', label: 'Chinese Mandarin voice.', lang: 'Chinese, Mandarin' },
+]
 
 export interface SettingsData {
   geminiKey: string
@@ -33,6 +43,8 @@ interface Props {
 }
 
 export default function SettingsModal({ isOpen, onClose, onSave, settings, onChange, fetchObservations }: Props) {
+  const [customVoiceId, setCustomVoiceId] = useState('')
+
   if (!isOpen) return null
 
   const handleClose = () => {
@@ -76,8 +88,37 @@ export default function SettingsModal({ isOpen, onClose, onSave, settings, onCha
                   <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Speech Output (TTS)</span>
                 </div>
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-medium text-slate-700">Voice ID</label>
-                  <Input value={settings.ttsVoice} onChange={e => onChange('ttsVoice', e.target.value)} className="bg-[#f9f9f9] border-slate-200 text-sm focus-visible:ring-slate-300" placeholder="79a125e8-..." />
+                  <label className="text-xs font-medium text-slate-700">Voice</label>
+                  <select
+                    value={VOICE_PRESETS.some(v => v.id === settings.ttsVoice) ? settings.ttsVoice : '__custom__'}
+                    onChange={e => {
+                      if (e.target.value === '__custom__') {
+                        onChange('ttsVoice', customVoiceId || '')
+                      } else {
+                        onChange('ttsVoice', e.target.value)
+                      }
+                    }}
+                    className="bg-[#f9f9f9] border border-slate-200 text-sm focus-visible:ring-slate-300 rounded-md h-9 px-3 outline-none"
+                  >
+                    {VOICE_PRESETS.map(v => (
+                      <option key={v.id} value={v.id}>{v.name} ({v.lang})</option>
+                    ))}
+                    <option value="__custom__">Custom...</option>
+                  </select>
+                  {!VOICE_PRESETS.some(v => v.id === settings.ttsVoice) && (
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[10px] font-medium text-slate-500">Custom Voice ID</label>
+                      <Input
+                        value={settings.ttsVoice}
+                        onChange={e => {
+                          setCustomVoiceId(e.target.value)
+                          onChange('ttsVoice', e.target.value)
+                        }}
+                        className="bg-[#f9f9f9] border-slate-200 text-sm focus-visible:ring-slate-300 font-mono"
+                        placeholder="6eb8965c-e295-..."
+                      />
+                    </div>
+                  )}
                 </div>
                 <div className="flex items-center gap-4">
                   <div className="flex-1 flex flex-col gap-1.5">

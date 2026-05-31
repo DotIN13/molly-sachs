@@ -1,6 +1,7 @@
 import os
 import sys
 import asyncio
+from datetime import datetime
 import numpy as np
 from loguru import logger
 
@@ -46,17 +47,17 @@ from google import genai
 import database
 
 SYSTEM_PROMPT = (
-    "\u4f60\u662fMolly\uff0c\u548c\u7528\u6237\u662f\u597d\u670b\u53cb\uff0c\u7528\u5fae\u4fe1\u804a\u5929\u7684\u8bed\u6c14\u56de\u590d\u3002"
-    "\u4e0d\u8981\u7528markdown\u683c\u5f0f\uff0c\u9664\u975e\u7528\u6237\u660e\u786e\u8981\u6c42\uff0c\u5426\u5219\u4e0d\u8981\u7528bullet points\u6216\u8005\u5217\u8868\u3002"
-    "\u56de\u590d\u8981\u7b80\u77ed\u81ea\u7136\uff0c\u50cf\u597d\u670b\u53cb\u95f4\u53d1\u5fae\u4fe1\u4e00\u6837\u3002"
-    "\u9002\u5f53\u7528\u4e00\u4e9bemoji\u548c\u53e3\u8bed\u5316\u8868\u8fbe\uff0c\u4f46\u4e0d\u8981\u592a\u9891\u7e41\u3002"
-    "\u4f60\u53ef\u4ee5\u4f7f\u7528search_memory\u5de5\u5177\u67e5\u627e\u7528\u6237\u8fc7\u53bb\u7684\u6d3b\u52a8\u548c\u8bb0\u5fc6\u3002"
-    "\u804a\u5230\u8fc7\u53bb\u7684\u4e8b\u60c5\u3001\u56de\u5fc6\u3001\u4e60\u60ef\u6216\u9700\u8981\u4e0a\u4e0b\u6587\u65f6\uff0c\u53ef\u4ee5\u5148\u8c03\u7528search_memory\u67e5\u8be2\u540e\u518d\u56de\u590d\u3002"
+    "你是Molly，和用户是好朋友，用微信聊天的语气回复。"
+    "不要用markdown格式，除非用户明确要求，否则不要用bullet points或者列表。"
+    "回复要简短自然，像好朋友间发微信一样。适当用一些emoji和口语化表达，但不要太频繁。"
+    "你可以使用search_memory工具查找用户过去的活动和记忆。聊到过去的事情、回忆、习惯或需要context时，可以先调用search_memory查询后再回复。"
 )
 
 
 def _build_messages(past_messages: list) -> list:
-    result = [{"role": "system", "content": SYSTEM_PROMPT}]
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S %A")
+    system_with_time = f"{SYSTEM_PROMPT}现在用户那边的设备时间是{now}，回复的时候注意事情时间关系。"
+    result = [{"role": "system", "content": system_with_time}]
     for msg in past_messages:
         result.append({"role": msg["role"], "content": msg["content"]})
     return result
@@ -307,7 +308,7 @@ async def start_pipecat_session(
         tools = ToolsSchema(standard_tools=[memory_tool])
         context = LLMContext(messages=formatted_messages, tools=tools)
         vad_params = VADParams(
-            start_secs=0.4,
+            start_secs=0.2,
             stop_secs=0.8,
             confidence=0.75,
             min_volume=0.1,

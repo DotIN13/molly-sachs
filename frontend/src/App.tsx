@@ -28,7 +28,7 @@ export default function App() {
   const [cartesiaKey, setCartesiaKey] = useState('')
   const [sonioxKey, setSonioxKey] = useState('')
 
-  const [ttsVoice, setTtsVoice] = useState('79a125e8-cd45-4c13-8a67-188112f4dd22')
+  const [ttsVoice, setTtsVoice] = useState('6eb8965c-e295-47bd-a9e4-3eeebb3abcff')
   const [ttsVolume, setTtsVolume] = useState(1.0)
   const [ttsSpeed, setTtsSpeed] = useState(1.0)
   const [ttsEmotion, setTtsEmotion] = useState('neutral')

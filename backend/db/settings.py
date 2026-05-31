@@ -15,7 +15,7 @@ _DEFAULTS: dict[str, str] = {
     "gemini_api_key": "",
     "cartesia_api_key": "",
     "soniox_api_key": "",
-    "tts_voice": "79a125e8-cd45-4c13-8a67-188112f4dd22",
+    "tts_voice": "6eb8965c-e295-47bd-a9e4-3eeebb3abcff",
     "tts_volume": "1.0",
     "tts_speed": "1.0",
     "tts_emotion": "neutral",
