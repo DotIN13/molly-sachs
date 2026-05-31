@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Settings, PenSquare, Search, FileText, Clock, Bird, Mic, Volume2, VolumeX, RefreshCw, LogOut, Menu, X, ChevronDown } from 'lucide-react'
+import { Settings, PenSquare, Search, FileText, Clock, Bird, Mic, Volume2, VolumeX, RefreshCw, LogOut, Menu, X, ChevronDown, ArrowUp } from 'lucide-react'
 import { updateObserverConfig } from './observers'
 import { API_URL, isElectron } from './config'
 import useAudioVisualizer from './hooks/useAudioVisualizer'
@@ -551,17 +551,17 @@ export default function App() {
         <div className="px-3 sm:px-4 lg:px-8 pt-3.5 pb-4 lg:py-4 flex items-center gap-2 lg:gap-4 border-b border-slate-100 flex-shrink-0 flex-wrap">
           <button
             onClick={() => setMobileMenuOpen(true)}
-            className="lg:hidden flex items-center justify-center w-8 h-8 rounded-lg hover:bg-slate-100 text-slate-600 flex-shrink-0"
+            className="lg:hidden flex items-center justify-center w-10 h-10 rounded-lg hover:bg-slate-100 text-slate-600 flex-shrink-0"
           >
             <Menu className="w-5 h-5" />
           </button>
           <div className="flex-shrink-0 relative">
             <button
               onClick={() => setMobileTabOpen(!mobileTabOpen)}
-              className="lg:hidden flex items-center gap-2 text-xs font-semibold uppercase tracking-wider bg-slate-100/80 border border-slate-200/40 rounded-xl px-3 py-2 shadow-inner cursor-pointer text-slate-700"
+              className="lg:hidden flex items-center gap-2 text-sm font-semibold uppercase tracking-wider bg-slate-100/80 border border-slate-200/40 rounded-xl px-4 py-2.5 shadow-inner cursor-pointer text-slate-700"
             >
               {t(`tabs.${activeTab}`)}
-              <ChevronDown className={`w-3.5 h-3.5 transition-transform ${mobileTabOpen ? 'rotate-180' : ''}`} />
+              <ChevronDown className={`w-4 h-4 transition-transform ${mobileTabOpen ? 'rotate-180' : ''}`} />
             </button>
             {mobileTabOpen && (
               <>
@@ -571,7 +571,7 @@ export default function App() {
                     <button
                       key={tab}
                       onClick={() => { setActiveTab(tab); setMobileTabOpen(false) }}
-                      className={`w-full text-left px-4 py-2.5 text-xs font-semibold uppercase tracking-wider transition-colors ${activeTab === tab
+                      className={`w-full text-left px-4 py-3 text-sm font-semibold uppercase tracking-wider transition-colors ${activeTab === tab
                         ? 'bg-slate-100 text-slate-900'
                         : 'text-slate-500 hover:bg-slate-50 hover:text-slate-800'
                         }`}
@@ -603,18 +603,18 @@ export default function App() {
               <>
                 <button
                   onClick={() => setSpeakText(!speakText)}
-                  className={`flex items-center gap-1 sm:gap-1.5 text-[10px] sm:text-xs font-medium transition-all px-2 sm:px-3 py-1.5 rounded-lg border ${speakText
+                  className={`flex items-center gap-1.5 text-xs font-medium transition-all px-3 py-2 sm:py-1.5 rounded-lg border ${speakText
                     ? 'bg-indigo-50 text-indigo-600 border-indigo-100 shadow-sm'
                     : 'bg-slate-50 text-slate-500 border-slate-200'
                     }`}
                 >
-                  {speakText ? <Volume2 className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-indigo-500" /> : <VolumeX className="w-3 h-3 sm:w-3.5 sm:h-3.5" />}
+                  {speakText ? <Volume2 className="w-3.5 h-3.5 text-indigo-500" /> : <VolumeX className="w-3.5 h-3.5" />}
                   <span className="hidden sm:inline">{speakText ? t('app.aiSpeaking') : t('app.aiMuted')}</span>
                 </button>
 
                 <button
                   onClick={() => setMessages([])}
-                  className="border border-slate-200 px-2 sm:px-3.5 py-1.5 rounded-lg shadow-sm hover:bg-slate-50 transition-colors text-[10px] sm:text-xs font-medium text-slate-500"
+                  className="border border-slate-200 px-3 py-2 sm:py-1.5 rounded-lg shadow-sm hover:bg-slate-50 transition-colors text-xs font-medium text-slate-500"
                 >
                   {t('app.clearChat')}
                 </button>
@@ -836,9 +836,9 @@ export default function App() {
 
         {/* Input Area */}
         <div className={`p-3 sm:p-4 lg:p-6 bg-gradient-to-t from-white via-white to-transparent flex-shrink-0 border-t border-slate-50 ${activeTab === 'chat' ? '' : 'hidden'}`}>
-          <div className="max-w-2xl mx-auto flex items-end gap-1.5 sm:gap-2 bg-[#f9f9f9] border border-slate-200 rounded-2xl px-2.5 sm:px-4 py-2 shadow-sm focus-within:ring-1 focus-within:ring-slate-350 transition-all">
-            <div className="text-slate-400 flex items-center justify-center h-8">
-              <span className="text-lg leading-none mb-1 opacity-60">...</span>
+          <div className="max-w-2xl mx-auto flex items-end gap-2 sm:gap-2 bg-[#f9f9f9] border border-slate-200 rounded-2xl px-3 sm:px-4 py-2.5 shadow-sm focus-within:ring-1 focus-within:ring-slate-350 transition-all">
+            <div className="text-slate-400 flex items-center justify-center h-10">
+              <span className="text-lg leading-none mb-3 opacity-60">...</span>
             </div>
             <textarea
               ref={textareaRef}
@@ -850,7 +850,7 @@ export default function App() {
                   sendMessage()
                 }
               }}
-              className="flex-1 bg-transparent border-0 focus-visible:ring-0 focus-visible:ring-offset-0 px-2 text-slate-700 text-sm shadow-none resize-none outline-none min-h-[32px] max-h-[200px] py-1 leading-6"
+              className="flex-1 bg-transparent border-0 focus-visible:ring-0 focus-visible:ring-offset-0 px-2 text-slate-700 text-sm shadow-none resize-none outline-none min-h-[40px] max-h-[200px] py-1.5 leading-6 hide-placeholder-mobile"
               placeholder={t('app.inputPlaceholder')}
               disabled={voiceMode}
               rows={1}
@@ -859,15 +859,15 @@ export default function App() {
               onClick={() => setVoiceMode(!voiceMode)}
               className={`flex items-center justify-center transition-all border ${voiceMode
                 ? pipelineReady
-                  ? 'px-3 h-8 rounded-full bg-rose-50 border-rose-200 shadow-sm gap-2 ring-1 ring-rose-100'
-                  : 'px-3 h-8 rounded-full bg-amber-50 border-amber-200 shadow-sm gap-2 ring-1 ring-amber-100'
-                : 'w-8 h-8 rounded-full bg-slate-50 text-slate-500 hover:text-slate-800 border-slate-200 hover:bg-slate-100'
+                  ? 'px-3 h-10 rounded-full bg-rose-50 border-rose-200 shadow-sm gap-2 ring-1 ring-rose-100'
+                  : 'px-3 h-10 rounded-full bg-amber-50 border-amber-200 shadow-sm gap-2 ring-1 ring-amber-100'
+                : 'w-10 h-10 rounded-full bg-slate-50 text-slate-500 hover:text-slate-800 border-slate-200 hover:bg-slate-100'
                 }`}
               title={voiceMode ? (pipelineReady ? t('app.toggleVoiceOff') : t('app.voicePreparing')) : t('app.toggleVoiceOn')}
             >
               {voiceMode ? (
                 <>
-                  <Mic className={`w-3.5 h-3.5 ${pipelineReady ? 'text-rose-500' : 'text-amber-500'}`} />
+                  <Mic className={`w-4 h-4 ${pipelineReady ? 'text-rose-500' : 'text-amber-500'}`} />
                   <div className="flex items-center gap-[3px] h-5 px-1">
                     {pipelineReady
                       ? audioBars.map((level, i) => (
@@ -892,17 +892,18 @@ export default function App() {
                   </div>
                 </>
               ) : (
-                <Mic className="w-3.5 h-3.5 text-slate-500" />
+                <Mic className="w-4 h-4 text-slate-500" />
               )}
             </button>
 
             <button
               onClick={sendMessage}
               disabled={voiceMode || !input.trim()}
-              className="flex items-center gap-1.5 text-xs font-semibold text-slate-700 bg-white border border-slate-200 px-3.5 h-8 rounded-full shadow-sm hover:bg-slate-50 transition-all disabled:opacity-50"
+              className="flex items-center justify-center gap-1.5 text-sm font-semibold text-slate-700 bg-white border border-slate-200 w-10 sm:w-auto sm:px-4 h-10 rounded-full shadow-sm hover:bg-slate-50 transition-all disabled:opacity-50"
             >
-              <div className="w-2 h-2 bg-slate-900 rounded-sm"></div>
-              {t('app.send')}
+              <ArrowUp className="w-5 h-5 sm:hidden" />
+              <div className="w-2 h-2 bg-slate-900 rounded-sm hidden sm:block"></div>
+              <span className="hidden sm:inline">{t('app.send')}</span>
             </button>
           </div>
         </div>

@@ -86,3 +86,9 @@
   animation: level-bar-idle 1.2s ease-in-out infinite;
 }
 
+@media (max-width: 639px) {
+  .hide-placeholder-mobile::placeholder {
+    color: transparent;
+  }
+}
+
