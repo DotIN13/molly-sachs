@@ -850,7 +850,7 @@ export default function App() {
                   sendMessage()
                 }
               }}
-              className="flex-1 bg-transparent border-0 focus-visible:ring-0 focus-visible:ring-offset-0 px-2 text-slate-700 text-base shadow-none resize-none outline-none min-h-[40px] max-h-[200px] py-1.5 leading-6 hide-placeholder-mobile"
+              className="flex-1 min-w-0 bg-transparent border-0 focus-visible:ring-0 focus-visible:ring-offset-0 px-2 text-slate-700 text-base shadow-none resize-none outline-none min-h-[40px] max-h-[200px] py-1.5 leading-6 hide-placeholder-mobile"
               placeholder={t('app.inputPlaceholder')}
               disabled={voiceMode}
               rows={1}
