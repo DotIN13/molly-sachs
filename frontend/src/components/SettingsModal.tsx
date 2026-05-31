@@ -23,11 +23,12 @@ const TIMEZONES: { value: string; label: string }[] = (() => {
 
 const VOICE_PRESETS = [
   { id: '6eb8965c-e295-47bd-a9e4-3eeebb3abcff', name: 'Jing - Clear Coordinator', langKey: 'voiceLang.cn' },
-  { id: 'db6b0ed5-d5d3-463d-ae85-518a07d3c2b4', name: 'Skylar - Friendly Guide', langKey: 'voiceLang.enUS' },
+  { id: '78386a09-04ef-484d-9b9d-efd13087b792', name: 'Lee - Adorable Friend', langKey: 'voiceLang.cn' },
+  { id: '9cccd5d0-c6ad-4121-9ec9-5937a0487c09', name: 'Zheng - Chinese', langKey: 'voiceLang.cn' },
+  { id: 'ef191366-f52f-447a-a398-ed8c0f2943a1', name: 'Archie - Approachable Mate', langKey: 'voiceLang.enGB' },
   { id: '62ae83ad-4f6a-430b-af41-a9bede9286ca', name: 'Gemma - Decisive Agent', langKey: 'voiceLang.enGB' },
   { id: 'f786b574-daa5-4673-aa0c-cbe3e8534c02', name: 'Katie - Friendly Fixer', langKey: 'voiceLang.enUS' },
-  { id: 'ef191366-f52f-447a-a398-ed8c0f2943a1', name: 'Archie - Approachable Mate', langKey: 'voiceLang.enGB' },
-  { id: '78386a09-04ef-484d-9b9d-efd13087b792', name: 'Lee - Adorable Friend', langKey: 'voiceLang.cn' },
+  { id: 'db6b0ed5-d5d3-463d-ae85-518a07d3c2b4', name: 'Skylar - Friendly Guide', langKey: 'voiceLang.enUS' },
 ]
 
 const TTS_LANGUAGES = [
