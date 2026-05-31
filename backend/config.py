@@ -51,7 +51,7 @@ def fernet_key() -> str:
 
 
 def ice_servers() -> list:
-    servers = ['stun:stun.l.google.com:19302']
+    servers: list = [{'urls': 'stun:stun.l.google.com:19302'}]
     turn_url = os.environ.get("TURN_SERVER", "").strip()
     turn_username = os.environ.get("TURN_USERNAME", "").strip()
     turn_password = os.environ.get("TURN_PASSWORD", "").strip()
