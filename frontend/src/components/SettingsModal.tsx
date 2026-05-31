@@ -64,7 +64,7 @@ export default function SettingsModal({ isOpen, onClose, onSave, settings, onCha
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/10 backdrop-blur-sm animate-in fade-in" onClick={handleClose}>
-      <div className="w-full max-w-2xl bg-white rounded-xl overflow-hidden shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-slate-100 animate-in zoom-in-95 flex flex-col max-h-[90vh]" onClick={e => e.stopPropagation()}>
+      <div className="w-full max-w-2xl bg-white rounded-xl overflow-hidden shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-slate-100 animate-in zoom-in-95 flex flex-col h-[480px] max-h-[90vh]" onClick={e => e.stopPropagation()}>
         <div className="flex flex-1 overflow-hidden flex-col lg:flex-row">
           <div className="flex-shrink-0 bg-slate-50 border-b border-slate-100 lg:border-b-0 lg:border-r lg:w-48 px-3 py-2 lg:py-8 flex flex-row lg:flex-col gap-1 overflow-x-auto lg:overflow-y-auto">
             <button onClick={() => onChange('settingsTab', 'speech')} className={`text-left px-3 py-2 rounded-md text-xs font-medium transition-colors whitespace-nowrap ${settings.settingsTab === 'speech' ? 'bg-white text-slate-900 shadow-sm border border-slate-200' : 'text-slate-600 hover:bg-slate-100'}`}>{t('settings.speech')}</button>
