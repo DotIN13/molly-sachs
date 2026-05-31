@@ -838,7 +838,7 @@ export default function App() {
         <div className={`p-3 sm:p-4 lg:p-6 bg-gradient-to-t from-white via-white to-transparent flex-shrink-0 border-t border-slate-50 ${activeTab === 'chat' ? '' : 'hidden'}`}>
           <div className="max-w-2xl mx-auto flex items-end gap-2 sm:gap-2 bg-[#f9f9f9] border border-slate-200 rounded-2xl px-3 sm:px-4 py-2.5 shadow-sm focus-within:ring-1 focus-within:ring-slate-350 transition-all">
             <div className="text-slate-400 flex items-center justify-center h-10">
-              <span className="text-lg leading-none mb-3 opacity-60">...</span>
+              <span className="text-lg leading-none mb-2 opacity-60">...</span>
             </div>
             <textarea
               ref={textareaRef}
@@ -850,7 +850,7 @@ export default function App() {
                   sendMessage()
                 }
               }}
-              className="flex-1 bg-transparent border-0 focus-visible:ring-0 focus-visible:ring-offset-0 px-2 text-slate-700 text-sm shadow-none resize-none outline-none min-h-[40px] max-h-[200px] py-1.5 leading-6 hide-placeholder-mobile"
+              className="flex-1 bg-transparent border-0 focus-visible:ring-0 focus-visible:ring-offset-0 px-2 text-slate-700 text-base shadow-none resize-none outline-none min-h-[40px] max-h-[200px] py-1.5 leading-6 hide-placeholder-mobile"
               placeholder={t('app.inputPlaceholder')}
               disabled={voiceMode}
               rows={1}
