@@ -22,42 +22,12 @@ existing_jwt = any(
     for line in lines
 )
 
-new_lines = []
-fernet_written = False
-jwt_written = False
-for line in lines:
-    stripped = line.strip()
-    if stripped.startswith("FERNET_KEY="):
-        if existing_fernet:
-            new_lines.append(line)
-            fernet_written = True
-            continue
-        new_lines.append(f"FERNET_KEY={fernet_key}\n")
-        fernet_written = True
-    elif stripped.startswith("JWT_SECRET="):
-        if existing_jwt:
-            new_lines.append(line)
-            jwt_written = True
-            continue
-        new_lines.append(f"JWT_SECRET={jwt_secret}\n")
-        jwt_written = True
-    else:
-        new_lines.append(line)
-
-if not fernet_written:
-    new_lines.append(f"\nFERNET_KEY={fernet_key}\n")
-if not jwt_written:
-    new_lines.append(f"JWT_SECRET={jwt_secret}\n")
-
-with open(env_path, "w") as f:
-    f.writelines(new_lines)
-
 if existing_fernet:
     print("FERNET_KEY already set — skipped")
 else:
-    print(f"FERNET_KEY={fernet_key}")
+    print(f'echo "FERNET_KEY={fernet_key}" >> .env')
+
 if existing_jwt:
     print("JWT_SECRET already set — skipped")
 else:
-    print(f"JWT_SECRET={jwt_secret}")
-print("Done")
+    print(f'echo "JWT_SECRET={jwt_secret}" >> .env')
