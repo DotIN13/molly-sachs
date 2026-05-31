@@ -128,13 +128,13 @@
   },
   "languages": {
     "en": "English",
-    "zh": "中文",
-    "fr": "French",
+    "zh": "Chinese",
+    "ja": "Japanese",
     "es": "Spanish",
+    "fr": "French",
     "de": "German",
     "pt": "Portuguese",
-    "it": "Italian",
-    "ja": "Japanese"
+    "it": "Italian"
   },
   "emotions": {
     "calm": "Calm",
@@ -155,23 +155,9 @@
     "confident": "Confident",
     "neutral": "Neutral"
   },
-  "voices": {
-    "jing": "Jing - Clear Coordinator",
-    "jingDesc": "Clear Mandarin female for reliable business communication.",
-    "skylar": "Skylar - Friendly Guide",
-    "skylarDesc": "Approachable American female ideal for customer care and support.",
-    "gemma": "Gemma - Decisive Agent",
-    "gemmaDesc": "Confident, emotive British female for professional assistance.",
-    "katie": "Katie - Friendly Fixer",
-    "katieDesc": "Enunciating young adult female for conversational support use cases.",
-    "archie": "Archie - Approachable Mate",
-    "archieDesc": "Warm, conversational British male for casual and engaging dialogue.",
-    "lee": "Lee - Adorable Friend",
-    "leeDesc": "Chinese Mandarin voice."
-  },
-  "voiceLanguages": {
-    "chineseMandarin": "Chinese, Mandarin",
-    "englishAmerican": "English, American",
-    "englishBritish": "English, British"
+  "voiceLang": {
+    "cn": "Chinese, Mandarin",
+    "enUS": "English, American",
+    "enGB": "English, British"
   }
 }

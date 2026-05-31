@@ -5,18 +5,18 @@ import { triggerObservationsCapture } from '../observers'
 import { API_URL, isElectron } from '../config'
 
 const VOICE_PRESETS = [
-  { id: '6eb8965c-e295-47bd-a9e4-3eeebb3abcff', nameKey: 'voices:jing', descKey: 'voices:jingDesc', langKey: 'voiceLanguages:chineseMandarin' },
-  { id: 'db6b0ed5-d5d3-463d-ae85-518a07d3c2b4', nameKey: 'voices:skylar', descKey: 'voices:skylarDesc', langKey: 'voiceLanguages:englishAmerican' },
-  { id: '62ae83ad-4f6a-430b-af41-a9bede9286ca', nameKey: 'voices:gemma', descKey: 'voices:gemmaDesc', langKey: 'voiceLanguages:englishBritish' },
-  { id: 'f786b574-daa5-4673-aa0c-cbe3e8534c02', nameKey: 'voices:katie', descKey: 'voices:katieDesc', langKey: 'voiceLanguages:englishAmerican' },
-  { id: 'ef191366-f52f-447a-a398-ed8c0f2943a1', nameKey: 'voices:archie', descKey: 'voices:archieDesc', langKey: 'voiceLanguages:englishBritish' },
-  { id: '78386a09-04ef-484d-9b9d-efd13087b792', nameKey: 'voices:lee', descKey: 'voices:leeDesc', langKey: 'voiceLanguages:chineseMandarin' },
+  { id: '6eb8965c-e295-47bd-a9e4-3eeebb3abcff', name: 'Jing - Clear Coordinator', langKey: 'voiceLang.cn' },
+  { id: 'db6b0ed5-d5d3-463d-ae85-518a07d3c2b4', name: 'Skylar - Friendly Guide', langKey: 'voiceLang.enUS' },
+  { id: '62ae83ad-4f6a-430b-af41-a9bede9286ca', name: 'Gemma - Decisive Agent', langKey: 'voiceLang.enGB' },
+  { id: 'f786b574-daa5-4673-aa0c-cbe3e8534c02', name: 'Katie - Friendly Fixer', langKey: 'voiceLang.enUS' },
+  { id: 'ef191366-f52f-447a-a398-ed8c0f2943a1', name: 'Archie - Approachable Mate', langKey: 'voiceLang.enGB' },
+  { id: '78386a09-04ef-484d-9b9d-efd13087b792', name: 'Lee - Adorable Friend', langKey: 'voiceLang.cn' },
 ]
 
 const TTS_LANGUAGES = [
-  { code: 'en', key: 'languages:en' }, { code: 'zh', key: 'languages:zh' }, { code: 'ja', key: 'languages:ja' },
-  { code: 'es', key: 'languages:es' }, { code: 'fr', key: 'languages:fr' }, { code: 'de', key: 'languages:de' },
-  { code: 'pt', key: 'languages:pt' }, { code: 'it', key: 'languages:it' },
+  { code: 'en', key: 'languages.en' }, { code: 'zh', key: 'languages.zh' }, { code: 'ja', key: 'languages.ja' },
+  { code: 'es', key: 'languages.es' }, { code: 'fr', key: 'languages.fr' }, { code: 'de', key: 'languages.de' },
+  { code: 'pt', key: 'languages.pt' }, { code: 'it', key: 'languages.it' },
 ]
 
 const EMOTIONS = ['calm', 'happy', 'excited', 'enthusiastic', 'curious', 'content', 'peaceful', 'serene', 'grateful', 'affectionate', 'flirtatious', 'sarcastic', 'sad', 'wistful', 'apologetic', 'confident', 'neutral']
@@ -111,7 +111,7 @@ export default function SettingsModal({ isOpen, onClose, onSave, settings, onCha
                     className="bg-[#f9f9f9] border border-slate-200 text-sm focus-visible:ring-slate-300 rounded-md h-9 px-3 outline-none"
                   >
                     {VOICE_PRESETS.map(v => (
-                      <option key={v.id} value={v.id}>{t(v.nameKey)} ({t(v.langKey)})</option>
+                      <option key={v.id} value={v.id}>{v.name} ({t(v.langKey)})</option>
                     ))}
                     <option value="__custom__">{t('settings.customVoice')}</option>
                   </select>
@@ -144,7 +144,7 @@ export default function SettingsModal({ isOpen, onClose, onSave, settings, onCha
                   <label className="text-xs font-medium text-slate-700">{t('settings.emotion')}</label>
                   <select value={settings.ttsEmotion} onChange={e => onChange('ttsEmotion', e.target.value)} className="bg-[#f9f9f9] border border-slate-200 text-sm focus-visible:ring-slate-300 rounded-md h-9 px-3 outline-none">
                     {EMOTIONS.map(emotion => (
-                      <option key={emotion} value={emotion}>{t(`emotions:${emotion}`)}</option>
+                      <option key={emotion} value={emotion}>{t(`emotions.${emotion}`)}</option>
                     ))}
                   </select>
                 </div>
