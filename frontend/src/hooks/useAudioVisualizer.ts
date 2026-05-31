@@ -84,7 +84,7 @@ export default function useAudioVisualizer(active: boolean, barCount = 9): numbe
         const tick = () => {
           if (!running || !analyser || !timeDataRef.current) return
 
-          analyser.getByteTimeDomainData(timeDataRef.current)
+          analyser.getByteTimeDomainData(timeDataRef.current as any)
 
           let sum = 0
 
