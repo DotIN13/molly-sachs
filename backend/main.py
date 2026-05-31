@@ -40,14 +40,6 @@ else:
     logger.add(sys.stderr, level="INFO")
 
 
-def mask_key(key: str) -> str:
-    if not key:
-        return ""
-    if len(key) <= 8:
-        return key[:2] + "***"
-    return key[:3] + "***" + key[-4:]
-
-
 app = FastAPI(
     title="Molly Sachs Assistant Backend",
     description="FastAPI WebRTC server hosting real-time Pipecat sessions with Gemini & Cartesia.",
@@ -67,7 +59,7 @@ os.makedirs(config.OBSERVATIONS_DIR, exist_ok=True)
 # Per-user voice/speaker state
 global_states: dict[str, dict] = {}
 
-webrtc_handler = SmallWebRTCRequestHandler(esp32_mode=False)
+webrtc_handler = SmallWebRTCRequestHandler(esp32_mode=False, ice_servers=config.ice_servers())
 
 # ── FastAPI Models ───────────────────────────
 
@@ -76,8 +68,8 @@ class StateConfigReq(BaseModel):
     speak_text: bool
 
 class SettingsReq(BaseModel):
-    gemini_api_key: str
-    cartesia_api_key: str
+    gemini_api_key: str | None = None
+    cartesia_api_key: str | None = None
     soniox_api_key: str | None = None
     tts_voice: str | None = None
     tts_volume: float | None = None
@@ -92,11 +84,13 @@ class SettingsReq(BaseModel):
     observer_camera_interval: int | None = None
     observer_capture_interval: int | None = None  # deprecated — kept for compat
     observer_process_interval: int | None = None
+    timezone: str | None = None
 
 class RegisterReq(BaseModel):
     email: str
     password: str
     name: str | None = None
+    timezone: str | None = None
 
     @field_validator("password")
     @classmethod
@@ -157,7 +151,8 @@ async def register(req: RegisterReq, _rate: None = Depends(_register_limiter)):
         await database.app.delete_user(existing["id"])
 
     password_hash = auth.hash_password(req.password)
-    user = await database.app.create_user(req.email, password_hash, req.name)
+    user = await database.app.create_user(req.email, password_hash, req.name,
+                                          req.timezone or "")
 
     code = secrets.token_hex(3)[:6]
     expires = (datetime.datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat()
@@ -258,10 +253,11 @@ async def get_me(current_user: dict = Depends(auth.get_current_user)):
 @app.post("/api/settings", summary="Save user API keys and speech preferences")
 async def save_settings(req: SettingsReq,
                         current_user: dict = Depends(auth.get_current_user)):
-    data: dict = {
-        "gemini_api_key": req.gemini_api_key,
-        "cartesia_api_key": req.cartesia_api_key,
-    }
+    data: dict = {}
+    if req.gemini_api_key is not None and req.gemini_api_key != "":
+        data["gemini_api_key"] = req.gemini_api_key
+    if req.cartesia_api_key is not None and req.cartesia_api_key != "":
+        data["cartesia_api_key"] = req.cartesia_api_key
     if req.soniox_api_key is not None:
         data["soniox_api_key"] = req.soniox_api_key
     if req.tts_voice is not None:
@@ -290,6 +286,8 @@ async def save_settings(req: SettingsReq,
         data["observer_camera_interval"] = str(req.observer_camera_interval)
     if req.observer_process_interval is not None:
         data["observer_process_interval"] = str(req.observer_process_interval)
+    if req.timezone is not None:
+        data["timezone"] = req.timezone
 
     await Settings(current_user["id"]).save(data)
     return {"status": "ok"}
@@ -299,11 +297,11 @@ async def save_settings(req: SettingsReq,
 async def get_settings(current_user: dict = Depends(auth.get_current_user)):
     s = await Settings(current_user["id"]).load()
     return {
-        "gemini_api_key": mask_key(s.get("gemini_api_key", "")),
+        "gemini_api_key": "",
         "gemini_key_configured": bool(s.get("gemini_api_key", "")),
-        "cartesia_api_key": mask_key(s.get("cartesia_api_key", "")),
+        "cartesia_api_key": "",
         "cartesia_key_configured": bool(s.get("cartesia_api_key", "")),
-        "soniox_api_key": mask_key(s.get("soniox_api_key", "")),
+        "soniox_api_key": "",
         "soniox_key_configured": bool(s.get("soniox_api_key", "")),
         "tts_voice": s.get("tts_voice"),
         "tts_volume": float(s.get("tts_volume", "1.0")),
@@ -319,6 +317,7 @@ async def get_settings(current_user: dict = Depends(auth.get_current_user)):
         "observer_camera_interval": int(s.get("observer_camera_interval", "120")),
         "observer_process_interval": int(s.get("observer_process_interval", "300")),
         "debug": s.get("debug", "false").lower() == "true",
+        "timezone": s.get("timezone", ""),
     }
 
 # ── Health ──────────────────────────────────

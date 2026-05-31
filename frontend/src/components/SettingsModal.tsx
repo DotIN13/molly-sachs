@@ -4,6 +4,23 @@ import { Input } from '@/components/ui/input'
 import { triggerObservationsCapture } from '../observers'
 import { API_URL, isElectron } from '../config'
 
+const TIMEZONES: { value: string; label: string }[] = (() => {
+  const tzs: string[] = (() => {
+    try { return (Intl as any).supportedValuesOf?.('timeZone') as string[] || [] }
+    catch { return [] }
+  })()
+  const now = new Date()
+  return tzs.map(tz => {
+    try {
+      const parts = Intl.DateTimeFormat('en', { timeZone: tz, timeZoneName: 'longOffset' }).formatToParts(now)
+      const offset = parts.find(p => p.type === 'timeZoneName')?.value.replace('GMT', 'UTC') || ''
+      return { value: tz, label: `${tz} (${offset})` }
+    } catch {
+      return { value: tz, label: tz }
+    }
+  })
+})()
+
 const VOICE_PRESETS = [
   { id: '6eb8965c-e295-47bd-a9e4-3eeebb3abcff', name: 'Jing - Clear Coordinator', langKey: 'voiceLang.cn' },
   { id: 'db6b0ed5-d5d3-463d-ae85-518a07d3c2b4', name: 'Skylar - Friendly Guide', langKey: 'voiceLang.enUS' },
@@ -43,6 +60,7 @@ export interface SettingsData {
   observerProcessInterval: number
   settingsTab: string
   debugMode: boolean
+  timezone: string
 }
 
 interface Props {
@@ -55,7 +73,7 @@ interface Props {
 }
 
 export default function SettingsModal({ isOpen, onClose, onSave, settings, onChange, fetchObservations }: Props) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const [customVoiceId, setCustomVoiceId] = useState('')
 
   if (!isOpen) return null
@@ -70,6 +88,7 @@ export default function SettingsModal({ isOpen, onClose, onSave, settings, onCha
       <div className="w-full max-w-2xl bg-white rounded-xl overflow-hidden shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-slate-100 animate-in zoom-in-95 flex flex-col h-[480px] max-h-[90vh]" onClick={e => e.stopPropagation()}>
         <div className="flex flex-1 overflow-hidden flex-col lg:flex-row">
           <div className="flex-shrink-0 bg-slate-50 border-b border-slate-100 lg:border-b-0 lg:border-r lg:w-48 px-3 py-2 lg:py-8 flex flex-row lg:flex-col gap-1 overflow-x-auto lg:overflow-y-auto">
+            <button onClick={() => onChange('settingsTab', 'general')} className={`text-left px-3 py-2 rounded-md text-xs font-medium transition-colors whitespace-nowrap ${settings.settingsTab === 'general' ? 'bg-white text-slate-900 shadow-sm border border-slate-200' : 'text-slate-600 hover:bg-slate-100'}`}>{t('settings.general')}</button>
             <button onClick={() => onChange('settingsTab', 'speech')} className={`text-left px-3 py-2 rounded-md text-xs font-medium transition-colors whitespace-nowrap ${settings.settingsTab === 'speech' ? 'bg-white text-slate-900 shadow-sm border border-slate-200' : 'text-slate-600 hover:bg-slate-100'}`}>{t('settings.speech')}</button>
             {isElectron && (
               <button onClick={() => onChange('settingsTab', 'observers')} className={`text-left px-3 py-2 rounded-md text-xs font-medium transition-colors whitespace-nowrap ${settings.settingsTab === 'observers' ? 'bg-white text-slate-900 shadow-sm border border-slate-200' : 'text-slate-600 hover:bg-slate-100'}`}>{t('settings.observers')}</button>
@@ -78,6 +97,34 @@ export default function SettingsModal({ isOpen, onClose, onSave, settings, onCha
           </div>
 
           <div className="flex-1 px-4 sm:px-6 py-4 sm:py-10 overflow-y-auto">
+            {settings.settingsTab === 'general' && (
+              <div className="flex flex-col gap-4">
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-medium text-slate-700">{t('settings.language')}</label>
+                  <select
+                    value={i18n.language}
+                    onChange={e => i18n.changeLanguage(e.target.value)}
+                    className="bg-[#f9f9f9] border border-slate-200 text-sm focus-visible:ring-slate-300 rounded-md h-9 px-3 outline-none"
+                  >
+                    <option value="en">English (United States)</option>
+                    <option value="zh">简体中文（中国大陆）</option>
+                  </select>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-medium text-slate-700">{t('settings.timezone')}</label>
+                  <select
+                    value={settings.timezone || '__auto__'}
+                    onChange={e => onChange('timezone', e.target.value === '__auto__' ? '' : e.target.value)}
+                    className="bg-[#f9f9f9] border border-slate-200 text-sm focus-visible:ring-slate-300 rounded-md h-9 px-3 outline-none"
+                  >
+                    <option value="__auto__">{t('settings.timezoneAuto')}</option>
+                    {TIMEZONES.map(tz => (
+                      <option key={tz.value} value={tz.value}>{tz.label}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            )}
             {settings.settingsTab === 'api' && (
               <div className="flex flex-col gap-4">
                 <div className="flex flex-col gap-1.5">
@@ -85,7 +132,7 @@ export default function SettingsModal({ isOpen, onClose, onSave, settings, onCha
                   <div className="relative">
                     <Input type="password" value={settings.geminiKey} onChange={e => onChange('geminiKey', e.target.value)} className="bg-[#f9f9f9] border-slate-200 text-sm focus-visible:ring-slate-300" placeholder={t('settings.placeholderGemini')} />
                     {settings.geminiKeyConfigured && (
-                      <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100 pointer-events-none">Configured</span>
+                      <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100 pointer-events-none">{t('settings.configured')}</span>
                     )}
                   </div>
                 </div>
@@ -94,7 +141,7 @@ export default function SettingsModal({ isOpen, onClose, onSave, settings, onCha
                   <div className="relative">
                     <Input type="password" value={settings.cartesiaKey} onChange={e => onChange('cartesiaKey', e.target.value)} className="bg-[#f9f9f9] border-slate-200 text-sm focus-visible:ring-slate-300" placeholder={t('settings.placeholderCartesia')} />
                     {settings.cartesiaKeyConfigured && (
-                      <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100 pointer-events-none">Configured</span>
+                      <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100 pointer-events-none">{t('settings.configured')}</span>
                     )}
                   </div>
                 </div>
@@ -103,7 +150,7 @@ export default function SettingsModal({ isOpen, onClose, onSave, settings, onCha
                   <div className="relative">
                     <Input type="password" value={settings.sonioxKey} onChange={e => onChange('sonioxKey', e.target.value)} className="bg-[#f9f9f9] border-slate-200 text-sm focus-visible:ring-slate-300" placeholder={t('settings.placeholderSoniox')} />
                     {settings.sonioxKeyConfigured && (
-                      <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100 pointer-events-none">Configured</span>
+                      <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100 pointer-events-none">{t('settings.configured')}</span>
                     )}
                   </div>
                 </div>

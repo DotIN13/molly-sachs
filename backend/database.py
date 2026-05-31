@@ -110,16 +110,17 @@ class AppDB:
     # ── users ────────────────────────────────
 
     async def create_user(self, email: str, password_hash: str,
-                          name: str | None = None) -> dict:
+                          name: str | None = None, timezone: str = "") -> dict:
         user_id = secrets.token_hex(16)
         now = datetime.datetime.utcnow().isoformat()
         display_name = name or email.split("@")[0]
+        initial_settings = json.dumps({"timezone": timezone}) if timezone else "{}"
         async with aiosqlite.connect(self._path) as db:
             await db.execute(
                 "INSERT INTO users (id, name, settings, created_at, email, "
                 "password_hash, email_verified, updated_at) "
-                "VALUES (?, ?, '{}', ?, ?, ?, 0, ?)",
-                (user_id, display_name, now, email, password_hash, now),
+                "VALUES (?, ?, ?, ?, ?, ?, 0, ?)",
+                (user_id, display_name, initial_settings, now, email, password_hash, now),
             )
             await db.commit()
         return {"id": user_id, "name": display_name, "email": email,

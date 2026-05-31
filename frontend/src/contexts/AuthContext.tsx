@@ -180,10 +180,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const register = useCallback(async (email: string, password: string, name?: string) => {
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone
     const res = await fetch(`${API_URL}/api/auth/register`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password, name }),
+      body: JSON.stringify({ email, password, name, timezone }),
     })
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: i18n.t('login.registrationFailed') }))

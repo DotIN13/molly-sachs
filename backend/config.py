@@ -48,3 +48,17 @@ def cors_origins() -> list:
 
 def fernet_key() -> str:
     return os.environ.get("FERNET_KEY", "").strip()
+
+
+def ice_servers() -> list:
+    servers = ['stun:stun.l.google.com:19302']
+    turn_url = os.environ.get("TURN_SERVER", "").strip()
+    turn_username = os.environ.get("TURN_USERNAME", "").strip()
+    turn_password = os.environ.get("TURN_PASSWORD", "").strip()
+    if turn_url and turn_username and turn_password:
+        servers.append({
+            'urls': turn_url,
+            'username': turn_username,
+            'credential': turn_password
+        })
+    return servers

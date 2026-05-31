@@ -43,9 +43,9 @@
     "label": "摄像头快照"
   },
   "insights": {
-    "title": "Gemini 上下文时间线",
-    "desc": "由 Gemini 生成的主动活动日志、应用使用审计和生活方式建议。",
-    "empty": "尚未生成 Gemini 洞察。",
+    "title": "AI 上下文时间线",
+    "desc": "由 AI 生成的主动活动日志、应用使用审计和生活方式建议。",
+    "empty": "尚未生成 AI 洞察。",
     "emptyHint": "Molly 将定期在后台处理待处理的屏幕捕获，以记录报告并提供建议。",
     "reportBadge": "Molly 报告 #{{id}}",
     "activitySummary": "活动摘要",
@@ -56,6 +56,7 @@
     "pending": "待处理"
   },
   "settings": {
+    "general": "通用",
     "speech": "语音",
     "observers": "上下文",
     "apiConfig": "API 配置",
@@ -85,7 +86,7 @@
     "cameraObserverDesc": "定期捕获摄像头画面",
     "screenInterval": "屏幕捕获间隔",
     "cameraInterval": "摄像头捕获间隔",
-    "processInterval": "Gemini 处理间隔",
+    "processInterval": "AI 处理间隔",
     "seconds15": "15 秒",
     "seconds30": "30 秒",
     "minute1": "1 分钟 (默认)",
@@ -98,7 +99,11 @@
     "minutes15": "15 分钟",
     "debugActions": "调试操作",
     "captureNow": "立即捕获",
-    "processNow": "立即处理"
+    "processNow": "立即处理",
+    "timezone": "时区",
+    "timezoneAuto": "自动检测",
+    "language": "界面语言",
+    "configured": "已配置"
   },
   "login": {
     "title": "Molly Sachs",

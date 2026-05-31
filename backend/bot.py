@@ -2,6 +2,7 @@ import os
 import sys
 import asyncio
 from datetime import datetime
+from zoneinfo import ZoneInfo
 import numpy as np
 from loguru import logger
 
@@ -54,9 +55,15 @@ SYSTEM_PROMPT = (
 )
 
 
-def _build_messages(past_messages: list) -> list:
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S %A")
-    system_with_time = f"{SYSTEM_PROMPT}现在用户那边的设备时间是{now}，回复的时候注意事情时间关系。"
+def _build_messages(past_messages: list, timezone: str | None = None) -> list:
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S %A")
+    if timezone:
+        try:
+            tz = ZoneInfo(timezone)
+            now_str = datetime.now(tz).strftime("%Y-%m-%d %H:%M:%S %A")
+        except Exception:
+            pass
+    system_with_time = f"{SYSTEM_PROMPT}现在用户那边的设备时间是{now_str}，回复的时候注意事情时间关系。"
     result = [{"role": "system", "content": system_with_time}]
     for msg in past_messages:
         result.append({"role": msg["role"], "content": msg["content"]})
@@ -303,7 +310,7 @@ async def start_pipecat_session(
             )
 
         past_messages = await database.app.get_messages(conv["id"])
-        formatted_messages = _build_messages(past_messages)
+        formatted_messages = _build_messages(past_messages, prefs.get("timezone"))
 
         tools = ToolsSchema(standard_tools=[memory_tool])
         context = LLMContext(messages=formatted_messages, tools=tools)
@@ -383,7 +390,7 @@ async def start_pipecat_session(
                     user_broadcaster.set_conversation_id(new_id)
                     assistant_broadcaster.set_conversation_id(new_id)
                     msgs = await database.app.get_messages(new_id)
-                    formatted = _build_messages(msgs)
+                    formatted = _build_messages(msgs, prefs.get("timezone"))
                     await task.queue_frames([
                         InterruptionFrame(),
                         LLMMessagesUpdateFrame(messages=formatted, run_llm=False),

@@ -29,6 +29,7 @@ _DEFAULTS: dict[str, str] = {
     "observer_camera_interval": "120",
     "observer_process_interval": "300",
     "debug": "false",
+    "timezone": "",
 }
 
 _cipher: Optional[Fernet] = None

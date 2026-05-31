@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Settings, PenSquare, Search, FileText, Clock, Bird, Mic, Volume2, VolumeX, RefreshCw, LogOut, Languages, Menu, X } from 'lucide-react'
+import { Settings, PenSquare, Search, FileText, Clock, Bird, Mic, Volume2, VolumeX, RefreshCw, LogOut, Menu, X } from 'lucide-react'
 import { updateObserverConfig } from './observers'
 import { API_URL, isElectron } from './config'
 import useAudioVisualizer from './hooks/useAudioVisualizer'
@@ -14,14 +14,14 @@ import 'katex/dist/katex.min.css'
 
 export default function App() {
   const auth = useAuth()
-  const { t, i18n } = useTranslation()
+  const { t } = useTranslation()
 
   const [messages, setMessages] = useState<{ role: string, content: string }[]>([
     { role: 'assistant', content: t('app.helloDefault') }
   ])
   const [input, setInput] = useState('')
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
-  const [settingsTab, setSettingsTab] = useState('speech')
+  const [settingsTab, setSettingsTab] = useState('general')
 
   const [voiceMode, setVoiceMode] = useState(false)
   const [speakText, setSpeakText] = useState(true)
@@ -52,6 +52,7 @@ export default function App() {
   const [observerCameraInterval, setObserverCameraInterval] = useState(120)
   const [observerProcessInterval, setObserverProcessInterval] = useState(300)
   const [debugMode, setDebugMode] = useState(false)
+  const [timezone, setTimezone] = useState('')
 
   // Dashboard & Navigation States
   const [activeTab, setActiveTab] = useState<'chat' | 'screen' | 'camera' | 'insights'>('chat')
@@ -149,6 +150,16 @@ export default function App() {
         setObserverCameraInterval(camInt);
         setObserverProcessInterval(procInt);
         setDebugMode(data.debug ?? false);
+        setTimezone(data.timezone || '');
+
+        if (!data.timezone) {
+          const detected = Intl.DateTimeFormat().resolvedOptions().timeZone
+          auth.authFetch(`${API_URL}/api/settings`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ timezone: detected })
+          }).then(() => setTimezone(detected)).catch(() => {})
+        }
 
         updateObserverConfig({
           screenActive: scrActive,
@@ -310,6 +321,9 @@ export default function App() {
         observer_capture_interval: observerCaptureInterval,
         observer_process_interval: observerProcessInterval
       }
+      if (timezone !== undefined && timezone !== null) {
+        body.timezone = timezone
+      }
       if (geminiKey && geminiKey !== appliedSettingsRef.current?.geminiKey) {
         body.gemini_api_key = geminiKey
       }
@@ -405,6 +419,7 @@ export default function App() {
       observerCameraInterval: setObserverCameraInterval,
       observerProcessInterval: setObserverProcessInterval,
       settingsTab: setSettingsTab,
+      timezone: setTimezone,
     }
     setters[key]?.(value)
   }
@@ -416,7 +431,7 @@ export default function App() {
     sttLanguage, sttProvider, ttsLanguage,
     observerScreenActive, observerCameraActive, observerScreenInterval,
     observerCameraInterval, observerCaptureInterval, observerProcessInterval,
-    settingsTab, debugMode,
+    settingsTab, debugMode, timezone,
   }
 
   const sendMessage = () => {
@@ -507,15 +522,6 @@ export default function App() {
         </div>
 
         <div className="px-4 mt-auto space-y-2">
-          <div className="flex items-center gap-1 px-1">
-            <button
-              onClick={() => i18n.changeLanguage(i18n.language === 'zh' ? 'en' : 'zh')}
-              className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 text-[10px] font-medium rounded-md border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 transition-colors"
-            >
-              <Languages className="w-3 h-3" />
-              {i18n.language === 'zh' ? 'English' : '中文'}
-            </button>
-          </div>
           <button onClick={() => { setIsSettingsOpen(true); setMobileMenuOpen(false) }} className="w-full flex items-center gap-2 px-2 py-2 text-xs border border-slate-200 rounded-md shadow-sm text-slate-600 hover:bg-slate-50 transition-colors">
             <div className="w-5 h-5 rounded bg-slate-200 flex items-center justify-center text-slate-600 font-medium text-[10px]">
               {auth.user?.name?.charAt(0)?.toUpperCase() || 'U'}
