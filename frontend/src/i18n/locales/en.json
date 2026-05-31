@@ -18,6 +18,7 @@
     "helloDefault": "Hi, I'm Molly!",
     "toggleVoiceOn": "Turn On Voice Mode",
     "toggleVoiceOff": "Turn Off Voice Mode",
+    "voicePreparing": "Voice pipeline connecting...",
     "inputPlaceholder": "Ask Molly about your context..."
   },
   "tabs": {

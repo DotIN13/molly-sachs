@@ -46,6 +46,7 @@ from pipecat.frames.frames import (
 
 from google import genai
 import database
+from db.settings import Settings
 
 SYSTEM_PROMPT = (
     "你是Molly，和用户是好朋友，用微信聊天的语气回复。"
@@ -401,6 +402,15 @@ async def start_pipecat_session(
                             "messages": [{"role": m["role"], "content": m["content"]} for m in msgs]
                         })
                     )
+            elif isinstance(message, dict) and message.get("type") == "settings_updated":
+                fresh = await Settings(user_id).load()
+                prefs["timezone"] = fresh.get("timezone", "")
+                msgs = await database.app.get_messages(conv["id"])
+                formatted = _build_messages(msgs, prefs.get("timezone"))
+                await task.queue_frames([
+                    LLMMessagesUpdateFrame(messages=formatted, run_llm=False),
+                ])
+                logger.info("Settings refreshed mid-session")
 
         runner = PipelineRunner()
         logger.info("Pipecat WebRTC Assistant running...")

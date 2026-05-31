@@ -1,4 +1,4 @@
-import { useCallback, useRef, useEffect } from 'react'
+import { useCallback, useRef, useEffect, useState } from 'react'
 import i18n from '../i18n/config'
 import { API_URL } from '../config'
 
@@ -13,6 +13,7 @@ interface UseWebRTCReturn {
   dcRef: React.MutableRefObject<RTCDataChannel | null>
   pcRef: React.MutableRefObject<RTCPeerConnection | null>
   isConnectedRef: React.MutableRefObject<boolean>
+  pipelineReady: boolean
   disconnectWebRTC: () => void
   connectWebRTC: () => Promise<void>
   sendChatMessage: (text: string) => void
@@ -32,6 +33,8 @@ export default function useWebRTC(opts: UseWebRTCOptions): UseWebRTCReturn {
   const connectionIdRef = useRef(0)
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const skipDisconnectRef = useRef(false)
+  const messageQueueRef = useRef<string[]>([])
+  const [pipelineReady, setPipelineReady] = useState(false)
 
   const handleDataChannelMessage = useCallback((event: MessageEvent) => {
     const { setMessages, refreshConversationsRef: refConvRef } = optsRef.current
@@ -79,6 +82,8 @@ export default function useWebRTC(opts: UseWebRTCOptions): UseWebRTCReturn {
   const disconnectWebRTC = useCallback(() => {
     isConnectingRef.current = false
     isConnectedRef.current = false
+    setPipelineReady(false)
+    messageQueueRef.current = []
     connectionIdRef.current += 1
     if (reconnectTimeoutRef.current) {
       clearTimeout(reconnectTimeoutRef.current)
@@ -148,13 +153,22 @@ export default function useWebRTC(opts: UseWebRTCOptions): UseWebRTCReturn {
       dc.onmessage = handleDataChannelMessage
       dc.onopen = () => {
         console.log('DataChannel open')
+        setPipelineReady(true)
         if (dc.readyState === 'open') dc.send('ping')
         pingIntervalRef.current = setInterval(() => {
           if (dc.readyState === 'open') dc.send('ping')
         }, 1000)
+        if (messageQueueRef.current.length > 0) {
+          console.log('Flushing', messageQueueRef.current.length, 'queued messages')
+          for (const msg of messageQueueRef.current) {
+            dc.send(msg)
+          }
+          messageQueueRef.current = []
+        }
       }
       dc.onclose = () => {
         console.log('DataChannel closed — scheduling reconnect...')
+        setPipelineReady(false)
         if (pingIntervalRef.current) clearInterval(pingIntervalRef.current)
         if (curId === connectionIdRef.current && !reconnectTimeoutRef.current) {
           isConnectingRef.current = false
@@ -175,6 +189,7 @@ export default function useWebRTC(opts: UseWebRTCOptions): UseWebRTCReturn {
         console.log('ICE connection state:', state)
         if ((state === 'closed' || state === 'failed') && curId === connectionIdRef.current && !reconnectTimeoutRef.current) {
           console.log(`ICE ${state} — scheduling reconnect...`)
+          setPipelineReady(false)
           isConnectingRef.current = false
           isConnectedRef.current = false
           reconnectTimeoutRef.current = setTimeout(() => {
@@ -290,10 +305,12 @@ export default function useWebRTC(opts: UseWebRTCOptions): UseWebRTCReturn {
   }, [opts.backendStatus, opts.activeConversationId, connectWebRTC, disconnectWebRTC])
 
   const sendChatMessage = useCallback((text: string) => {
+    const payload = JSON.stringify({ type: 'chat', text })
     if (dcRef.current && dcRef.current.readyState === 'open') {
-      dcRef.current.send(JSON.stringify({ type: 'chat', text }))
+      dcRef.current.send(payload)
     } else {
-      console.warn('DataChannel not open, cannot send message')
+      console.log('DataChannel not open — queuing message')
+      messageQueueRef.current.push(payload)
     }
   }, [])
 
@@ -301,6 +318,7 @@ export default function useWebRTC(opts: UseWebRTCOptions): UseWebRTCReturn {
     dcRef,
     pcRef,
     isConnectedRef,
+    pipelineReady,
     disconnectWebRTC,
     connectWebRTC,
     sendChatMessage,

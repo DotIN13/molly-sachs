@@ -18,6 +18,7 @@
     "helloDefault": "Hello，我是 Molly！",
     "toggleVoiceOn": "开启语音模式",
     "toggleVoiceOff": "关闭语音模式",
+    "voicePreparing": "语音通道连接中...",
     "inputPlaceholder": "来跟 Molly 聊聊你的日常吧..."
   },
   "tabs": {

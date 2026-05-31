@@ -69,7 +69,7 @@ export default function App() {
   const appliedSettingsRef = useRef<Record<string, any>>({})
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
-  const { dcRef, pcRef, disconnectWebRTC, connectWebRTC, sendChatMessage } = useWebRTC({
+  const { dcRef, pcRef, disconnectWebRTC, connectWebRTC, sendChatMessage, pipelineReady } = useWebRTC({
     backendStatus,
     activeConversationId,
     setMessages,
@@ -357,6 +357,8 @@ export default function App() {
       if (pipelineChanged) {
         disconnectWebRTC()
         setTimeout(() => connectWebRTC(), 200)
+      } else if (dcRef.current && dcRef.current.readyState === 'open') {
+        dcRef.current.send(JSON.stringify({ type: 'settings_updated' }))
       }
       appliedSettingsRef.current = curr
     } catch (e) {
@@ -827,26 +829,37 @@ export default function App() {
             <button
               onClick={() => setVoiceMode(!voiceMode)}
               className={`flex items-center justify-center transition-all border ${voiceMode
-                ? 'px-3 h-8 rounded-full bg-rose-50 border-rose-200 shadow-sm gap-2 ring-1 ring-rose-100'
+                ? pipelineReady
+                  ? 'px-3 h-8 rounded-full bg-rose-50 border-rose-200 shadow-sm gap-2 ring-1 ring-rose-100'
+                  : 'px-3 h-8 rounded-full bg-amber-50 border-amber-200 shadow-sm gap-2 ring-1 ring-amber-100'
                 : 'w-8 h-8 rounded-full bg-slate-50 text-slate-500 hover:text-slate-800 border-slate-200 hover:bg-slate-100'
                 }`}
-              title={voiceMode ? t('app.toggleVoiceOff') : t('app.toggleVoiceOn')}
+              title={voiceMode ? (pipelineReady ? t('app.toggleVoiceOff') : t('app.voicePreparing')) : t('app.toggleVoiceOn')}
             >
               {voiceMode ? (
                 <>
-                  <Mic className="w-3.5 h-3.5 text-rose-500" />
+                  <Mic className={`w-3.5 h-3.5 ${pipelineReady ? 'text-rose-500' : 'text-amber-500'}`} />
                   <div className="flex items-center gap-[3px] h-5 px-1">
-                    {audioBars.map((level, i) => (
-                      <span
-                        key={i}
-                        className="w-[3px] rounded-full bg-rose-500/90 shadow-[0_0_8px_rgba(244,63,94,0.28)] transition-[height,opacity,transform] duration-100 ease-out"
-                        style={{
-                          height: `${5 + level * 18}px`,
-                          opacity: 0.42 + level * 0.58,
-                          transform: `scaleY(${0.92 + level * 0.12})`
-                        }}
-                      />
-                    ))}
+                    {pipelineReady
+                      ? audioBars.map((level, i) => (
+                          <span
+                            key={i}
+                            className="w-[3px] rounded-full bg-rose-500/90 shadow-[0_0_8px_rgba(244,63,94,0.28)] transition-[height,opacity,transform] duration-100 ease-out"
+                            style={{
+                              height: `${5 + level * 18}px`,
+                              opacity: 0.42 + level * 0.58,
+                              transform: `scaleY(${0.92 + level * 0.12})`
+                            }}
+                          />
+                        ))
+                      : Array.from({ length: 5 }).map((_, i) => (
+                          <span
+                            key={i}
+                            className="w-[3px] rounded-full bg-amber-400/80 animate-level-bar-idle"
+                            style={{ animationDelay: `${i * 0.15}s` }}
+                          />
+                        ))
+                    }
                   </div>
                 </>
               ) : (
