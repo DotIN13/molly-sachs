@@ -25,6 +25,17 @@ interface AuthState {
 
 const AuthContext = createContext<AuthState | null>(null)
 
+function extractError(detail: unknown): string {
+  if (typeof detail === 'string') return detail
+  if (Array.isArray(detail)) {
+    return detail
+      .map((e: any) => (typeof e.msg === 'string' ? e.msg.replace(/^Value error,\s*/i, '') : ''))
+      .filter(Boolean)
+      .join('; ')
+  }
+  return ''
+}
+
 const TOKEN_KEY = 'molly_access_token'
 const REFRESH_KEY = 'molly_refresh_token'
 
@@ -159,7 +170,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     })
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: i18n.t('login.loginFailed') }))
-      throw new Error(err.detail || i18n.t('login.loginFailed'))
+      throw new Error(extractError(err.detail) || i18n.t('login.loginFailed'))
     }
     const data = await res.json()
     setUser(data.user)
@@ -176,7 +187,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     })
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: i18n.t('login.registrationFailed') }))
-      throw new Error(err.detail || i18n.t('login.registrationFailed'))
+      throw new Error(extractError(err.detail) || i18n.t('login.registrationFailed'))
     }
     return await res.json()
   }, [])
@@ -189,7 +200,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     })
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: i18n.t('login.verificationFailed') }))
-      throw new Error(err.detail || i18n.t('login.verificationFailed'))
+      throw new Error(extractError(err.detail) || i18n.t('login.verificationFailed'))
     }
     const data = await res.json()
     setUser(data.user)
