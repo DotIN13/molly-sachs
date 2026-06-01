@@ -114,9 +114,10 @@ async def _embed_query(query: str, api_key: str) -> list:
     return embed_result.embeddings[0].values
 
 
-def make_search_memory(user_id: str, api_key: str):
+def make_search_memory(user_id: str, api_key: str, send_fn=None):
     """Factory returning a search_memory callable that captures user_id + api_key
-    in its closure, avoiding race conditions between concurrent sessions."""
+    (and optional send_fn for tool-activity notifications) in its closure,
+    avoiding race conditions between concurrent sessions."""
 
     async def search_memory(params: FunctionCallParams, query: str):
         """Searches the user's past activity memory and context for relevant information.
@@ -125,6 +126,8 @@ def make_search_memory(user_id: str, api_key: str):
             query: The search string to look up in the memory vector database.
         """
         try:
+            if send_fn:
+                await send_fn({"type": "thinking", "action": "searching_memory", "detail": query[:80]})
             logger.info("Embedding query: {}", query)
             query_embedding = await _embed_query(query, api_key)
 
@@ -141,6 +144,9 @@ def make_search_memory(user_id: str, api_key: str):
             await params.result_callback(context_str)
         except Exception as e:
             await params.result_callback(f"Error searching memory: {str(e)}")
+        finally:
+            if send_fn:
+                await send_fn({"type": "thinking_done"})
 
     return search_memory
 
@@ -304,7 +310,12 @@ async def start_pipecat_session(
             api_key=gemini_key,
             settings=GoogleLLMService.Settings(model="gemini-3.1-flash-lite")
         )
-        memory_tool = make_search_memory(user_id, gemini_key)
+        memory_tool = make_search_memory(
+            user_id, gemini_key,
+            send_fn=lambda msg: transport._client.send_message(
+                OutputTransportMessageFrame(message=msg)
+            )
+        )
         llm.register_direct_function(memory_tool)
 
         stt_provider = prefs.get("stt_provider", "soniox")

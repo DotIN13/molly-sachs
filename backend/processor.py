@@ -10,6 +10,7 @@ import config
 
 _PROMPTS_DIR = os.path.join(os.path.dirname(__file__), "prompts")
 _CONFIDENCE_THRESHOLD = int(os.environ.get("MOLLY_CONFIDENCE_THRESHOLD", "5"))
+_MAX_ARTEFACTS = int(os.environ.get("MOLLY_MAX_ARTEFACTS", "20"))
 
 
 def _load_prompt() -> str:
@@ -55,6 +56,14 @@ async def process_pending_observations(user_id: str, prefs: dict[str, str]) -> d
     rows = await database.app.get_unprocessed_observations(user_id)
     if not rows:
         return None
+
+    if len(rows) > _MAX_ARTEFACTS:
+        skipped = rows[:-_MAX_ARTEFACTS]
+        skipped_paths = [r["image_path"] for r in skipped]
+        await database.app.mark_observations_processed(skipped_paths)
+        logger.info("Skipped {} older observations to keep context under {} artefacts",
+                    len(skipped), _MAX_ARTEFACTS)
+        rows = rows[-_MAX_ARTEFACTS:]
 
     logger.info("Processing {} unprocessed observations for user {}...",
                 len(rows), user_id[:8])
@@ -134,7 +143,8 @@ async def process_pending_observations(user_id: str, prefs: dict[str, str]) -> d
             if not items:
                 continue
             for i, item in enumerate(items):
-                if item.get("confidence", 0) >= _CONFIDENCE_THRESHOLD:
+                content_val = item.get(cat.rstrip("s"), "").strip()
+                if item.get("confidence", 0) >= _CONFIDENCE_THRESHOLD and content_val:
                     all_items.append((cat, item, i))
 
         logger.info("Extracted {} items across {} categories",
@@ -147,7 +157,7 @@ async def process_pending_observations(user_id: str, prefs: dict[str, str]) -> d
             ), timeout=30
         )
 
-        item_texts = [item[1].get(item[0].rstrip("s"), "")
+        item_texts = [item[1].get(item[0].rstrip("s"), "").strip()
                       for item in all_items] if all_items else []
         if item_texts:
             items_embed_task = asyncio.wait_for(

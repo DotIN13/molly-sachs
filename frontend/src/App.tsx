@@ -21,6 +21,7 @@ export default function App() {
   const [messages, setMessages] = useState<{ role: string, content: string }[]>([
     { role: 'assistant', content: t('app.helloDefault') }
   ])
+  const [thinking, setThinking] = useState<{ action: string; detail: string } | null>(null)
   const [input, setInput] = useState('')
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [settingsTab, setSettingsTab] = useState('general')
@@ -77,6 +78,8 @@ export default function App() {
     activeConversationId,
     setMessages,
     refreshConversationsRef,
+    onThinking: (action: string, detail: string) => setThinking({ action, detail }),
+    onThinkingDone: () => setThinking(null),
   })
 
   useEffect(() => {
@@ -651,6 +654,20 @@ export default function App() {
                 </div>
               </div>
             ))}
+            {thinking && (
+              <div className="flex w-full justify-start">
+                <div className="px-4 py-2.5 bg-slate-100/80 rounded-2xl rounded-bl-md border border-slate-200/60 flex items-center gap-2.5">
+                  <span className="flex gap-1">
+                    <span className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                    <span className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                    <span className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                  </span>
+                  <span className="text-[11px] text-slate-500 italic font-medium">
+                    {thinking.action === 'searching_memory' ? t('app.searchingMemory') : t('app.thinking')}
+                  </span>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 

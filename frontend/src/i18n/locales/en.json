@@ -19,7 +19,9 @@
     "toggleVoiceOn": "Turn On Voice Mode",
     "toggleVoiceOff": "Turn Off Voice Mode",
     "voicePreparing": "Voice pipeline connecting...",
-    "inputPlaceholder": "Ask Molly about your context..."
+    "inputPlaceholder": "Ask Molly about your context...",
+    "searchingMemory": "Searching memories...",
+    "thinking": "Thinking..."
   },
   "tabs": {
     "chat": "chat",

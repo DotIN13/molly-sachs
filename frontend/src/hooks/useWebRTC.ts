@@ -7,6 +7,8 @@ interface UseWebRTCOptions {
   activeConversationId: string
   setMessages: React.Dispatch<React.SetStateAction<{ role: string; content: string }[]>>
   refreshConversationsRef: React.MutableRefObject<() => void>
+  onThinking?: (action: string, detail: string) => void
+  onThinkingDone?: () => void
 }
 
 interface UseWebRTCReturn {
@@ -70,6 +72,10 @@ export default function useWebRTC(opts: UseWebRTCOptions): UseWebRTCReturn {
         }
       } else if (data.type === 'audio_level') {
         // locally captured via AudioContext analyser
+      } else if (data.type === 'thinking') {
+        optsRef.current.onThinking?.(data.action, data.detail)
+      } else if (data.type === 'thinking_done') {
+        optsRef.current.onThinkingDone?.()
       }
     } catch {
       if (typeof event.data === 'string' && event.data === 'ping') {
