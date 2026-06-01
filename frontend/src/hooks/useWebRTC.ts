@@ -17,6 +17,7 @@ interface UseWebRTCReturn {
   disconnectWebRTC: () => void
   connectWebRTC: () => Promise<void>
   sendChatMessage: (text: string) => void
+  sendSessionState: (changes: Record<string, unknown>) => void
 }
 
 export default function useWebRTC(opts: UseWebRTCOptions): UseWebRTCReturn {
@@ -324,6 +325,16 @@ export default function useWebRTC(opts: UseWebRTCOptions): UseWebRTCReturn {
     }
   }, [])
 
+  const sendSessionState = useCallback((changes: Record<string, unknown>) => {
+    const payload = JSON.stringify({ type: 'session_state_updated', changes })
+    if (dcRef.current && dcRef.current.readyState === 'open') {
+      dcRef.current.send(payload)
+    } else {
+      console.log('DataChannel not open — queuing session_state_updated')
+      messageQueueRef.current.push(payload)
+    }
+  }, [])
+
   return {
     dcRef,
     pcRef,
@@ -332,5 +343,6 @@ export default function useWebRTC(opts: UseWebRTCOptions): UseWebRTCReturn {
     disconnectWebRTC,
     connectWebRTC,
     sendChatMessage,
+    sendSessionState,
   }
 }

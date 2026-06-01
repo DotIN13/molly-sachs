@@ -288,6 +288,17 @@ async def start_pipecat_session(
             webrtc_connection=connection
         )
 
+        @transport.event_handler("on_app_message")
+        async def _early_session_state(transport, message, sender):
+            if isinstance(message, dict) and message.get("type") == "session_state_updated":
+                changes = message.get("changes", {})
+                if not isinstance(changes, dict):
+                    return
+                if "voice_mode" in changes:
+                    session.voice_mode = bool(changes["voice_mode"])
+                if "speak_text" in changes:
+                    session.prefs["speak_text"] = "true" if changes["speak_text"] else "false"
+
         gemini_key = prefs.get("gemini_api_key", "")
         llm = GoogleLLMService(
             api_key=gemini_key,
@@ -440,10 +451,6 @@ async def start_pipecat_session(
                     session.prefs.update(changes)
                     raise PipelineRestartRequested(changes)
 
-                if "voice_mode" in changes:
-                    session.voice_mode = bool(changes["voice_mode"])
-                if "speak_text" in changes:
-                    session.prefs["speak_text"] = "true" if changes["speak_text"] else "false"
                 if "timezone" in changes:
                     session.prefs["timezone"] = str(changes["timezone"])
                     msgs = await database.app.get_messages(conv_id, user_id)
