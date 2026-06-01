@@ -778,26 +778,86 @@ export default function App() {
                         </span>
                       </div>
 
+                      {/* Long-Form Summary */}
                       <div className="mt-4">
                         <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{t('insights.activitySummary')}</span>
-                        <p className="text-xs text-slate-700 leading-relaxed mt-1.5 font-medium">
+                        <p className="text-xs text-slate-700 leading-relaxed mt-1.5 font-medium whitespace-pre-line">
                           {ins.activity_summary}
                         </p>
                       </div>
 
-                      {ins.context && (
-                        <div className="mt-4 bg-indigo-50/50 border border-indigo-100/60 rounded-xl p-3.5 flex items-start gap-3">
-                          <div className="w-5 h-5 rounded-full bg-indigo-500 text-white flex items-center justify-center flex-shrink-0 text-[10px] font-bold">
-                            💡
+                      {/* Parsed analysis categories */}
+                      {(() => {
+                        let analysis: Record<string, any[]> | null = null
+                        try { if (ins.context) analysis = JSON.parse(ins.context) } catch {}
+                        if (!analysis) return null
+
+                        const catConfig: Record<string, { label: string; color: string; bg: string; border: string }> = {
+                          events: { label: t('insights.events'), color: 'text-amber-700', bg: 'bg-amber-50/60', border: 'border-amber-100' },
+                          personalities: { label: t('insights.personalities'), color: 'text-rose-700', bg: 'bg-rose-50/60', border: 'border-rose-100' },
+                          skills: { label: t('insights.skills'), color: 'text-emerald-700', bg: 'bg-emerald-50/60', border: 'border-emerald-100' },
+                          interests: { label: t('insights.interests'), color: 'text-purple-700', bg: 'bg-purple-50/60', border: 'border-purple-100' },
+                          preferences: { label: t('insights.preferences'), color: 'text-blue-700', bg: 'bg-blue-50/60', border: 'border-blue-100' },
+                          ownerships: { label: t('insights.ownerships'), color: 'text-slate-700', bg: 'bg-slate-50/60', border: 'border-slate-100' },
+                          relationships: { label: t('insights.relationships'), color: 'text-teal-700', bg: 'bg-teal-50/60', border: 'border-teal-100' },
+                          weaknesses: { label: t('insights.weaknesses'), color: 'text-red-700', bg: 'bg-red-50/60', border: 'border-red-100' },
+                          goals: { label: t('insights.goals'), color: 'text-indigo-700', bg: 'bg-indigo-50/60', border: 'border-indigo-100' },
+                        }
+
+                        return (
+                          <div className="mt-5 space-y-4">
+                            {Object.entries(catConfig).map(([cat, cfg]) => {
+                              const items = analysis?.[cat]
+                              if (!items || items.length === 0) return null
+                              return (
+                                <div key={cat} className={`rounded-xl border ${cfg.border} ${cfg.bg} p-4`}>
+                                  <span className={`text-[10px] font-extrabold uppercase tracking-wider ${cfg.color}`}>
+                                    {cfg.label} ({items.length})
+                                  </span>
+                                  <div className="mt-2 space-y-2">
+                                    {items.map((item: any, i: number) => (
+                                      <div key={i} className="flex items-start gap-2.5">
+                                        <span className="flex-shrink-0 w-5 h-5 rounded-full bg-white border border-slate-200 text-[8px] font-bold text-slate-500 flex items-center justify-center mt-0.5">
+                                          {item.confidence ?? '?'}
+                                        </span>
+                                        <div className="min-w-0">
+                                          <p className="text-[11px] text-slate-800 font-semibold leading-snug">
+                                            {item[Object.keys(item).find(k => k !== 'confidence' && k !== 'evidence') || 0]}
+                                          </p>
+                                          {item.evidence && (
+                                            <p className="text-[10px] text-slate-400 italic mt-0.5 leading-snug">
+                                              {t('insights.evidence')}: {item.evidence}
+                                            </p>
+                                          )}
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )
+                            })}
                           </div>
-                          <div>
-                            <span className="text-[10px] font-extrabold text-indigo-600 uppercase tracking-wider block">{t('insights.suggestion')}</span>
-                            <span className="text-xs text-indigo-800 font-semibold italic mt-0.5 block">
-                              "{ins.context}"
-                            </span>
+                        )
+                      })()}
+
+                      {/* Fallback: old plain-text tip */}
+                      {(() => {
+                        try { JSON.parse(ins.context || ''); return null } catch {}
+                        if (!ins.context) return null
+                        return (
+                          <div className="mt-4 bg-indigo-50/50 border border-indigo-100/60 rounded-xl p-3.5 flex items-start gap-3">
+                            <div className="w-5 h-5 rounded-full bg-indigo-500 text-white flex items-center justify-center flex-shrink-0 text-[10px] font-bold">
+                              💡
+                            </div>
+                            <div>
+                              <span className="text-[10px] font-extrabold text-indigo-600 uppercase tracking-wider block">{t('insights.suggestion')}</span>
+                              <span className="text-xs text-indigo-800 font-semibold italic mt-0.5 block">
+                                "{ins.context}"
+                              </span>
+                            </div>
                           </div>
-                        </div>
-                      )}
+                        )
+                      })()}
                     </div>
                   ))}
                 </div>

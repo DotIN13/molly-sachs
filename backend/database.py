@@ -418,10 +418,16 @@ class VectorDB:
 
         ids = [str(item["id"]) for item in data]
         embeddings = [item["vector"] for item in data]
-        metadatas = [{"timestamp": item["timestamp"],
-                      "summary": item["summary"],
-                      "user_id": item.get("user_id", "")}
-                     for item in data]
+        metadatas = []
+        for item in data:
+            if "metadata" in item:
+                metadatas.append(item["metadata"])
+            else:
+                metadatas.append({
+                    "timestamp": item.get("timestamp", ""),
+                    "summary": item.get("summary", ""),
+                    "user_id": item.get("user_id", ""),
+                })
 
         async with self._write_lock:
             self._collection.add(ids=ids, embeddings=embeddings, metadatas=metadatas)

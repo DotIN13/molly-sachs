@@ -430,17 +430,32 @@ async def trigger_processor(
                 result["timestamp"],
                 result["summary"],
                 result["raw_transcripts"],
-                result["tip"],
+                result["analysis_data"],
             )
-            embedding = result["embedding"]
-            if embedding:
+
+            summary_vector = result["embedding"]
+            if summary_vector:
                 await database.vector.add([{
-                    "id": event_id,
-                    "timestamp": result["timestamp"],
-                    "summary": result["summary"],
-                    "vector": embedding,
-                    "user_id": current_user["id"],
+                    "id": f"{event_id}_summary",
+                    "vector": summary_vector,
+                    "metadata": {
+                        "type": "summary",
+                        "content": f"summary: {result['summary']}",
+                        "timestamp": result["timestamp"],
+                        "user_id": current_user["id"],
+                        "user_event_id": str(event_id),
+                        "confidence": 0,
+                        "evidence": "",
+                    },
                 }])
+
+            items = result.get("items", [])
+            if items:
+                for item in items:
+                    item["metadata"]["user_event_id"] = str(event_id)
+                await database.vector.add(items)
+                logger.info("Indexed {} analysis items into vector DB", len(items))
+
             logger.info("Saved event: {}", result["summary"][:100] + "...")
             return {"status": "ok", "summary": result["summary"][:100] + "..."}
         return {"status": "ok", "summary": "no new observations to process"}

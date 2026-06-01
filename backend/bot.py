@@ -132,7 +132,7 @@ def make_search_memory(user_id: str, api_key: str):
                 query_embedding, 5, user_id=user_id
             )
             context_str = "\n".join(
-                [f"[{r.get('timestamp', 'Unknown')}] {r.get('summary', '')}"
+                [f"[{r.get('type', 'summary')} | {r.get('timestamp', '')}] {r.get('content', r.get('summary', ''))}"
                  for r in search_results]
             )
             if not context_str.strip():

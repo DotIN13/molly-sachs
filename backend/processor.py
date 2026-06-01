@@ -8,6 +8,42 @@ from loguru import logger
 import database
 import config
 
+_PROMPTS_DIR = os.path.join(os.path.dirname(__file__), "prompts")
+_CONFIDENCE_THRESHOLD = int(os.environ.get("MOLLY_CONFIDENCE_THRESHOLD", "5"))
+
+
+def _load_prompt() -> str:
+    with open(os.path.join(_PROMPTS_DIR, "analysis_prompt.md"), "r", encoding="utf-8") as f:
+        return f.read()
+
+
+def _load_schema() -> dict:
+    with open(os.path.join(_PROMPTS_DIR, "analysis_schema.json"), "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _build_item(event_id: int, timestamp: str, user_id: str,
+                item_type: str, item: dict, index: int) -> dict:
+    content_key = item_type.rstrip("s")
+    content = item.get(content_key, "")
+    evidence = item.get("evidence", "")
+    confidence = item.get("confidence", 0)
+
+    return {
+        "id": f"{event_id}_{item_type}_{index}",
+        "vector": None,
+        "metadata": {
+            "type": content_key,
+            "content": f"{content_key}: {content}",
+            "timestamp": timestamp,
+            "user_id": user_id,
+            "user_event_id": str(event_id),
+            "confidence": confidence,
+            "evidence": evidence,
+        },
+    }
+
+
 async def process_pending_observations(user_id: str, prefs: dict[str, str]) -> dict | None:
     api_key = prefs.get("gemini_api_key", "").strip()
     if not api_key:
@@ -42,18 +78,16 @@ async def process_pending_observations(user_id: str, prefs: dict[str, str]) -> d
                 windows = entry.get("windows") or []
                 all_windows.update(windows)
 
-    deduped_text = ""
+    windows_section = ""
     if all_windows:
         win_list = "\n  ".join(sorted(all_windows))
-        deduped_text = f"Open windows in the screenshots:\n  {win_list}"
+        windows_section = f"\n\nOpen windows visible in the screenshots:\n  {win_list}"
 
-    contents = [
-        "You are Molly, a personal AI companion analyzing what the user is doing right now. "
-        "Here are the screenshots and camera pictures from the last few minutes. "
-        "Write a concise summary of the user's activities, focusing on context, apps used, "
-        "desktop states, and general intent."
-        + (f"\n\n{deduped_text}" if deduped_text else "")
-    ]
+    prompt = _load_prompt().format(
+        windows_section=windows_section,
+    )
+
+    contents = [prompt]
 
     for image_path in image_paths:
         artefact_abs = os.path.join(config.DATA_DIR, image_path)
@@ -67,55 +101,97 @@ async def process_pending_observations(user_id: str, prefs: dict[str, str]) -> d
             logger.warning("Artefact not found on disk: {}", artefact_abs)
 
     try:
-        logger.info("Generating workspace summary...")
+        logger.info("Generating structured analysis...")
         response = await asyncio.wait_for(
             client.aio.models.generate_content(
                 model='gemini-3.1-flash-lite',
                 contents=contents,
-            ), timeout=60
-        )
-        summary = response.text
-        logger.info("Generated Workspace Summary: {}", summary[:120])
-
-        tip_prompt = (
-            f"Based on this activity: '{summary}', what is a helpful, proactive "
-            f"1-sentence tip you can give the user right now? If they are coding, "
-            f"maybe suggest taking a break or a coding tip. If they are browsing, "
-            f"maybe something relevant. Be very brief and friendly."
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_json_schema=_load_schema(),
+                ),
+            ), timeout=90
         )
 
-        logger.info("Generating proactive tip and embedding in parallel...")
-        tip_task = asyncio.wait_for(
-            client.aio.models.generate_content(
-                model='gemini-3.1-flash-lite',
-                contents=tip_prompt,
-            ), timeout=30
-        )
+        raw_text = response.text
+        if not raw_text:
+            logger.error("Empty response from Gemini")
+            return None
+
+        analysis = json.loads(raw_text)
+        summary = analysis.get("summary", "")
+        logger.info("Generated Summary: {}", summary[:120])
+
+        analysis_json = json.dumps(analysis, ensure_ascii=False)
+
+        categories = [
+            "events", "personalities", "skills", "interests",
+            "preferences", "ownerships", "relationships", "weaknesses", "goals",
+        ]
+        all_items = []
+        for cat in categories:
+            items = analysis.get(cat, [])
+            if not items:
+                continue
+            for i, item in enumerate(items):
+                if item.get("confidence", 0) >= _CONFIDENCE_THRESHOLD:
+                    all_items.append((cat, item, i))
+
+        logger.info("Extracted {} items across {} categories",
+                    len(all_items), len(set(c[0] for c in all_items)))
+
         embed_task = asyncio.wait_for(
             client.aio.models.embed_content(
                 model='gemini-embedding-2',
                 contents=summary,
             ), timeout=30
         )
-        tip_response, embed_response = await asyncio.gather(tip_task, embed_task)
-        tip = tip_response.text
-        logger.info("Generated Proactive Tip: {}", tip[:120])
 
-        embedding = embed_response.embeddings[0].values
+        item_texts = [item[1].get(item[0].rstrip("s"), "")
+                      for item in all_items] if all_items else []
+        if item_texts:
+            items_embed_task = asyncio.wait_for(
+                client.aio.models.embed_content(
+                    model='gemini-embedding-2',
+                    contents=item_texts,
+                ), timeout=60
+            )
+            summary_embed, items_embed = await asyncio.gather(
+                embed_task, items_embed_task
+            )
+        else:
+            summary_embed = await embed_task
+            items_embed = None
+
+        summary_embedding = summary_embed.embeddings[0].values if summary_embed.embeddings else None
 
         timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         raw_transcripts = str([os.path.basename(p) for p in image_paths])
 
         await database.app.mark_observations_processed(image_paths)
 
+        item_records = []
+        if items_embed and items_embed.embeddings:
+            for idx, ((cat, item, i), embedding) in enumerate(
+                zip(all_items, items_embed.embeddings)
+            ):
+                rec = _build_item(0, timestamp, user_id, cat, item, i)
+                rec["vector"] = embedding.values
+                item_records.append(rec)
+
         return {
             "timestamp": timestamp,
             "summary": summary,
+            "analysis_data": analysis_json,
             "raw_transcripts": raw_transcripts,
-            "tip": tip,
-            "embedding": embedding,
+            "embedding": summary_embedding,
+            "items": item_records,
         }
 
+    except json.JSONDecodeError as e:
+        logger.error("Failed to parse Gemini JSON response: {}", e)
+        logger.error("Raw response: {}", raw_text[:500] if 'raw_text' in dir() else "N/A")
+        return None
     except Exception as e:
         logger.error("Error during Gemini processing run: {}", e)
         return None

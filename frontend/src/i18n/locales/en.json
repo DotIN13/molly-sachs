@@ -49,8 +49,18 @@
     "empty": "No AI Insights compiled yet.",
     "emptyHint": "Molly will periodically process pending screen captures in the background to log reports and provide tips.",
     "reportBadge": "Molly Report #{{id}}",
-    "activitySummary": "Activity Summary",
-    "suggestion": "Molly's Suggestion"
+    "activitySummary": "Long-Form Summary",
+    "suggestion": "Molly's Suggestion",
+    "events": "Events",
+    "personalities": "Personalities",
+    "skills": "Skills",
+    "interests": "Interests",
+    "preferences": "Preferences",
+    "ownerships": "Ownerships",
+    "relationships": "Relationships",
+    "weaknesses": "Weaknesses",
+    "goals": "Goals",
+    "evidence": "Evidence"
   },
   "status": {
     "processed": "Processed",

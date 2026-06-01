@@ -50,7 +50,17 @@
     "emptyHint": "Molly 将定期在后台处理待处理的屏幕捕获，以记录报告并提供建议。",
     "reportBadge": "Molly 报告 #{{id}}",
     "activitySummary": "活动摘要",
-    "suggestion": "Molly 的建议"
+    "events": "事件",
+    "personalities": "性格",
+    "skills": "技能",
+    "interests": "兴趣",
+    "preferences": "偏好",
+    "ownerships": "所属关系",
+    "relationships": "关系",
+    "weaknesses": "弱点",
+    "goals": "目标",
+    "suggestion": "Molly 的建议",
+    "evidence": "证据"
   },
   "status": {
     "processed": "已处理",
