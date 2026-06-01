@@ -1,4 +1,6 @@
 import asyncio
+import time
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -52,6 +54,7 @@ SYSTEM_PROMPT = (
     "不要用markdown格式，除非用户明确要求，否则不要用bullet points或者列表。"
     "回复要简短自然，像好朋友间发微信一样。适当用一些emoji和口语化表达，但不要太频繁。"
     "你可以使用search_memory工具查找用户过去的活动和记忆。聊到过去的事情、回忆、习惯或需要context时，可以先调用search_memory查询后再回复。"
+    "你可以使用add_memory工具来记住用户的喜好、习惯、技能、目标等信息。当用户在对话中透露了关于自己的新信息（比如提到的偏好、正在做的项目、兴趣爱好、性格特点等），用add_memory来记录，这样以后聊天时可以通过search_memory查找到。"
 )
 
 # Settings that require tearing down and rebuilding the pipeline
@@ -149,6 +152,62 @@ def make_search_memory(user_id: str, api_key: str, send_fn=None):
                 await send_fn({"type": "thinking_done"})
 
     return search_memory
+
+
+_VALID_MEMORY_CATEGORIES = [
+    "trait", "preference", "interest", "skill", "goal",
+    "relationship", "ownership", "weakness", "event", "other",
+]
+
+
+def make_add_memory(user_id: str, api_key: str):
+    """Factory returning an add_memory callable that embeds and stores facts about the user."""
+
+    async def add_memory(params: FunctionCallParams, fact: str, category: str, confidence: int = 5):
+        """Add an inferred fact about the user to their long-term memory.
+
+        Use this when the user reveals something about themselves — preferences,
+        habits, projects, personality traits, skills, goals, etc.
+
+        Args:
+            fact: A concise sentence describing what was learned (e.g., "The user prefers dark mode IDEs").
+            category: The type of fact. Must be one of: trait, preference, interest, skill, goal, relationship, ownership, weakness, event, other.
+            confidence: How certain you are (1-10). Use 5+ for clear statements, lower for vague hints.
+        """
+        try:
+            if category not in _VALID_MEMORY_CATEGORIES:
+                await params.result_callback(
+                    f"Invalid category '{category}'. Must be: {', '.join(_VALID_MEMORY_CATEGORIES)}"
+                )
+                return
+
+            confidence = max(1, min(10, int(confidence)))
+            ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            mem_id = f"mem_{uuid.uuid4().hex[:12]}"
+
+            embedding = await _embed_query(f"{category}: {fact}", api_key)
+
+            await database.vector.add([{
+                "id": mem_id,
+                "vector": embedding,
+                "metadata": {
+                    "type": category,
+                    "content": f"{category}: {fact}",
+                    "timestamp": ts,
+                    "user_id": user_id,
+                    "user_event_id": "0",
+                    "confidence": confidence,
+                    "evidence": "inferred from conversation",
+                },
+            }])
+
+            logger.info("Memory added [{} c:{}]: {}", category, confidence, fact[:100])
+            await params.result_callback(f"Remembered: [{category}] {fact}")
+        except Exception as e:
+            logger.error("Error adding memory: {}", e)
+            await params.result_callback(f"Failed to store memory: {str(e)}")
+
+    return add_memory
 
 
 class MicFilterProcessor(FrameProcessor):
@@ -316,7 +375,9 @@ async def start_pipecat_session(
                 OutputTransportMessageFrame(message=msg)
             )
         )
+        add_memory_tool = make_add_memory(user_id, gemini_key)
         llm.register_direct_function(memory_tool)
+        llm.register_direct_function(add_memory_tool)
 
         stt_provider = prefs.get("stt_provider", "soniox")
         stt_language = prefs.get("stt_language", "zh")
@@ -361,7 +422,7 @@ async def start_pipecat_session(
         past_messages = await database.app.get_messages(conv_id, user_id)
         formatted_messages = _build_messages(past_messages, prefs.get("timezone"))
 
-        tools = ToolsSchema(standard_tools=[memory_tool])
+        tools = ToolsSchema(standard_tools=[memory_tool, add_memory_tool])
         context = LLMContext(messages=formatted_messages, tools=tools)
         vad_params = VADParams(
             start_secs=0.2, stop_secs=0.8, confidence=0.75, min_volume=0.1,
