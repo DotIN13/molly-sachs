@@ -6,6 +6,7 @@ import json
 import time
 import uuid
 import secrets
+import logging
 import datetime
 from datetime import timedelta, timezone
 from loguru import logger
@@ -21,7 +22,7 @@ from pipecat.transports.smallwebrtc.request_handler import (
     SmallWebRTCPatchRequest
 )
 
-from bot import start_pipecat_session, SessionState, PipelineRestartRequested
+from bot import start_pipecat_session, SessionState, PipelineRestartRequested, _embed_query
 from processor import process_pending_observations
 import database
 import config
@@ -34,10 +35,39 @@ sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 
 logger.remove(0)
-if config.is_debug():
-    logger.add(sys.stderr, level="DEBUG")
-else:
-    logger.add(sys.stderr, level="INFO")
+
+_LOG_LEVEL = os.environ.get("MOLLY_LOG_LEVEL", "INFO").upper()
+_LOG_LEVEL_RTC = os.environ.get("MOLLY_LOG_LEVEL_RTC", _LOG_LEVEL).upper()
+_LOG_LEVEL_UVICORN = os.environ.get("MOLLY_LOG_LEVEL_UVICORN", _LOG_LEVEL).upper()
+_LOG_LEVEL_BACKEND = os.environ.get("MOLLY_LOG_LEVEL_BACKEND", _LOG_LEVEL).upper()
+
+logger.add(sys.stderr, level=_LOG_LEVEL_BACKEND)
+
+_logging_levels = {"TRACE": 5, "DEBUG": 10, "INFO": 20, "SUCCESS": 25,
+                   "WARNING": 30, "ERROR": 40, "CRITICAL": 50}
+
+def _to_logging_level(name: str) -> int:
+    return _logging_levels.get(name, 20)
+
+class _InterceptHandler(logging.Handler):
+    def emit(self, record: logging.LogRecord) -> None:
+        level = logger.level(record.levelname).name
+        frame, depth = logging.currentframe(), 2
+        while frame and frame.f_code.co_filename == logging.__file__:
+            frame = frame.f_back
+            depth += 1
+        logger.opt(depth=depth, exception=record.exc_info).log(level, record.getMessage())
+
+logging.basicConfig(handlers=[_InterceptHandler()], level=0, force=True)
+
+for _name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+    _uv_logger = logging.getLogger(_name)
+    _uv_logger.handlers = [_InterceptHandler()]
+    _uv_logger.propagate = False
+    _uv_logger.setLevel(_to_logging_level(_LOG_LEVEL_UVICORN))
+
+for _name in ("aioice", "aiortc", "aiortc.rtcpeerconnection", "aioice.ice"):
+    logging.getLogger(_name).setLevel(_to_logging_level(_LOG_LEVEL_RTC))
 
 
 app = FastAPI(
@@ -417,6 +447,33 @@ async def get_insights(limit: int = 15,
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/memories", summary="List or search vector memories")
+async def get_memories(q: str | None = None,
+                       type: str | None = None,
+                       limit: int = 50,
+                       offset: int = 0,
+                       current_user: dict = Depends(auth.get_current_user)):
+    try:
+        if q:
+            settings = await Settings(current_user["id"]).load()
+            api_key = settings.get("gemini_api_key", "")
+            if not api_key:
+                raise HTTPException(status_code=400, detail="Gemini API key not configured")
+            embedding = await _embed_query(q, api_key)
+            results = await database.vector.search(
+                embedding, limit=20, user_id=current_user["id"],
+                item_type=type or None)
+            return {"items": results, "total": len(results)}
+        page, total = await database.vector.get_all(
+            current_user["id"], item_type=type, limit=limit, offset=offset)
+        return {"items": page, "total": total}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to retrieve memories: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/api/processor/trigger", summary="Trigger Gemini processor to run immediately")
 async def trigger_processor(
     current_user: dict = Depends(auth.get_current_user)
@@ -432,22 +489,6 @@ async def trigger_processor(
                 result["raw_transcripts"],
                 result["analysis_data"],
             )
-
-            summary_vector = result["embedding"]
-            if summary_vector:
-                await database.vector.add([{
-                    "id": f"{event_id}_summary",
-                    "vector": summary_vector,
-                    "metadata": {
-                        "type": "summary",
-                        "content": f"summary: {result['summary']}",
-                        "timestamp": result["timestamp"],
-                        "user_id": current_user["id"],
-                        "user_event_id": str(event_id),
-                        "confidence": 0,
-                        "evidence": "",
-                    },
-                }])
 
             items = result.get("items", [])
             if items:

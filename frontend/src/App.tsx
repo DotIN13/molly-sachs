@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Settings, PenSquare, Search, FileText, Clock, Bird, Mic, Volume2, VolumeX, RefreshCw, LogOut, Menu, X, ChevronDown, ArrowUp } from 'lucide-react'
-import { updateObserverConfig } from './observers'
+import { updateObserverConfig, stopObservers } from './observers'
 import { API_URL, isElectron } from './config'
 import useAudioVisualizer from './hooks/useAudioVisualizer'
 import useWebRTC from './hooks/useWebRTC'
@@ -13,6 +13,19 @@ import ObservationCard from './components/ObservationCard'
 import { useAuth } from './contexts/AuthContext'
 import Login from './pages/Login'
 import 'katex/dist/katex.min.css'
+
+const CATEGORY_COLORS: Record<string, string> = {
+  trait: 'bg-purple-50 text-purple-700 border-purple-200',
+  preference: 'bg-blue-50 text-blue-700 border-blue-200',
+  interest: 'bg-green-50 text-green-700 border-green-200',
+  skill: 'bg-amber-50 text-amber-700 border-amber-200',
+  goal: 'bg-rose-50 text-rose-700 border-rose-200',
+  relationship: 'bg-pink-50 text-pink-700 border-pink-200',
+  ownership: 'bg-orange-50 text-orange-700 border-orange-200',
+  weakness: 'bg-gray-50 text-gray-600 border-gray-200',
+  event: 'bg-cyan-50 text-cyan-700 border-cyan-200',
+  other: 'bg-slate-50 text-slate-600 border-slate-200',
+}
 
 export default function App() {
   const auth = useAuth()
@@ -54,14 +67,19 @@ export default function App() {
   const [observerScreenInterval, setObserverScreenInterval] = useState(60)
   const [observerCameraInterval, setObserverCameraInterval] = useState(120)
   const [observerProcessInterval, setObserverProcessInterval] = useState(300)
+  const [isSystemIdle, setIsSystemIdle] = useState(false)
   const [debugMode, setDebugMode] = useState(false)
   const [timezone, setTimezone] = useState('')
 
   // Dashboard & Navigation States
-  const [activeTab, setActiveTab] = useState<'chat' | 'screen' | 'camera' | 'insights'>('chat')
+  const [activeTab, setActiveTab] = useState<'chat' | 'screen' | 'camera' | 'insights' | 'memories'>('chat')
   const [screenCaptures, setScreenCaptures] = useState<any[]>([])
   const [cameraSnapshots, setCameraSnapshots] = useState<any[]>([])
   const [geminiInsights, setGeminiInsights] = useState<any[]>([])
+  const [memories, setMemories] = useState<any[]>([])
+  const [memoriesTotal, setMemoriesTotal] = useState(0)
+  const [memoriesSearch, setMemoriesSearch] = useState("")
+  const [memoriesLoading, setMemoriesLoading] = useState(false)
   const [lastRefresh, setLastRefresh] = useState(0)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [mobileTabOpen, setMobileTabOpen] = useState(false)
@@ -72,15 +90,35 @@ export default function App() {
   const refreshConversationsRef = useRef<() => void>(() => { })
   const appliedSettingsRef = useRef<Record<string, any>>({})
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const thinkingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const { dcRef, pcRef, disconnectWebRTC, connectWebRTC, sendChatMessage, sendSessionState, pipelineReady } = useWebRTC({
     backendStatus,
     activeConversationId,
     setMessages,
     refreshConversationsRef,
-    onThinking: (action: string, detail: string) => setThinking({ action, detail }),
-    onThinkingDone: () => setThinking(null),
+    onThinking: (action: string, detail: string) => {
+      if (thinkingTimerRef.current) {
+        clearTimeout(thinkingTimerRef.current)
+        thinkingTimerRef.current = null
+      }
+      setThinking({ action, detail })
+    },
+    onThinkingDone: () => {
+      thinkingTimerRef.current = setTimeout(() => {
+        thinkingTimerRef.current = null
+        setThinking(null)
+      }, 1000)
+    },
   })
+
+  useEffect(() => {
+    return () => {
+      if (thinkingTimerRef.current) {
+        clearTimeout(thinkingTimerRef.current)
+      }
+    }
+  }, [])
 
   useEffect(() => {
     let active = true;
@@ -177,11 +215,62 @@ export default function App() {
       .catch(console.error)
   }, [backendStatus, auth.isAuthenticated])
 
+  // System idle detection — poll every 10s and listen for immediate lock/suspend events
+  useEffect(() => {
+    if (!isElectron) return;
+    const api = (window as any).electronAPI;
+    if (!api?.getSystemIdleState) return;
+
+    let polling = true;
+
+    const poll = async () => {
+      if (!polling) return;
+      try {
+        const state = await api.getSystemIdleState();
+        if (state.idleState === 'locked' || state.idleState === 'idle') {
+          setIsSystemIdle(true);
+        } else if (state.idleState === 'active') {
+          setIsSystemIdle(false);
+        }
+      } catch { /* ignore */ }
+      if (polling) setTimeout(poll, 10000);
+    };
+    poll();
+
+    const unsub = api.onSystemIdleChanged?.((data: { idle: boolean; reason: string }) => {
+      console.log('[Molly] System idle changed:', data.reason, '→ idle:', data.idle);
+      setIsSystemIdle(data.idle);
+    });
+
+    return () => {
+      polling = false;
+      if (typeof unsub === 'function') unsub();
+    };
+  }, []);
+
+  // Pause observers when system goes idle, resume when active
+  useEffect(() => {
+    if (!isElectron) return;
+    if (isSystemIdle) {
+      console.log('[Molly] System idle — pausing observers');
+      stopObservers();
+    } else {
+      console.log('[Molly] System active — resuming observers');
+      updateObserverConfig({
+        screenActive: observerScreenActive,
+        cameraActive: observerCameraActive,
+        screenInterval: observerScreenInterval,
+        cameraInterval: observerCameraInterval,
+      });
+    }
+  }, [isSystemIdle]);
+
   // Processor scheduling — frontend triggers the backend processor on interval
   useEffect(() => {
     if (!isElectron) return;
     if (backendStatus !== 'connected' || !auth.isAuthenticated) return;
     if (!observerScreenActive && !observerCameraActive) return;
+    if (isSystemIdle) return;
 
     const intervalMs = observerProcessInterval * 1000;
     const triggerProcessor = () => {
@@ -192,7 +281,7 @@ export default function App() {
     triggerProcessor();
     const timer = setInterval(triggerProcessor, intervalMs);
     return () => clearInterval(timer);
-  }, [backendStatus, auth.isAuthenticated, observerProcessInterval, observerScreenActive, observerCameraActive]);
+  }, [backendStatus, auth.isAuthenticated, observerProcessInterval, observerScreenActive, observerCameraActive, isSystemIdle]);
 
   useEffect(() => {
     if (backendStatus !== 'connected' || !auth.isAuthenticated) return;
@@ -414,11 +503,33 @@ export default function App() {
     }
   }, [auth.isAuthenticated, auth.accessToken, auth.authFetch]);
 
+  const fetchMemories = useCallback(async (search?: string) => {
+    setMemoriesLoading(true)
+    try {
+      const params = new URLSearchParams({ limit: "50" })
+      if (search) params.set("q", search)
+      const res = await auth.authFetch(`${API_URL}/api/memories?${params}`)
+      if (res.ok) {
+        const data = await res.json()
+        setMemories(data.items || [])
+        setMemoriesTotal(data.total || 0)
+      }
+    } catch (err) {
+      console.error("Failed to fetch memories:", err)
+    } finally {
+      setMemoriesLoading(false)
+    }
+  }, [auth.isAuthenticated, auth.accessToken, auth.authFetch])
+
   useEffect(() => {
     if (backendStatus === 'connected' && activeTab !== 'chat') {
-      fetchObservations(activeTab);
+      if (activeTab === 'memories') {
+        fetchMemories()
+      } else {
+        fetchObservations(activeTab)
+      }
     }
-  }, [activeTab, backendStatus, fetchObservations]);
+  }, [activeTab, backendStatus, fetchObservations, fetchMemories]);
 
   const handleSettingsChange = (key: keyof typeof settingsData, value: any) => {
     const setters: Record<keyof typeof settingsData, any> = {
@@ -588,7 +699,7 @@ export default function App() {
               <>
                 <div className="fixed inset-0 z-40" onClick={() => setMobileTabOpen(false)} />
                 <div className="absolute top-full left-0 mt-1 z-50 bg-white border border-slate-200 rounded-xl shadow-lg overflow-hidden min-w-[140px]">
-                  {(['chat', 'screen', 'camera', 'insights'] as const).map(tab => (
+                  {(['chat', 'screen', 'camera', 'insights', 'memories'] as const).map(tab => (
                     <button
                       key={tab}
                       onClick={() => { setActiveTab(tab); setMobileTabOpen(false) }}
@@ -604,7 +715,7 @@ export default function App() {
               </>
             )}
             <div className="hidden lg:flex overflow-x-auto gap-1 bg-slate-100/80 p-1 rounded-xl border border-slate-200/40 backdrop-blur-sm shadow-inner">
-              {(['chat', 'screen', 'camera', 'insights'] as const).map(tab => (
+              {(['chat', 'screen', 'camera', 'insights', 'memories'] as const).map(tab => (
                 <button
                   key={tab}
                   onClick={() => setActiveTab(tab)}
@@ -663,7 +774,9 @@ export default function App() {
                     <span className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
                   </span>
                   <span className="text-[11px] text-slate-500 italic font-medium">
-                    {thinking.action === 'searching_memory' ? t('app.searchingMemory') : t('app.thinking')}
+                    {thinking.action === 'searching_memory' ? t('app.searchingMemory') :
+                      thinking.action === 'storing_memory' ? t('app.storingMemory') :
+                        t('app.thinking')}
                   </span>
                 </div>
               </div>
@@ -671,10 +784,8 @@ export default function App() {
           </div>
         </div>
 
-        {/* Observer Tabs Viewport */}
-        <div className={`flex-1 overflow-y-auto px-3 sm:px-6 md:px-10 py-4 sm:py-6 bg-slate-50/40 ${activeTab !== 'chat' ? '' : 'hidden'}`}>
-
-          <div className={`${activeTab === 'screen' ? '' : 'hidden'}`}>
+        {/* Screen Tab */}
+        <div className={`overflow-y-auto flex-1 min-h-0 px-3 sm:px-6 md:px-10 py-4 sm:py-6 bg-slate-50/40 ${activeTab === 'screen' ? '' : 'hidden'}`}>
             <div className="max-w-6xl mx-auto w-full animate-in fade-in duration-300">
               <div className="flex justify-between items-center mb-6">
                 <div>
@@ -717,7 +828,8 @@ export default function App() {
             </div>
           </div>
 
-          <div className={`${activeTab === 'camera' ? '' : 'hidden'}`}>
+          {/* Camera Tab */}
+          <div className={`overflow-y-auto flex-1 min-h-0 px-3 sm:px-6 md:px-10 py-4 sm:py-6 bg-slate-50/40 ${activeTab === 'camera' ? '' : 'hidden'}`}>
             <div className="max-w-6xl mx-auto w-full animate-in fade-in duration-300">
               <div className="flex justify-between items-center mb-6">
                 <div>
@@ -758,8 +870,9 @@ export default function App() {
             </div>
           </div>
 
-          <div className={`${activeTab === 'insights' ? '' : 'hidden'}`}>
-            <div className="max-w-3xl mx-auto w-full pb-8 animate-in fade-in duration-300">
+          {/* Insights Tab */}
+          <div className={`overflow-y-auto flex-1 min-h-0 px-3 sm:px-6 md:px-10 py-4 sm:py-6 bg-slate-50/40 ${activeTab === 'insights' ? '' : 'hidden'}`}>
+            <div className="max-w-3xl mx-auto w-full animate-in fade-in duration-300">
               <div className="flex justify-between items-center mb-8">
                 <div>
                   <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider">{t('insights.title')}</h3>
@@ -806,7 +919,7 @@ export default function App() {
                       {/* Parsed analysis categories */}
                       {(() => {
                         let analysis: Record<string, any[]> | null = null
-                        try { if (ins.context) analysis = JSON.parse(ins.context) } catch {}
+                        try { if (ins.context) analysis = JSON.parse(ins.context) } catch { }
                         if (!analysis) return null
 
                         const catConfig: Record<string, { label: string; color: string; bg: string; border: string }> = {
@@ -839,13 +952,32 @@ export default function App() {
                                         </span>
                                         <div className="min-w-0">
                                           <p className="text-[11px] text-slate-800 font-semibold leading-snug">
-                                            {item[Object.keys(item).find(k => k !== 'confidence' && k !== 'evidence') || 0]}
+                                            {item[Object.keys(item).find(k => k !== 'confidence' && k !== 'evidence' && k !== 'lifespan') || 0]}
                                           </p>
-                                          {item.evidence && (
-                                            <p className="text-[10px] text-slate-400 italic mt-0.5 leading-snug">
-                                              {t('insights.evidence')}: {item.evidence}
-                                            </p>
-                                          )}
+                                          {(() => {
+                                            if (!item.evidence) return null
+                                            let displayText = ''
+                                            let evidenceCount = 0
+                                            try {
+                                              const evidenceList = JSON.parse(item.evidence)
+                                              if (Array.isArray(evidenceList) && evidenceList.length > 0) {
+                                                evidenceCount = evidenceList.length
+                                                displayText = evidenceList[evidenceList.length - 1].text || ''
+                                              }
+                                            } catch {
+                                              displayText = item.evidence
+                                            }
+                                            if (!displayText) return null
+                                            return (
+                                              <p className="text-[10px] text-slate-400 italic mt-0.5 leading-snug">
+                                                {evidenceCount > 1
+                                                  ? t('insights.evidenceCount', { count: evidenceCount }) + ': '
+                                                  : t('insights.evidence') + ': '
+                                                }
+                                                {displayText}
+                                              </p>
+                                            )
+                                          })()}
                                         </div>
                                       </div>
                                     ))}
@@ -859,7 +991,7 @@ export default function App() {
 
                       {/* Fallback: old plain-text tip */}
                       {(() => {
-                        try { JSON.parse(ins.context || ''); return null } catch {}
+                        try { JSON.parse(ins.context || ''); return null } catch { }
                         if (!ins.context) return null
                         return (
                           <div className="mt-4 bg-indigo-50/50 border border-indigo-100/60 rounded-xl p-3.5 flex items-start gap-3">
@@ -880,6 +1012,97 @@ export default function App() {
                 </div>
               )}
             </div>
+          </div>
+
+        {/* Memories Tab */}
+        <div className={`overflow-y-auto flex-1 min-h-0 bg-slate-50/40 ${activeTab === 'memories' ? '' : 'hidden'}`}>
+          {/* Title — scrolls away */}
+          <div className="max-w-3xl mx-auto px-3 sm:px-6 md:px-10 pt-4 sm:pt-6">
+            <div className="flex flex-wrap justify-between items-center gap-3 mb-3">
+              <div>
+                <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider">{t('memories.title')}</h3>
+                <p className="text-[10px] text-slate-400 mt-0.5">
+                  {memoriesTotal > 0 ? `${t('memories.total')}: ${memoriesTotal}` : t('memories.desc')}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Search bar — sticky, full width */}
+          <div className="sticky top-2 z-10 px-3 sm:px-6 md:px-10 pb-3 pt-2 bg-slate-50/40 backdrop-blur-sm">
+            <div className="max-w-3xl mx-auto">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+                <input
+                  type="text"
+                  value={memoriesSearch}
+                  onChange={e => setMemoriesSearch(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') fetchMemories(memoriesSearch) }}
+                  placeholder={t('memories.searchPlaceholder')}
+                  className="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-300/50 focus:border-slate-300 transition-all"
+                />
+                {memoriesSearch && (
+                  <button
+                    onClick={() => { setMemoriesSearch(""); fetchMemories() }}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full bg-slate-200/60 flex items-center justify-center hover:bg-slate-300/60 transition"
+                  >
+                    <X className="w-3 h-3 text-slate-500" />
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Scrollable memory cards */}
+          <div className="max-w-3xl mx-auto px-3 sm:px-6 md:px-10 pb-8 pt-4 sm:pt-6 animate-in fade-in duration-300">
+            {memoriesLoading ? (
+              <div className="flex items-center justify-center py-12">
+                <RefreshCw className="w-5 h-5 text-slate-400 animate-spin" />
+              </div>
+            ) : memories.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-16 text-slate-400">
+                <PenSquare className="w-8 h-8 mb-3 text-slate-300" />
+                <p className="text-sm font-medium">{t('memories.empty')}</p>
+                <p className="text-[11px] mt-1">{t('memories.emptyHint')}</p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {memories.map(mem => {
+                  const color = CATEGORY_COLORS[mem.type] || CATEGORY_COLORS.other
+                  return (
+                    <div key={mem.id} className="bg-white rounded-xl border border-slate-100 p-4 shadow-sm hover:shadow-md transition-shadow duration-200">
+                      <div className="flex items-start gap-3">
+                        <span className={`text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-md border shrink-0 mt-0.5 ${color}`}>
+                          {mem.type}
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm text-slate-800 leading-relaxed">
+                            {mem.content?.replace(/^\w+:\s*/, '') || mem.content}
+                          </p>
+                          <div className="flex items-center gap-3 mt-2 flex-wrap">
+                            {mem.timestamp && (
+                              <span className="text-[10px] text-slate-400 flex items-center gap-1">
+                                <Clock className="w-3 h-3" /> {new Date(mem.timestamp).toLocaleDateString()}
+                              </span>
+                            )}
+                            {mem.confidence != null && (
+                              <span className="text-[10px] text-slate-400">
+                                {t('memories.confidence')}: {mem.confidence}/10
+                              </span>
+                            )}
+                            {mem.lifespan != null && (
+                              <span className="text-[10px] text-slate-400">
+                                {t('memories.lifespan')}: {mem.lifespan}/10
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
           </div>
         </div>
 

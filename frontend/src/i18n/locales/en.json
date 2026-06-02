@@ -21,13 +21,15 @@
     "voicePreparing": "Voice pipeline connecting...",
     "inputPlaceholder": "Ask Molly about your context...",
     "searchingMemory": "Searching memories...",
+    "storingMemory": "Remembering...",
     "thinking": "Thinking..."
   },
   "tabs": {
     "chat": "chat",
     "screen": "screen",
     "camera": "camera",
-    "insights": "insights"
+    "insights": "insights",
+    "memories": "memories"
   },
   "screen": {
     "title": "Desktop Capture History",
@@ -62,7 +64,9 @@
     "relationships": "Relationships",
     "weaknesses": "Weaknesses",
     "goals": "Goals",
-    "evidence": "Evidence"
+    "evidence": "Evidence",
+    "evidenceCount": "Evidence ({{count}} observations)",
+    "lifespan": "Relevance lifespan"
   },
   "status": {
     "processed": "Processed",
@@ -172,6 +176,16 @@
     "apologetic": "Apologetic",
     "confident": "Confident",
     "neutral": "Neutral"
+  },
+  "memories": {
+    "title": "Memory Store",
+    "desc": "Browse and search all stored memories about you.",
+    "total": "Total",
+    "searchPlaceholder": "Search memories...",
+    "empty": "No memories stored yet.",
+    "emptyHint": "Molly will learn about you as you chat — preferences, interests, skills, and more.",
+    "confidence": "Confidence",
+    "lifespan": "Lifespan"
   },
   "voiceLang": {
     "cn": "Chinese, Mandarin",

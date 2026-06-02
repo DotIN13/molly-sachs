@@ -1,4 +1,6 @@
 import asyncio
+import json
+import os
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -134,12 +136,32 @@ def make_search_memory(user_id: str, api_key: str, send_fn=None):
             logger.info("Embedding query: {}", query)
             query_embedding = await _embed_query(query, api_key)
 
-            search_results = await database.vector.search(
-                query_embedding, 5, user_id=user_id
+            event_results, persona_results = await asyncio.gather(
+                database.vector.search(query_embedding, 3, user_id=user_id, item_type="event"),
+                database.vector.search(query_embedding, 5, user_id=user_id, exclude_type="event"),
             )
+
+            all_results = event_results + persona_results
+            seen = set()
+            unique = []
+            for r in all_results:
+                rid = r.get("id", "")
+                if rid and rid not in seen:
+                    seen.add(rid)
+                    unique.append(r)
+
+            unique.sort(key=lambda r: 0 if r.get("type") == "event" else 1)
+
+            search_lines = [f"search-memory \"{query[:100]}\" → {len(unique)} results"]
+            for r in unique:
+                search_lines.append(
+                    f"  [{r.get('type','?')}] \"{r.get('content','')[:70]}\""
+                )
+            logger.info("\n".join(search_lines))
+
             context_str = "\n".join(
                 [f"[{r.get('type', 'summary')} | {r.get('timestamp', '')}] {r.get('content', r.get('summary', ''))}"
-                 for r in search_results]
+                 for r in unique]
             )
             if not context_str.strip():
                 context_str = "No recent context available yet."
@@ -158,12 +180,15 @@ _VALID_MEMORY_CATEGORIES = [
     "trait", "preference", "interest", "skill", "goal",
     "relationship", "ownership", "weakness", "event", "other",
 ]
+_MERGE_THRESHOLD = float(os.environ.get("MOLLY_MERGE_THRESHOLD", "0.85"))
+_MAX_EVIDENCE_ENTRIES = 10
 
 
-def make_add_memory(user_id: str, api_key: str):
+def make_add_memory(user_id: str, api_key: str, send_fn=None):
     """Factory returning an add_memory callable that embeds and stores facts about the user."""
 
-    async def add_memory(params: FunctionCallParams, fact: str, category: str, confidence: int = 5):
+    async def add_memory(params: FunctionCallParams, fact: str, category: str,
+                         confidence: int = 5, lifespan: int = 5):
         """Add an inferred fact about the user to their long-term memory.
 
         Use this when the user reveals something about themselves — preferences,
@@ -171,10 +196,14 @@ def make_add_memory(user_id: str, api_key: str):
 
         Args:
             fact: A concise sentence describing what was learned (e.g., "The user prefers dark mode IDEs").
-            category: The type of fact. Must be one of: trait, preference, interest, skill, goal, relationship, ownership, weakness, event, other.
+            category: The type of fact. One of: trait, preference, interest, skill, goal, relationship, ownership, weakness, event, other.
             confidence: How certain you are (1-10). Use 5+ for clear statements, lower for vague hints.
+            lifespan: How long this stays relevant. 1 = short-lived, 10 = long-lasting insight.
         """
         try:
+            if send_fn:
+                await send_fn({"type": "thinking", "action": "storing_memory", "detail": fact[:80]})
+
             if category not in _VALID_MEMORY_CATEGORIES:
                 await params.result_callback(
                     f"Invalid category '{category}'. Must be: {', '.join(_VALID_MEMORY_CATEGORIES)}"
@@ -182,30 +211,90 @@ def make_add_memory(user_id: str, api_key: str):
                 return
 
             confidence = max(1, min(10, int(confidence)))
+            lifespan = max(1, min(10, int(lifespan)))
             ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-            mem_id = f"mem_{uuid.uuid4().hex[:12]}"
 
             embedding = await _embed_query(f"{category}: {fact}", api_key)
 
-            await database.vector.add([{
-                "id": mem_id,
-                "vector": embedding,
-                "metadata": {
-                    "type": category,
-                    "content": f"{category}: {fact}",
-                    "timestamp": ts,
-                    "user_id": user_id,
-                    "user_event_id": "0",
-                    "confidence": confidence,
-                    "evidence": "inferred from conversation",
-                },
-            }])
+            new_evidence = json.dumps(
+                [{"text": "inferred from conversation", "timestamp": ts}],
+                ensure_ascii=False,
+            )
 
-            logger.info("Memory added [{} c:{}]: {}", category, confidence, fact[:100])
-            await params.result_callback(f"Remembered: [{category}] {fact}")
+            if category == "event":
+                existing = None
+                sim = 0.0
+                candidates = []
+            else:
+                existing, sim, candidates = await database.vector.find_similar(
+                    embedding, category, user_id, _MERGE_THRESHOLD
+                )
+
+            target = f"{category}: {fact}"
+            lines = [f"[{category}] \"{target[:80]}\""]
+            if candidates:
+                lines.append(f"  threshold={_MERGE_THRESHOLD}")
+                for c, s in candidates:
+                    mark = "  ✓" if (existing and c.get("id") == existing.get("id")) else "   "
+                    lines.append(f"  {s:.2f}{mark} \"{c.get('content','')[:70]}\"")
+            if existing:
+                lines.append(f"  → merged into \"{existing.get('content','')[:70]}\"")
+            else:
+                lines.append(f"  → no match (best={sim:.2f})")
+            logger.info("\n".join(lines))
+
+            if existing:
+                existing_evidence = existing.get("evidence", "")
+                try:
+                    evidence_list = json.loads(existing_evidence) if isinstance(existing_evidence, str) else []
+                    if not isinstance(evidence_list, list):
+                        evidence_list = [{"text": str(existing_evidence), "timestamp": ""}]
+                except (json.JSONDecodeError, TypeError):
+                    evidence_list = [{"text": str(existing_evidence), "timestamp": ""}]
+
+                new_entries = json.loads(new_evidence)
+                evidence_list = evidence_list + new_entries
+                if len(evidence_list) > _MAX_EVIDENCE_ENTRIES:
+                    evidence_list = evidence_list[-_MAX_EVIDENCE_ENTRIES:]
+
+                merged = {
+                    "type": category,
+                    "content": f"{category}: {fact}" if len(fact) > len(existing.get("content", ""))
+                               else existing.get("content", f"{category}: {fact}"),
+                    "timestamp": existing.get("timestamp", ts),
+                    "user_id": user_id,
+                    "user_event_id": existing.get("user_event_id", "0"),
+                    "confidence": max(confidence, existing.get("confidence", 0)),
+                    "evidence": json.dumps(evidence_list, ensure_ascii=False),
+                    "lifespan": max(lifespan, existing.get("lifespan", 0)),
+                }
+                await database.vector.update_metadata(existing["id"], merged)
+                logger.info("Memory merged [{} c:{} sim:{:.2f}]: {}", category, confidence, sim, fact[:100])
+                await params.result_callback(f"Merged with existing [{category}]: {fact}")
+            else:
+                mem_id = f"mem_{uuid.uuid4().hex[:12]}"
+                await database.vector.add([{
+                    "id": mem_id,
+                    "vector": embedding,
+                    "metadata": {
+                        "type": category,
+                        "content": f"{category}: {fact}",
+                        "timestamp": ts,
+                        "user_id": user_id,
+                        "user_event_id": "0",
+                        "confidence": confidence,
+                        "evidence": new_evidence,
+                        "lifespan": lifespan,
+                    },
+                }])
+                logger.info("Memory added [{} c:{}]: {}", category, confidence, fact[:100])
+                await params.result_callback(f"Remembered: [{category}] {fact}")
         except Exception as e:
             logger.error("Error adding memory: {}", e)
             await params.result_callback(f"Failed to store memory: {str(e)}")
+        finally:
+            if send_fn:
+                await send_fn({"type": "thinking_done"})
 
     return add_memory
 
@@ -375,7 +464,11 @@ async def start_pipecat_session(
                 OutputTransportMessageFrame(message=msg)
             )
         )
-        add_memory_tool = make_add_memory(user_id, gemini_key)
+        add_memory_tool = make_add_memory(user_id, gemini_key,
+            send_fn=lambda msg: transport._client.send_message(
+                OutputTransportMessageFrame(message=msg)
+            )
+        )
         llm.register_direct_function(memory_tool)
         llm.register_direct_function(add_memory_tool)
 

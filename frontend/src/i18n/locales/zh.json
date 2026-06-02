@@ -19,13 +19,17 @@
     "toggleVoiceOn": "开启语音模式",
     "toggleVoiceOff": "关闭语音模式",
     "voicePreparing": "语音通道连接中...",
-    "inputPlaceholder": "来跟 Molly 聊聊你的日常吧..."
+    "inputPlaceholder": "来跟 Molly 聊聊你的日常吧...",
+    "searchingMemory": "正在搜索记忆...",
+    "storingMemory": "正在记忆...",
+    "thinking": "思考中..."
   },
   "tabs": {
     "chat": "聊天",
     "screen": "屏幕",
     "camera": "摄像头",
-    "insights": "洞察"
+    "insights": "洞察",
+    "memories": "记忆"
   },
   "screen": {
     "title": "桌面捕获历史",
@@ -170,6 +174,16 @@
     "apologetic": "抱歉",
     "confident": "自信",
     "neutral": "中性"
+  },
+  "memories": {
+    "title": "记忆存储",
+    "desc": "浏览和搜索所有关于你的记忆。",
+    "total": "总计",
+    "searchPlaceholder": "搜索记忆...",
+    "empty": "暂无存储的记忆。",
+    "emptyHint": "Molly 会在聊天中了解你——偏好、兴趣、技能等。",
+    "confidence": "置信度",
+    "lifespan": "有效期"
   },
   "voiceLang": {
     "cn": "中文, 普通话",

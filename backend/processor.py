@@ -1,7 +1,9 @@
 import os
 import json
 import time
+import uuid
 import asyncio
+from dataclasses import dataclass
 from google import genai
 from google.genai import types
 from loguru import logger
@@ -11,6 +13,8 @@ import config
 _PROMPTS_DIR = os.path.join(os.path.dirname(__file__), "prompts")
 _CONFIDENCE_THRESHOLD = int(os.environ.get("MOLLY_CONFIDENCE_THRESHOLD", "5"))
 _MAX_ARTEFACTS = int(os.environ.get("MOLLY_MAX_ARTEFACTS", "20"))
+_MERGE_THRESHOLD = float(os.environ.get("MOLLY_MERGE_THRESHOLD", "0.85"))
+_MAX_EVIDENCE_ENTRIES = 10
 
 
 def _load_prompt() -> str:
@@ -23,24 +27,85 @@ def _load_schema() -> dict:
         return json.load(f)
 
 
-def _build_item(event_id: int, timestamp: str, user_id: str,
-                item_type: str, item: dict, index: int) -> dict:
-    content_key = item_type.rstrip("s")
-    content = item.get(content_key, "")
-    evidence = item.get("evidence", "")
-    confidence = item.get("confidence", 0)
+def _wrap_evidence(evidence_text: str, timestamp: str) -> str:
+    return json.dumps(
+        [{"text": evidence_text, "timestamp": timestamp}],
+        ensure_ascii=False,
+    )
 
+
+def _merge_evidence(existing_json: str | None, new_json: str) -> str:
+    existing = []
+    if existing_json:
+        try:
+            parsed = json.loads(existing_json)
+            if isinstance(parsed, list):
+                existing = parsed
+            else:
+                existing = [{"text": str(parsed), "timestamp": ""}]
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    try:
+        new_entries = json.loads(new_json)
+        if not isinstance(new_entries, list):
+            new_entries = [{"text": str(new_entries), "timestamp": ""}]
+    except (json.JSONDecodeError, TypeError):
+        new_entries = [{"text": str(new_json), "timestamp": ""}]
+
+    merged = existing + new_entries
+    if len(merged) > _MAX_EVIDENCE_ENTRIES:
+        merged = merged[-_MAX_EVIDENCE_ENTRIES:]
+
+    return json.dumps(merged, ensure_ascii=False)
+
+
+@dataclass
+class _ItemEntry:
+    """A single analysis item extracted from the Gemini response, ready for embedding
+    and ingestion.  category is the plural array key (e.g. "personalities"),
+    content_key is the singular dict key (e.g. "personality")."""
+    category: str
+    index: int
+    item: dict
+
+    @property
+    def content_key(self) -> str:
+        return self.category.rstrip("s")
+
+    @property
+    def content_text(self) -> str:
+        return self.item.get(self.content_key, "").strip()
+
+    @property
+    def confidence(self) -> int:
+        return self.item.get("confidence", 0)
+
+    @property
+    def evidence(self) -> str:
+        return self.item.get("evidence", "")
+
+    @property
+    def lifespan(self) -> int:
+        return self.item.get("lifespan", 0)
+
+
+def _build_item_record(entry: _ItemEntry, event_id: int, timestamp: str, user_id: str) -> dict:
+    """Build a ChromaDB-ready item record from an _ItemEntry."""
     return {
-        "id": f"{event_id}_{item_type}_{index}",
+        "id": f"{entry.category}_{entry.index}_{uuid.uuid4().hex[:8]}",
         "vector": None,
+        "category": entry.category,
+        "index": entry.index,
         "metadata": {
-            "type": content_key,
-            "content": f"{content_key}: {content}",
+            "type": entry.content_key,
+            "content": f"{entry.content_key}: {entry.content_text}",
             "timestamp": timestamp,
             "user_id": user_id,
             "user_event_id": str(event_id),
-            "confidence": confidence,
-            "evidence": evidence,
+            "confidence": entry.confidence,
+            "evidence": entry.evidence,
+            "lifespan": entry.lifespan,
         },
     }
 
@@ -131,49 +196,43 @@ async def process_pending_observations(user_id: str, prefs: dict[str, str]) -> d
         summary = analysis.get("summary", "")
         logger.info("Generated Summary: {}", summary[:120])
 
-        analysis_json = json.dumps(analysis, ensure_ascii=False)
-
         categories = [
             "events", "personalities", "skills", "interests",
             "preferences", "ownerships", "relationships", "weaknesses", "goals",
         ]
-        all_items = []
+
+        analysis_ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        for cat in categories:
+            for item in analysis.get(cat, []):
+                evidence_text = item.get("evidence", "")
+                if evidence_text and not evidence_text.startswith("["):
+                    item["evidence"] = _wrap_evidence(evidence_text, analysis_ts)
+
+        entries: list[_ItemEntry] = []
         for cat in categories:
             items = analysis.get(cat, [])
-            if not items:
-                continue
             for i, item in enumerate(items):
-                content_val = item.get(cat.rstrip("s"), "").strip()
-                if item.get("confidence", 0) >= _CONFIDENCE_THRESHOLD and content_val:
-                    all_items.append((cat, item, i))
+                entry = _ItemEntry(category=cat, index=i, item=item)
+                if entry.confidence >= _CONFIDENCE_THRESHOLD and entry.content_text:
+                    entries.append(entry)
 
         logger.info("Extracted {} items across {} categories",
-                    len(all_items), len(set(c[0] for c in all_items)))
+                    len(entries), len({e.category for e in entries}))
 
-        embed_task = asyncio.wait_for(
-            client.aio.models.embed_content(
-                model='gemini-embedding-2',
-                contents=summary,
-            ), timeout=30
-        )
-
-        item_texts = [item[1].get(item[0].rstrip("s"), "").strip()
-                      for item in all_items] if all_items else []
+        item_texts = [e.content_text for e in entries]
         if item_texts:
-            items_embed_task = asyncio.wait_for(
-                client.aio.models.embed_content(
-                    model='gemini-embedding-2',
-                    contents=item_texts,
-                ), timeout=60
-            )
-            summary_embed, items_embed = await asyncio.gather(
-                embed_task, items_embed_task
-            )
+            items_embed_tasks = [
+                asyncio.wait_for(
+                    client.aio.models.embed_content(
+                        model='gemini-embedding-2',
+                        contents=text,
+                    ), timeout=30
+                )
+                for text in item_texts
+            ]
+            items_embeds = await asyncio.gather(*items_embed_tasks)
         else:
-            summary_embed = await embed_task
-            items_embed = None
-
-        summary_embedding = summary_embed.embeddings[0].values if summary_embed.embeddings else None
+            items_embeds = []
 
         timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         raw_transcripts = str([os.path.basename(p) for p in image_paths])
@@ -181,20 +240,76 @@ async def process_pending_observations(user_id: str, prefs: dict[str, str]) -> d
         await database.app.mark_observations_processed(image_paths)
 
         item_records = []
-        if items_embed and items_embed.embeddings:
-            for idx, ((cat, item, i), embedding) in enumerate(
-                zip(all_items, items_embed.embeddings)
-            ):
-                rec = _build_item(0, timestamp, user_id, cat, item, i)
-                rec["vector"] = embedding.values
+        for entry, embed_resp in zip(entries, items_embeds):
+            if embed_resp and embed_resp.embeddings:
+                rec = _build_item_record(entry, 0, timestamp, user_id)
+                rec["vector"] = embed_resp.embeddings[0].values
                 item_records.append(rec)
+
+        # Merge similar propositions into existing entries, skip duplicates.
+        # Also update analysis dict so the JSON saved to SQLite reflects merged state.
+        merged_count = 0
+        deduped_records = []
+        for rec in item_records:
+            meta = rec["metadata"]
+            if meta["type"] == "event":
+                deduped_records.append(rec)
+                continue
+            existing, sim, candidates = await database.vector.find_similar(
+                rec["vector"], meta["type"], user_id, _MERGE_THRESHOLD
+            )
+            target = meta.get("content", "")
+
+            lines = [f"[{meta['type']}] \"{target[:80]}\""]
+            if candidates:
+                lines.append(f"  threshold={_MERGE_THRESHOLD}")
+                for c, s in candidates:
+                    mark = "  ✓" if (existing and c.get("id") == existing.get("id")) else "   "
+                    lines.append(f"  {s:.2f}{mark} \"{c.get('content','')[:70]}\"")
+            if existing:
+                lines.append(f"  → merged into \"{existing.get('content','')[:70]}\"")
+            else:
+                lines.append(f"  → no match (best={sim:.2f})")
+            logger.info("\n".join(lines))
+            if existing:
+                merged_evidence = _merge_evidence(
+                    existing.get("evidence", ""), meta.get("evidence", "")
+                )
+                merged_meta = {
+                    **existing,
+                    "type": meta["type"],
+                    "content": meta["content"] if len(meta.get("content", "")) > len(existing.get("content", "")) else existing.get("content", meta["content"]),
+                    "confidence": max(meta.get("confidence", 0), existing.get("confidence", 0)),
+                    "lifespan": max(meta.get("lifespan", 0), existing.get("lifespan", 0)),
+                    "evidence": merged_evidence,
+                    "timestamp": existing.get("timestamp", meta["timestamp"]),
+                }
+                await database.vector.update_metadata(existing["id"], merged_meta)
+                merged_count += 1
+
+                # Update analysis dict in-place so SQLite JSON gets merged evidence
+                cat = rec.get("category", "")
+                idx = rec.get("index", 0)
+                cat_items = analysis.get(cat, [])
+                if idx < len(cat_items):
+                    cat_items[idx]["evidence"] = merged_evidence
+
+                logger.debug("Merged [{}] sim={:.2f} into {}", meta["type"], sim, existing["id"])
+            else:
+                deduped_records.append(rec)
+
+        if merged_count:
+            logger.info("Merged {} similar propositions into existing entries", merged_count)
+            item_records = deduped_records
+
+        # Re-serialize after merging so SQLite gets the merged evidence arrays
+        analysis_json = json.dumps(analysis, ensure_ascii=False)
 
         return {
             "timestamp": timestamp,
             "summary": summary,
             "analysis_data": analysis_json,
             "raw_transcripts": raw_transcripts,
-            "embedding": summary_embedding,
             "items": item_records,
         }
 

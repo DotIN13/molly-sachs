@@ -1,8 +1,9 @@
-const { app, BrowserWindow, desktopCapturer, ipcMain } = require('electron');
+const { app, BrowserWindow, desktopCapturer, ipcMain, powerMonitor } = require('electron');
 const path = require('path');
 const { spawn } = require('child_process');
 
 let backendProcess = null;
+let mainWindow = null;
 
 function startBackend() {
   const isDev = !!process.env.VITE_DEV_SERVER_URL;
@@ -49,7 +50,7 @@ async function waitForBackend(url, retries = 30, delay = 1000) {
 }
 
 function createWindow() {
-  const mainWindow = new BrowserWindow({
+  mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
     webPreferences: {
@@ -75,6 +76,29 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('get-desktop-sources', async () => {
     return await desktopCapturer.getSources({ types: ['window', 'screen'] });
+  });
+
+  // System idle / lock detection
+  function notifyIdleChanged(idle, reason) {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('system-idle-changed', { idle, reason });
+    }
+  }
+
+  powerMonitor.on('suspend', () => notifyIdleChanged(true, 'suspend'));
+  powerMonitor.on('resume', () => notifyIdleChanged(false, 'resume'));
+  powerMonitor.on('lock-screen', () => notifyIdleChanged(true, 'lock'));
+  powerMonitor.on('unlock-screen', () => notifyIdleChanged(false, 'unlock'));
+
+  ipcMain.handle('get-system-idle-state', () => {
+    try {
+      return {
+        idleTime: powerMonitor.getSystemIdleTime(),
+        idleState: powerMonitor.getSystemIdleState(60),
+      };
+    } catch {
+      return { idleTime: 0, idleState: 'active' };
+    }
   });
 
   app.on('activate', () => {
