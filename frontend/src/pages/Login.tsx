@@ -1,8 +1,9 @@
 import { useState, useRef, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useAuth } from '../contexts/AuthContext'
+import { Settings } from 'lucide-react'
 import { Input } from '@/components/ui/input'
-import { API_URL } from '../config'
+import { API_URL, getApiUrl, setApiUrl } from '../config'
 
 type Stage = 'login' | 'register' | 'verify'
 
@@ -18,6 +19,8 @@ export default function Login() {
   const [code, setCode] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  const [showAdvanced, setShowAdvanced] = useState(false)
+  const [backendUrl, setBackendUrl] = useState(getApiUrl())
 
   useEffect(() => {
     return () => { abortRef.current?.abort() }
@@ -132,6 +135,27 @@ export default function Login() {
           >
             {t('login.backToSignup')}
           </button>
+          <div className="pt-4 border-t border-slate-100">
+            {!showAdvanced ? (
+              <button
+                onClick={() => setShowAdvanced(true)}
+                className="w-full flex items-center justify-center gap-1 text-[10px] text-slate-300 hover:text-slate-500 transition-colors"
+              >
+                <Settings className="w-3 h-3" />
+                {t('settings.backendUrl')}
+              </button>
+            ) : (
+              <div className="flex flex-col gap-1">
+                <Input
+                  type="text"
+                  value={backendUrl}
+                  onChange={(e) => { setBackendUrl(e.target.value); setApiUrl(e.target.value) }}
+                  className="bg-white border-slate-200 text-xs font-mono h-8"
+                  placeholder="http://localhost:8000"
+                />
+              </div>
+            )}
+          </div>
         </div>
       </div>
     )
@@ -198,6 +222,27 @@ export default function Login() {
         >
           {isRegister ? t('login.switchToSignin') : t('login.switchToSignup')}
         </button>
+        <div className="pt-4 border-t border-slate-100">
+          {!showAdvanced ? (
+            <button
+              onClick={() => setShowAdvanced(true)}
+              className="w-full flex items-center justify-center gap-1 text-[10px] text-slate-300 hover:text-slate-500 transition-colors"
+            >
+              <Settings className="w-3 h-3" />
+              {t('settings.backendUrl')}
+            </button>
+          ) : (
+            <div className="flex flex-col gap-1">
+              <Input
+                type="text"
+                value={backendUrl}
+                onChange={(e) => { setBackendUrl(e.target.value); setApiUrl(e.target.value) }}
+                className="bg-white border-slate-200 text-xs font-mono h-8"
+                placeholder="http://localhost:8000"
+              />
+            </div>
+          )}
+        </div>
       </div>
     </div>
   )

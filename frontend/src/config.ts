@@ -1,7 +1,27 @@
 declare const __API_URL__: string
 declare const __PLATFORM__: string
 
-export const API_URL: string = typeof __API_URL__ !== 'undefined' ? __API_URL__ : 'http://localhost:8000'
+const BACKEND_URL_KEY = 'molly_backend_url'
+
+function loadBackendUrl(): string {
+  try {
+    const stored = localStorage.getItem(BACKEND_URL_KEY)
+    if (stored) return stored
+  } catch { /* noop */ }
+  if (typeof __API_URL__ !== 'undefined' && __API_URL__) return __API_URL__
+  return 'http://localhost:8000'
+}
+
+export let API_URL: string = loadBackendUrl()
+
+export function setApiUrl(url: string) {
+  API_URL = url
+  try { localStorage.setItem(BACKEND_URL_KEY, url) } catch { /* noop */ }
+}
+
+export function getApiUrl(): string {
+  return API_URL
+}
 
 export const PLATFORM: string = typeof __PLATFORM__ !== 'undefined' ? __PLATFORM__ : 'electron'
 

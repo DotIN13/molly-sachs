@@ -118,7 +118,9 @@
     "timezone": "时区",
     "timezoneAuto": "自动检测",
     "language": "界面语言",
-    "configured": "已配置"
+    "configured": "已配置",
+    "backendUrl": "后端地址",
+    "backendUrlHint": "修改 API 服务器地址。应用将自动重新连接。"
   },
   "login": {
     "title": "Molly Sachs",

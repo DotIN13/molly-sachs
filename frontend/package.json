@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "npm run dev:electron",
-    "dev:electron": "concurrently -n vite,electron,server \"vite\" \"wait-on tcp:5173 && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron electron/main.cjs\" \"..\\backend\\venv\\Scripts\\python -m uvicorn main:app --app-dir ..\\backend --reload-dir ..\\backend --host 0.0.0.0 --port 8000 --reload\"",
-    "dev:web": "concurrently -n vite,server \"cross-env VITE_APP_PLATFORM=web VITE_API_URL=http://192.168.0.214:8000 vite --host 0.0.0.0\" \"..\\backend\\venv\\Scripts\\python -m uvicorn main:app --app-dir ..\\backend --reload-dir ..\\backend --host 0.0.0.0 --port 8000 --reload\"",
+    "dev:electron": "concurrently -n vite,electron,server \"vite\" \"wait-on tcp:5173 && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron electron/main.cjs\" \"node scripts/start-backend.cjs\"",
+    "dev:web": "concurrently -n vite,server \"cross-env VITE_APP_PLATFORM=web VITE_API_URL=http://192.168.0.214:8000 vite --host 0.0.0.0\" \"node scripts/start-backend.cjs\"",
     "build:electron": "tsc -b && cross-env VITE_APP_PLATFORM=electron vite build",
     "build:web": "tsc -b && cross-env VITE_APP_PLATFORM=web VITE_API_URL=http://localhost:8000 vite build",
     "build": "tsc -b && vite build",

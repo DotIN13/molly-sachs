@@ -365,8 +365,8 @@ export default function SettingsModal({ isOpen, onClose, onSave, settings, onCha
                       >
                         {t('settings.processNow')}
                       </button>
-                    </div>
-                  </div>
+                </div>
+              </div>
                 )}
               </div>
             )}
