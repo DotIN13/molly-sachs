@@ -186,6 +186,7 @@
     "searchPlaceholder": "Search memories...",
     "empty": "No memories stored yet.",
     "emptyHint": "Molly will learn about you as you chat — preferences, interests, skills, and more.",
+    "allTypes": "All types",
     "confidence": "Confidence",
     "lifespan": "Lifespan"
   },

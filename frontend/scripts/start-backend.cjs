@@ -9,7 +9,7 @@ const pythonBin = process.platform === 'win32'
 const proc = spawn(pythonBin, [
     '-m', 'uvicorn', 'main:app',
     '--host', '0.0.0.0',
-    '--port', '8000',
+    '--port', process.env.BACKEND_PORT || '8000',
     '--reload',
 ], {
     cwd: backendDir,

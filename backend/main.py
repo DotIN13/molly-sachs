@@ -24,6 +24,7 @@ from pipecat.transports.smallwebrtc.request_handler import (
 
 from bot import start_pipecat_session, SessionState, PipelineRestartRequested, _embed_query
 from processor import process_pending_observations
+from proactive import generate_proactive_tip
 import database
 import config
 from db.settings import Settings
@@ -497,11 +498,41 @@ async def trigger_processor(
                 await database.vector.add(items)
                 logger.info("Indexed {} analysis items into vector DB", len(items))
 
+            try:
+                analysis = json.loads(result.get("analysis_data", "{}"))
+                current_events = analysis.get("events", [])
+                tip_data = await generate_proactive_tip(
+                    current_user["id"], prefs,
+                    current_events=current_events,
+                    current_timestamp=result.get("timestamp"),
+                )
+                if tip_data:
+                    await database.app.update_event_proactive_tip(
+                        event_id, json.dumps(tip_data, ensure_ascii=False)
+                    )
+                    logger.info("Stored proactive tip for event {}", event_id)
+            except Exception as e:
+                logger.error("Failed to generate proactive tip: {}", e)
+
             logger.info("Saved event: {}", result["summary"][:100] + "...")
             return {"status": "ok", "summary": result["summary"][:100] + "..."}
         return {"status": "ok", "summary": "no new observations to process"}
     except Exception as e:
         logger.error(f"Failed to trigger processor: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ── Proactive Tips ─────────────────────────
+
+@app.post("/api/proactive/tip", summary="Generate a proactive tip matching goals to recent events")
+async def generate_tip(current_user: dict = Depends(auth.get_current_user)):
+    try:
+        prefs = await Settings(current_user["id"]).load()
+        tip_data = await generate_proactive_tip(current_user["id"], prefs)
+        if tip_data:
+            return {"status": "ok", "tip": tip_data}
+        return {"status": "ok", "tip": None, "message": "No goals found to generate tip from."}
+    except Exception as e:
+        logger.error(f"Failed to generate proactive tip: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # ── Conversations ───────────────────────────
@@ -631,4 +662,4 @@ async def shutdown_event():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("BACKEND_PORT", "8000")))

@@ -104,6 +104,7 @@ class AppDB:
             ("messages",      "user_id",          "TEXT REFERENCES users(id)"),
             ("observations",  "user_id",          "TEXT REFERENCES users(id)"),
             ("user_events",   "user_id",          "TEXT REFERENCES users(id)"),
+            ("user_events",   "proactive_tip",     "TEXT"),
         ]
         assert self._conn is not None
         for table, column, col_type in migrations:
@@ -216,6 +217,14 @@ class AppDB:
             )
             await self._conn.commit()
             return cursor.lastrowid
+
+    async def update_event_proactive_tip(self, event_id: int, tip_json: str) -> None:
+        async with self._write_lock:
+            await self._conn.execute(
+                "UPDATE user_events SET proactive_tip = ? WHERE id = ?",
+                (tip_json, event_id),
+            )
+            await self._conn.commit()
 
     async def get_insights(self, user_id: str,
                            limit: int = 15) -> list[dict]:

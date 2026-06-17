@@ -27,6 +27,18 @@ const CATEGORY_COLORS: Record<string, string> = {
   other: 'bg-slate-50 text-slate-600 border-slate-200',
 }
 
+const MEMORY_TYPES = [
+  { value: "event", label: "Events" },
+  { value: "personality", label: "Personality" },
+  { value: "skill", label: "Skills" },
+  { value: "interest", label: "Interests" },
+  { value: "preference", label: "Preferences" },
+  { value: "ownership", label: "Ownership" },
+  { value: "relationship", label: "Relationships" },
+  { value: "weakness", label: "Weaknesses" },
+  { value: "goal", label: "Goals" },
+]
+
 export default function App() {
   const auth = useAuth()
   const { t } = useTranslation()
@@ -79,7 +91,12 @@ export default function App() {
   const [memories, setMemories] = useState<any[]>([])
   const [memoriesTotal, setMemoriesTotal] = useState(0)
   const [memoriesSearch, setMemoriesSearch] = useState("")
+  const [memoriesTypeFilter, setMemoriesTypeFilter] = useState("")
   const [memoriesLoading, setMemoriesLoading] = useState(false)
+  const [memoriesOffset, setMemoriesOffset] = useState(0)
+  const memoriesOffsetRef = useRef(0)
+  const [hasMoreMemories, setHasMoreMemories] = useState(true)
+  const [memoriesLoadingMore, setMemoriesLoadingMore] = useState(false)
   const [lastRefresh, setLastRefresh] = useState(0)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [mobileTabOpen, setMobileTabOpen] = useState(false)
@@ -87,6 +104,7 @@ export default function App() {
   const audioBars = useAudioVisualizer(voiceMode, 5)
 
   const scrollRef = useRef<HTMLDivElement>(null)
+  const memoriesSentinelRef = useRef<HTMLDivElement>(null)
   const refreshConversationsRef = useRef<() => void>(() => { })
   const appliedSettingsRef = useRef<Record<string, any>>({})
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -503,23 +521,41 @@ export default function App() {
     }
   }, [auth.isAuthenticated, auth.accessToken, auth.authFetch]);
 
-  const fetchMemories = useCallback(async (search?: string) => {
-    setMemoriesLoading(true)
+  const fetchMemories = useCallback(async (search?: string, append = false) => {
+    const offset = append ? memoriesOffsetRef.current : 0
+    if (!append) {
+      setMemoriesLoading(true)
+      setMemoriesOffset(0)
+      memoriesOffsetRef.current = 0
+    } else {
+      setMemoriesLoadingMore(true)
+    }
     try {
       const params = new URLSearchParams({ limit: "50" })
+      params.set("offset", String(offset))
       if (search) params.set("q", search)
+      if (memoriesTypeFilter) params.set("type", memoriesTypeFilter)
       const res = await auth.authFetch(`${API_URL}/api/memories?${params}`)
       if (res.ok) {
         const data = await res.json()
-        setMemories(data.items || [])
+        if (append) {
+          setMemories(prev => [...prev, ...(data.items || [])])
+        } else {
+          setMemories(data.items || [])
+        }
         setMemoriesTotal(data.total || 0)
+        const nextOffset = offset + (data.items?.length || 0)
+        setMemoriesOffset(nextOffset)
+        memoriesOffsetRef.current = nextOffset
+        setHasMoreMemories(nextOffset < (data.total || 0))
       }
     } catch (err) {
       console.error("Failed to fetch memories:", err)
     } finally {
       setMemoriesLoading(false)
+      setMemoriesLoadingMore(false)
     }
-  }, [auth.isAuthenticated, auth.accessToken, auth.authFetch])
+  }, [auth.authFetch, memoriesTypeFilter])
 
   useEffect(() => {
     if (backendStatus === 'connected' && activeTab !== 'chat') {
@@ -530,6 +566,27 @@ export default function App() {
       }
     }
   }, [activeTab, backendStatus, fetchObservations, fetchMemories]);
+
+  useEffect(() => {
+    if (activeTab === 'memories' && backendStatus === 'connected') {
+      fetchMemories()
+    }
+  }, [memoriesTypeFilter])
+
+  useEffect(() => {
+    const sentinel = memoriesSentinelRef.current
+    if (!sentinel || !hasMoreMemories || memoriesLoadingMore || activeTab !== 'memories') return
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          fetchMemories(undefined, true)
+        }
+      },
+      { rootMargin: "200px" }
+    )
+    observer.observe(sentinel)
+    return () => observer.disconnect()
+  }, [hasMoreMemories, memoriesLoadingMore, activeTab, fetchMemories])
 
   const handleSettingsChange = (key: keyof typeof settingsData, value: any) => {
     const setters: Record<keyof typeof settingsData, any> = {
@@ -786,233 +843,274 @@ export default function App() {
 
         {/* Screen Tab */}
         <div className={`overflow-y-auto flex-1 min-h-0 px-3 sm:px-6 md:px-10 py-4 sm:py-6 bg-slate-50/40 ${activeTab === 'screen' ? '' : 'hidden'}`}>
-            <div className="max-w-6xl mx-auto w-full animate-in fade-in duration-300">
-              <div className="flex justify-between items-center mb-6">
-                <div>
-                  <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider">{t('screen.title')}</h3>
-                  <p className="text-[10px] text-slate-400 mt-0.5">{t('screen.desc')}</p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => fetchObservations('screen', true)}
-                    className="text-[10px] font-semibold text-slate-500 hover:text-slate-800 bg-white border border-slate-200 px-3 py-1.5 rounded-full shadow-sm hover:shadow transition-all flex items-center gap-1.5"
-                  >
-                    <RefreshCw className="w-3 h-3" /> {t('app.refresh')}
-                  </button>
-                </div>
+          <div className="max-w-6xl mx-auto w-full animate-in fade-in duration-300">
+            <div className="flex justify-between items-center mb-6">
+              <div>
+                <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider">{t('screen.title')}</h3>
+                <p className="text-[10px] text-slate-400 mt-0.5">{t('screen.desc')}</p>
               </div>
-
-              {screenCaptures.length === 0 ? (
-                <EmptyState
-                  icon={<Clock className="w-6 h-6 text-slate-400" />}
-                  title={t('screen.empty')}
-                  hint={t('screen.emptyHint')}
-                />
-              ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
-                  {screenCaptures.map(cap => (
-                    <ObservationCard
-                      key={cap.id}
-                      id={cap.id}
-                      imagePath={cap.image_path}
-                      timestamp={cap.timestamp}
-                      processed={cap.processed}
-                      sourceLabel={t('screen.source')}
-                      altText={t('screen.alt')}
-                      accessToken={auth.accessToken}
-                      lastRefresh={lastRefresh}
-                    />
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Camera Tab */}
-          <div className={`overflow-y-auto flex-1 min-h-0 px-3 sm:px-6 md:px-10 py-4 sm:py-6 bg-slate-50/40 ${activeTab === 'camera' ? '' : 'hidden'}`}>
-            <div className="max-w-6xl mx-auto w-full animate-in fade-in duration-300">
-              <div className="flex justify-between items-center mb-6">
-                <div>
-                  <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider">{t('camera.title')}</h3>
-                  <p className="text-[10px] text-slate-400 mt-0.5">{t('camera.desc')}</p>
-                </div>
+              <div className="flex items-center gap-2">
                 <button
-                  onClick={() => fetchObservations('camera', true)}
+                  onClick={() => fetchObservations('screen', true)}
                   className="text-[10px] font-semibold text-slate-500 hover:text-slate-800 bg-white border border-slate-200 px-3 py-1.5 rounded-full shadow-sm hover:shadow transition-all flex items-center gap-1.5"
                 >
                   <RefreshCw className="w-3 h-3" /> {t('app.refresh')}
                 </button>
               </div>
-
-              {cameraSnapshots.length === 0 ? (
-                <EmptyState
-                  icon={<Clock className="w-6 h-6 text-slate-400" />}
-                  title={t('camera.empty')}
-                  hint={t('camera.emptyHint')}
-                />
-              ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
-                  {cameraSnapshots.map(cap => (
-                    <ObservationCard
-                      key={cap.id}
-                      id={cap.id}
-                      imagePath={cap.image_path}
-                      timestamp={cap.timestamp}
-                      processed={cap.processed}
-                      sourceLabel={t('camera.label')}
-                      altText={t('camera.alt')}
-                      accessToken={auth.accessToken}
-                      lastRefresh={lastRefresh}
-                    />
-                  ))}
-                </div>
-              )}
             </div>
-          </div>
 
-          {/* Insights Tab */}
-          <div className={`overflow-y-auto flex-1 min-h-0 px-3 sm:px-6 md:px-10 py-4 sm:py-6 bg-slate-50/40 ${activeTab === 'insights' ? '' : 'hidden'}`}>
-            <div className="max-w-3xl mx-auto w-full animate-in fade-in duration-300">
-              <div className="flex justify-between items-center mb-8">
-                <div>
-                  <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider">{t('insights.title')}</h3>
-                  <p className="text-[10px] text-slate-400 mt-0.5">{t('insights.desc')}</p>
-                </div>
-                <button
-                  onClick={() => fetchObservations('insights', true)}
-                  className="text-[10px] font-semibold text-slate-500 hover:text-slate-800 bg-white border border-slate-200 px-3 py-1.5 rounded-full shadow-sm hover:shadow transition-all flex items-center gap-1.5"
-                >
-                  <RefreshCw className="w-3 h-3" /> {t('app.refresh')}
-                </button>
+            {screenCaptures.length === 0 ? (
+              <EmptyState
+                icon={<Clock className="w-6 h-6 text-slate-400" />}
+                title={t('screen.empty')}
+                hint={t('screen.emptyHint')}
+              />
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
+                {screenCaptures.map(cap => (
+                  <ObservationCard
+                    key={cap.id}
+                    id={cap.id}
+                    imagePath={cap.image_path}
+                    timestamp={cap.timestamp}
+                    processed={cap.processed}
+                    sourceLabel={t('screen.source')}
+                    altText={t('screen.alt')}
+                    accessToken={auth.accessToken}
+                    lastRefresh={lastRefresh}
+                  />
+                ))}
               </div>
+            )}
+          </div>
+        </div>
 
-              {geminiInsights.length === 0 ? (
-                <EmptyState
-                  icon={<Bird className="w-6 h-6 text-slate-400" />}
-                  title={t('insights.empty')}
-                  hint={t('insights.emptyHint')}
-                />
-              ) : (
-                <div className="relative border-l-2 border-slate-200/80 ml-2 sm:ml-4 pl-4 sm:pl-8 space-y-6 sm:space-y-8 py-2">
-                  {geminiInsights.map(ins => (
-                    <div key={ins.id} className="relative bg-white rounded-2xl border border-slate-100 p-6 shadow-sm hover:shadow-md transition-all duration-300">
-                      <div className="absolute w-3.5 h-3.5 sm:w-4 sm:h-4 bg-slate-900 rounded-full -left-[26px] sm:-left-[41px] top-4 sm:top-6 border-2 sm:border-4 border-slate-50 flex items-center justify-center shadow-sm" />
+        {/* Camera Tab */}
+        <div className={`overflow-y-auto flex-1 min-h-0 px-3 sm:px-6 md:px-10 py-4 sm:py-6 bg-slate-50/40 ${activeTab === 'camera' ? '' : 'hidden'}`}>
+          <div className="max-w-6xl mx-auto w-full animate-in fade-in duration-300">
+            <div className="flex justify-between items-center mb-6">
+              <div>
+                <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider">{t('camera.title')}</h3>
+                <p className="text-[10px] text-slate-400 mt-0.5">{t('camera.desc')}</p>
+              </div>
+              <button
+                onClick={() => fetchObservations('camera', true)}
+                className="text-[10px] font-semibold text-slate-500 hover:text-slate-800 bg-white border border-slate-200 px-3 py-1.5 rounded-full shadow-sm hover:shadow transition-all flex items-center gap-1.5"
+              >
+                <RefreshCw className="w-3 h-3" /> {t('app.refresh')}
+              </button>
+            </div>
 
-                      <div className="flex flex-wrap justify-between items-center gap-2 pb-3 border-b border-slate-50">
-                        <span className="text-[10px] font-extrabold uppercase tracking-wider bg-slate-900 text-white px-2.5 py-0.5 rounded-md">
-                          {t('insights.reportBadge', { id: ins.id })}
-                        </span>
-                        <span className="text-[10px] font-mono text-slate-400 flex items-center gap-1">
-                          <Clock className="w-3 h-3 text-slate-400" />
-                          {new Date(ins.timestamp).toLocaleString()}
-                        </span>
-                      </div>
+            {cameraSnapshots.length === 0 ? (
+              <EmptyState
+                icon={<Clock className="w-6 h-6 text-slate-400" />}
+                title={t('camera.empty')}
+                hint={t('camera.emptyHint')}
+              />
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
+                {cameraSnapshots.map(cap => (
+                  <ObservationCard
+                    key={cap.id}
+                    id={cap.id}
+                    imagePath={cap.image_path}
+                    timestamp={cap.timestamp}
+                    processed={cap.processed}
+                    sourceLabel={t('camera.label')}
+                    altText={t('camera.alt')}
+                    accessToken={auth.accessToken}
+                    lastRefresh={lastRefresh}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
 
-                      {/* Long-Form Summary */}
-                      <div className="mt-4">
-                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{t('insights.activitySummary')}</span>
-                        <p className="text-xs text-slate-700 leading-relaxed mt-1.5 font-medium whitespace-pre-line">
-                          {ins.activity_summary}
-                        </p>
-                      </div>
+        {/* Insights Tab */}
+        <div className={`overflow-y-auto flex-1 min-h-0 px-3 sm:px-6 md:px-10 py-4 sm:py-6 bg-slate-50/40 ${activeTab === 'insights' ? '' : 'hidden'}`}>
+          <div className="max-w-3xl mx-auto w-full animate-in fade-in duration-300">
+            <div className="flex justify-between items-center mb-8">
+              <div>
+                <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider">{t('insights.title')}</h3>
+                <p className="text-[10px] text-slate-400 mt-0.5">{t('insights.desc')}</p>
+              </div>
+              <button
+                onClick={() => fetchObservations('insights', true)}
+                className="text-[10px] font-semibold text-slate-500 hover:text-slate-800 bg-white border border-slate-200 px-3 py-1.5 rounded-full shadow-sm hover:shadow transition-all flex items-center gap-1.5"
+              >
+                <RefreshCw className="w-3 h-3" /> {t('app.refresh')}
+              </button>
+            </div>
 
-                      {/* Parsed analysis categories */}
-                      {(() => {
-                        let analysis: Record<string, any[]> | null = null
-                        try { if (ins.context) analysis = JSON.parse(ins.context) } catch { }
-                        if (!analysis) return null
+            {geminiInsights.length === 0 ? (
+              <EmptyState
+                icon={<Bird className="w-6 h-6 text-slate-400" />}
+                title={t('insights.empty')}
+                hint={t('insights.emptyHint')}
+              />
+            ) : (
+              <div className="relative border-l-2 border-slate-200/80 ml-2 sm:ml-4 pl-4 sm:pl-8 space-y-6 sm:space-y-8 py-2">
+                {geminiInsights.map(ins => (
+                  <div key={ins.id} className="relative bg-white rounded-2xl border border-slate-100 p-6 shadow-sm hover:shadow-md transition-all duration-300">
+                    <div className="absolute w-3.5 h-3.5 sm:w-4 sm:h-4 bg-slate-900 rounded-full -left-[26px] sm:-left-[41px] top-4 sm:top-6 border-2 sm:border-4 border-slate-50 flex items-center justify-center shadow-sm" />
 
-                        const catConfig: Record<string, { label: string; color: string; bg: string; border: string }> = {
-                          events: { label: t('insights.events'), color: 'text-amber-700', bg: 'bg-amber-50/60', border: 'border-amber-100' },
-                          personalities: { label: t('insights.personalities'), color: 'text-rose-700', bg: 'bg-rose-50/60', border: 'border-rose-100' },
-                          skills: { label: t('insights.skills'), color: 'text-emerald-700', bg: 'bg-emerald-50/60', border: 'border-emerald-100' },
-                          interests: { label: t('insights.interests'), color: 'text-purple-700', bg: 'bg-purple-50/60', border: 'border-purple-100' },
-                          preferences: { label: t('insights.preferences'), color: 'text-blue-700', bg: 'bg-blue-50/60', border: 'border-blue-100' },
-                          ownerships: { label: t('insights.ownerships'), color: 'text-slate-700', bg: 'bg-slate-50/60', border: 'border-slate-100' },
-                          relationships: { label: t('insights.relationships'), color: 'text-teal-700', bg: 'bg-teal-50/60', border: 'border-teal-100' },
-                          weaknesses: { label: t('insights.weaknesses'), color: 'text-red-700', bg: 'bg-red-50/60', border: 'border-red-100' },
-                          goals: { label: t('insights.goals'), color: 'text-indigo-700', bg: 'bg-indigo-50/60', border: 'border-indigo-100' },
-                        }
-
-                        return (
-                          <div className="mt-5 space-y-4">
-                            {Object.entries(catConfig).map(([cat, cfg]) => {
-                              const items = analysis?.[cat]
-                              if (!items || items.length === 0) return null
-                              return (
-                                <div key={cat} className={`rounded-xl border ${cfg.border} ${cfg.bg} p-4`}>
-                                  <span className={`text-[10px] font-extrabold uppercase tracking-wider ${cfg.color}`}>
-                                    {cfg.label} ({items.length})
-                                  </span>
-                                  <div className="mt-2 space-y-2">
-                                    {items.map((item: any, i: number) => (
-                                      <div key={i} className="flex items-start gap-2.5">
-                                        <span className="flex-shrink-0 w-5 h-5 rounded-full bg-white border border-slate-200 text-[8px] font-bold text-slate-500 flex items-center justify-center mt-0.5">
-                                          {item.confidence ?? '?'}
-                                        </span>
-                                        <div className="min-w-0">
-                                          <p className="text-[11px] text-slate-800 font-semibold leading-snug">
-                                            {item[Object.keys(item).find(k => k !== 'confidence' && k !== 'evidence' && k !== 'lifespan') || 0]}
-                                          </p>
-                                          {(() => {
-                                            if (!item.evidence) return null
-                                            let displayText = ''
-                                            let evidenceCount = 0
-                                            try {
-                                              const evidenceList = JSON.parse(item.evidence)
-                                              if (Array.isArray(evidenceList) && evidenceList.length > 0) {
-                                                evidenceCount = evidenceList.length
-                                                displayText = evidenceList[evidenceList.length - 1].text || ''
-                                              }
-                                            } catch {
-                                              displayText = item.evidence
-                                            }
-                                            if (!displayText) return null
-                                            return (
-                                              <p className="text-[10px] text-slate-400 italic mt-0.5 leading-snug">
-                                                {evidenceCount > 1
-                                                  ? t('insights.evidenceCount', { count: evidenceCount }) + ': '
-                                                  : t('insights.evidence') + ': '
-                                                }
-                                                {displayText}
-                                              </p>
-                                            )
-                                          })()}
-                                        </div>
-                                      </div>
-                                    ))}
-                                  </div>
-                                </div>
-                              )
-                            })}
-                          </div>
-                        )
-                      })()}
-
-                      {/* Fallback: old plain-text tip */}
-                      {(() => {
-                        try { JSON.parse(ins.context || ''); return null } catch { }
-                        if (!ins.context) return null
-                        return (
-                          <div className="mt-4 bg-indigo-50/50 border border-indigo-100/60 rounded-xl p-3.5 flex items-start gap-3">
-                            <div className="w-5 h-5 rounded-full bg-indigo-500 text-white flex items-center justify-center flex-shrink-0 text-[10px] font-bold">
-                              💡
-                            </div>
-                            <div>
-                              <span className="text-[10px] font-extrabold text-indigo-600 uppercase tracking-wider block">{t('insights.suggestion')}</span>
-                              <span className="text-xs text-indigo-800 font-semibold italic mt-0.5 block">
-                                "{ins.context}"
-                              </span>
-                            </div>
-                          </div>
-                        )
-                      })()}
+                    <div className="flex flex-wrap justify-between items-center gap-2 pb-3 border-b border-slate-50">
+                      <span className="text-[10px] font-extrabold uppercase tracking-wider bg-slate-900 text-white px-2.5 py-0.5 rounded-md">
+                        {t('insights.reportBadge', { id: ins.id })}
+                      </span>
+                      <span className="text-[10px] font-mono text-slate-400 flex items-center gap-1">
+                        <Clock className="w-3 h-3 text-slate-400" />
+                        {new Date(ins.timestamp).toLocaleString()}
+                      </span>
                     </div>
-                  ))}
-                </div>
-              )}
-            </div>
+
+                    {/* Long-Form Summary */}
+                    <div className="mt-4">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{t('insights.activitySummary')}</span>
+                      <p className="text-xs text-slate-700 leading-relaxed mt-1.5 font-medium whitespace-pre-line">
+                        {ins.activity_summary}
+                      </p>
+                    </div>
+
+                    {/* Parsed analysis categories */}
+                    {(() => {
+                      let analysis: Record<string, any[]> | null = null
+                      try { if (ins.context) analysis = JSON.parse(ins.context) } catch { }
+                      if (!analysis) return null
+
+                      const catConfig: Record<string, { label: string; color: string; bg: string; border: string }> = {
+                        events: { label: t('insights.events'), color: 'text-amber-700', bg: 'bg-amber-50/60', border: 'border-amber-100' },
+                        personalities: { label: t('insights.personalities'), color: 'text-rose-700', bg: 'bg-rose-50/60', border: 'border-rose-100' },
+                        skills: { label: t('insights.skills'), color: 'text-emerald-700', bg: 'bg-emerald-50/60', border: 'border-emerald-100' },
+                        interests: { label: t('insights.interests'), color: 'text-purple-700', bg: 'bg-purple-50/60', border: 'border-purple-100' },
+                        preferences: { label: t('insights.preferences'), color: 'text-blue-700', bg: 'bg-blue-50/60', border: 'border-blue-100' },
+                        ownerships: { label: t('insights.ownerships'), color: 'text-slate-700', bg: 'bg-slate-50/60', border: 'border-slate-100' },
+                        relationships: { label: t('insights.relationships'), color: 'text-teal-700', bg: 'bg-teal-50/60', border: 'border-teal-100' },
+                        weaknesses: { label: t('insights.weaknesses'), color: 'text-red-700', bg: 'bg-red-50/60', border: 'border-red-100' },
+                        goals: { label: t('insights.goals'), color: 'text-indigo-700', bg: 'bg-indigo-50/60', border: 'border-indigo-100' },
+                      }
+
+                      return (
+                        <div className="mt-5 space-y-4">
+                          {Object.entries(catConfig).map(([cat, cfg]) => {
+                            const items = analysis?.[cat]
+                            if (!items || items.length === 0) return null
+                            return (
+                              <div key={cat} className={`rounded-xl border ${cfg.border} ${cfg.bg} p-4`}>
+                                <span className={`text-[10px] font-extrabold uppercase tracking-wider ${cfg.color}`}>
+                                  {cfg.label} ({items.length})
+                                </span>
+                                <div className="mt-2 space-y-2">
+                                  {items.map((item: any, i: number) => (
+                                    <div key={i} className="flex items-start gap-2.5">
+                                      <span className="flex-shrink-0 w-5 h-5 rounded-full bg-white border border-slate-200 text-[8px] font-bold text-slate-500 flex items-center justify-center mt-0.5">
+                                        {item.confidence ?? '?'}
+                                      </span>
+                                      <div className="min-w-0">
+                                        <p className="text-[11px] text-slate-800 font-semibold leading-snug">
+                                          {item[Object.keys(item).find(k => k !== 'confidence' && k !== 'evidence' && k !== 'lifespan') || 0]}
+                                        </p>
+                                        {(() => {
+                                          if (!item.evidence) return null
+                                          let displayText = ''
+                                          let evidenceCount = 0
+                                          try {
+                                            const evidenceList = JSON.parse(item.evidence)
+                                            if (Array.isArray(evidenceList) && evidenceList.length > 0) {
+                                              evidenceCount = evidenceList.length
+                                              displayText = evidenceList[evidenceList.length - 1].text || ''
+                                            }
+                                          } catch {
+                                            displayText = item.evidence
+                                          }
+                                          if (!displayText) return null
+                                          return (
+                                            <p className="text-[10px] text-slate-400 italic mt-0.5 leading-snug">
+                                              {evidenceCount > 1
+                                                ? t('insights.evidenceCount', { count: evidenceCount }) + ': '
+                                                : t('insights.evidence') + ': '
+                                              }
+                                              {displayText}
+                                            </p>
+                                          )
+                                        })()}
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      )
+                    })()}
+
+                    {/* Proactive Tip Section */}
+                    {(() => {
+                      let tipData: any = null
+                      try {
+                        if (ins.proactive_tip) {
+                          tipData = JSON.parse(ins.proactive_tip)
+                        }
+                      } catch { }
+                      if (!tipData) return null
+                      return (
+                        <div className="mt-5 bg-gradient-to-br from-indigo-50 to-purple-50 border border-indigo-200/60 rounded-xl p-4">
+                          <div className="flex items-center gap-2 mb-3">
+                            <span className="text-lg">💡</span>
+                            <span className="text-[10px] font-extrabold text-indigo-600 uppercase tracking-wider">
+                              {t('insights.suggestion')}
+                            </span>
+                          </div>
+                          {tipData.intent_guess && (
+                            <p className="text-xs text-indigo-500 italic mb-3">
+                              {tipData.intent_guess}
+                            </p>
+                          )}
+                          {tipData.reasoning && (
+                            <p className="text-[11px] text-slate-500 mb-3 leading-relaxed">
+                              {tipData.reasoning}
+                            </p>
+                          )}
+                          <div className="bg-white/80 rounded-lg p-3 border border-indigo-100/60">
+                            <Markdown content={tipData.tip} />
+                          </div>
+                          {tipData.next_actions && tipData.next_actions.length > 0 && (
+                            <div className="mt-3">
+                              <span className="text-[10px] font-bold text-indigo-500 uppercase tracking-wider">Next Actions</span>
+                              <ul className="mt-1.5 space-y-1">
+                                {tipData.next_actions.map((action: string, i: number) => (
+                                  <li key={i} className="text-[11px] text-slate-700 flex items-start gap-2">
+                                    <span className="text-indigo-400 mt-0.5">→</span>
+                                    {action}
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                          {tipData.urls && tipData.urls.length > 0 && (
+                            <div className="mt-3">
+                              <span className="text-[10px] font-bold text-indigo-500 uppercase tracking-wider">Relevant Links</span>
+                              <div className="mt-1.5 space-y-1">
+                                {tipData.urls.map((url: string, i: number) => (
+                                  <a key={i} href={url} target="_blank" rel="noopener noreferrer"
+                                    className="block text-[11px] text-blue-600 underline underline-offset-2 truncate">
+                                    {url}
+                                  </a>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })()}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
+        </div>
 
         {/* Memories Tab */}
         <div className={`overflow-y-auto flex-1 min-h-0 bg-slate-50/40 ${activeTab === 'memories' ? '' : 'hidden'}`}>
@@ -1025,11 +1123,21 @@ export default function App() {
                   {memoriesTotal > 0 ? `${t('memories.total')}: ${memoriesTotal}` : t('memories.desc')}
                 </p>
               </div>
+              <select
+                value={memoriesTypeFilter}
+                onChange={e => setMemoriesTypeFilter(e.target.value)}
+                className="text-[11px] bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-slate-600 cursor-pointer focus:outline-none focus:ring-2 focus:ring-slate-300/50"
+              >
+                <option value="">{t('memories.allTypes')}</option>
+                {MEMORY_TYPES.map(t => (
+                  <option key={t.value} value={t.value}>{t.label}</option>
+                ))}
+              </select>
             </div>
           </div>
 
           {/* Search bar — sticky, full width */}
-          <div className="sticky top-2 z-10 px-3 sm:px-6 md:px-10 pb-3 pt-2 bg-slate-50/40 backdrop-blur-sm">
+          <div className="sticky top-0 z-10 px-3 sm:px-6 md:px-10 pb-3 pt-2 bg-slate-50/40 backdrop-blur-sm">
             <div className="max-w-3xl mx-auto">
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
@@ -1101,6 +1209,12 @@ export default function App() {
                     </div>
                   )
                 })}
+                <div ref={memoriesSentinelRef} className="h-1" />
+                {memoriesLoadingMore && (
+                  <div className="flex items-center justify-center py-4">
+                    <RefreshCw className="w-4 h-4 text-slate-400 animate-spin" />
+                  </div>
+                )}
               </div>
             )}
           </div>

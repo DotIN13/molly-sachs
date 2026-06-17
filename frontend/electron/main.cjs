@@ -17,13 +17,13 @@ function startBackend() {
   backendProcess = spawn(venvPython, [
     '-m', 'uvicorn', 'main:app',
     '--host', '0.0.0.0',
-    '--port', '8000',
+    '--port', process.env.BACKEND_PORT || '8000',
   ], {
     cwd: backendDir,
     stdio: 'pipe',
   });
 
-  console.log('[backend] starting on port 8000...');
+  console.log(`[backend] starting on port ${process.env.BACKEND_PORT || '8000'}...`);
 }
 
 function stopBackend() {

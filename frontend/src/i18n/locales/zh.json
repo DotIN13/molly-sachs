@@ -184,6 +184,7 @@
     "searchPlaceholder": "搜索记忆...",
     "empty": "暂无存储的记忆。",
     "emptyHint": "Molly 会在聊天中了解你——偏好、兴趣、技能等。",
+    "allTypes": "全部类型",
     "confidence": "置信度",
     "lifespan": "有效期"
   },

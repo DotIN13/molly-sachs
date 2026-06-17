@@ -1,0 +1,33 @@
+{
+  "type": "object",
+  "properties": {
+    "tip": {
+      "type": "string",
+      "description": "The main proactive tip, written in markdown. Include headings, URLs, lists, and code fences as needed."
+    },
+    "reasoning": {
+      "type": "string",
+      "description": "1-2 sentences explaining why this tip was chosen, referencing the specific goal and events that prompted it."
+    },
+    "intent_guess": {
+      "type": "string",
+      "description": "What the model thinks the user wants to do next right now, based on goals and events."
+    },
+    "urls": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "Relevant URLs to documentation, tools, or resources."
+    },
+    "next_actions": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "2-4 concrete next actions the user can take immediately."
+    },
+    "code_snippet": {
+      "type": "string",
+      "description": "A runnable code snippet in a fenced markdown code block, or empty string if not applicable."
+    }
+  },
+  "required": ["tip", "reasoning", "intent_guess", "urls", "next_actions", "code_snippet"],
+  "additionalProperties": false
+}
