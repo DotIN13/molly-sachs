@@ -8,4 +8,5 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('system-idle-changed', handler);
     return () => ipcRenderer.removeListener('system-idle-changed', handler);
   },
+  showNotification: (opts) => ipcRenderer.invoke('show-notification', opts),
 });

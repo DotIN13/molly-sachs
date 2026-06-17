@@ -66,7 +66,7 @@ export default function useWebRTC(opts: UseWebRTCOptions): UseWebRTCReturn {
         // response complete
       } else if (data.type === 'messages') {
         if (data.messages && data.messages.length > 0) {
-          setMessages(data.messages)
+          setMessages(prev => prev.length > 0 ? prev : data.messages)
         } else {
           setMessages([{ role: 'assistant', content: i18n.t('app.helloDefault') }])
         }

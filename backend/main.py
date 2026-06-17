@@ -153,6 +153,10 @@ class ConversationCreateReq(BaseModel):
     id: str | None = None
     title: str | None = None
 
+class MessageAddReq(BaseModel):
+    role: str
+    content: str
+
 
 # ── Health ──────────────────────────────────
 
@@ -523,6 +527,19 @@ async def trigger_processor(
 
 # ── Proactive Tips ─────────────────────────
 
+@app.get("/api/proactive/tips", summary="List all proactive tips with pagination")
+async def get_tips(limit: int = 50, offset: int = 0,
+                   current_user: dict = Depends(auth.get_current_user)):
+    try:
+        items, total = await database.app.get_proactive_tips(
+            current_user["id"], limit, offset
+        )
+        return {"items": items, "total": total}
+    except Exception as e:
+        logger.error(f"Failed to retrieve proactive tips: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/api/proactive/tip", summary="Generate a proactive tip matching goals to recent events")
 async def generate_tip(current_user: dict = Depends(auth.get_current_user)):
     try:
@@ -553,6 +570,21 @@ async def api_get_conversations(
     current_user: dict = Depends(auth.get_current_user)
 ):
     return await database.app.get_conversations(current_user["id"])
+
+
+@app.post("/api/conversations/{conversation_id}/messages",
+          summary="Add a message to a conversation via REST")
+async def api_add_message(
+    conversation_id: str,
+    req: MessageAddReq,
+    current_user: dict = Depends(auth.get_current_user),
+):
+    if not await database.app.verify_conversation_owner(conversation_id, current_user["id"]):
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    await database.app.add_message(
+        conversation_id, req.role, req.content, current_user["id"]
+    )
+    return {"status": "ok"}
 
 
 @app.get("/api/conversations/{conversation_id}/messages",

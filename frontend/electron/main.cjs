@@ -1,4 +1,4 @@
-const { app, BrowserWindow, desktopCapturer, ipcMain, powerMonitor } = require('electron');
+const { app, BrowserWindow, desktopCapturer, ipcMain, powerMonitor, Notification } = require('electron');
 const path = require('path');
 const { spawn } = require('child_process');
 
@@ -98,6 +98,12 @@ app.whenReady().then(async () => {
       };
     } catch {
       return { idleTime: 0, idleState: 'active' };
+    }
+  });
+
+  ipcMain.handle('show-notification', (_event, { title, body }) => {
+    if (Notification.isSupported()) {
+      new Notification({ title, body }).show();
     }
   });
 

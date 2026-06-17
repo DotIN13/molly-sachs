@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Settings, PenSquare, Search, FileText, Clock, Bird, Mic, Volume2, VolumeX, RefreshCw, LogOut, Menu, X, ChevronDown, ArrowUp } from 'lucide-react'
+import { Settings, PenSquare, Search, FileText, Clock, Bird, Mic, Volume2, VolumeX, RefreshCw, LogOut, Menu, X, ChevronDown, ArrowUp, Lightbulb, MessageCircle } from 'lucide-react'
 import { updateObserverConfig, stopObservers } from './observers'
 import { API_URL, isElectron } from './config'
 import useAudioVisualizer from './hooks/useAudioVisualizer'
@@ -84,7 +84,7 @@ export default function App() {
   const [timezone, setTimezone] = useState('')
 
   // Dashboard & Navigation States
-  const [activeTab, setActiveTab] = useState<'chat' | 'screen' | 'camera' | 'insights' | 'memories'>('chat')
+  const [activeTab, setActiveTab] = useState<'chat' | 'screen' | 'camera' | 'insights' | 'memories' | 'tips'>('chat')
   const [screenCaptures, setScreenCaptures] = useState<any[]>([])
   const [cameraSnapshots, setCameraSnapshots] = useState<any[]>([])
   const [geminiInsights, setGeminiInsights] = useState<any[]>([])
@@ -98,6 +98,10 @@ export default function App() {
   const [hasMoreMemories, setHasMoreMemories] = useState(true)
   const [memoriesLoadingMore, setMemoriesLoadingMore] = useState(false)
   const [lastRefresh, setLastRefresh] = useState(0)
+  const [proactiveTips, setProactiveTips] = useState<any[]>([])
+  const [tipsLoading, setTipsLoading] = useState(false)
+  const lastTipIdRef = useRef<number>(0)
+  const [tipContext, setTipContext] = useState<string | null>(null)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [mobileTabOpen, setMobileTabOpen] = useState(false)
 
@@ -295,10 +299,15 @@ export default function App() {
       auth.authFetch(`${API_URL}/api/processor/trigger`, { method: 'POST' })
         .catch(() => { });
     };
+    const checkNewTips = () => {
+      fetchTips(true);
+    };
 
     triggerProcessor();
+    setTimeout(checkNewTips, 15000);
     const timer = setInterval(triggerProcessor, intervalMs);
-    return () => clearInterval(timer);
+    const tipTimer = setInterval(checkNewTips, intervalMs);
+    return () => { clearInterval(timer); clearInterval(tipTimer); };
   }, [backendStatus, auth.isAuthenticated, observerProcessInterval, observerScreenActive, observerCameraActive, isSystemIdle]);
 
   useEffect(() => {
@@ -333,6 +342,7 @@ export default function App() {
       }
       if (pcRef.current) disconnectWebRTC();
       setActiveConversationId(id);
+      setTipContext(null);
 
       const res = await auth.authFetch(`${API_URL}/api/conversations/${id}/messages`);
       const data = await res.json();
@@ -366,6 +376,7 @@ export default function App() {
       setMessages([
         { role: 'assistant', content: t('app.helloDefault') }
       ]);
+      setTipContext(null);
     } catch {
       console.error("Failed to create new conversation");
     }
@@ -521,6 +532,76 @@ export default function App() {
     }
   }, [auth.isAuthenticated, auth.accessToken, auth.authFetch]);
 
+  const fetchTips = useCallback(async (checkNotifications = false) => {
+    setTipsLoading(true);
+    try {
+      const res = await auth.authFetch(`${API_URL}/api/proactive/tips?limit=50`);
+      if (res.ok) {
+        const data = await res.json();
+        const tips = data.items || [];
+        setProactiveTips(tips);
+
+        if (checkNotifications && tips.length > 0) {
+          const latest = tips[0];
+          if (latest.id > lastTipIdRef.current && lastTipIdRef.current > 0) {
+            let tipData: any = null;
+            try { tipData = JSON.parse(latest.proactive_tip || ''); } catch {}
+            const body = tipData?.intent_guess || tipData?.reasoning || 'Molly has a new suggestion for you.';
+            if (typeof window !== 'undefined' && (window as any).electronAPI?.showNotification) {
+              (window as any).electronAPI.showNotification({ title: 'Molly\'s Tip', body });
+            }
+          }
+          lastTipIdRef.current = Math.max(lastTipIdRef.current, ...tips.map((t: any) => t.id));
+        } else if (tips.length > 0) {
+          lastTipIdRef.current = Math.max(lastTipIdRef.current, ...tips.map((t: any) => t.id));
+        }
+      }
+    } catch (err) {
+      console.error("Failed to fetch tips:", err);
+    } finally {
+      setTipsLoading(false);
+    }
+  }, [auth.isAuthenticated, auth.accessToken, auth.authFetch]);
+
+  const handleChatWithTip = useCallback(async (tip: any) => {
+    try {
+      let tipData: any = null;
+      try { tipData = JSON.parse(tip.proactive_tip || ''); } catch {}
+      const tipContent = tipData?.tip || tipData?.intent_guess || '';
+      const userQuestion = 'What do you think? How can I act on this?';
+
+      const createRes = await auth.authFetch(`${API_URL}/api/conversations`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: tipContent.slice(0, 40) }),
+      });
+      if (!createRes.ok) return;
+      const conv = await createRes.json();
+
+      await auth.authFetch(`${API_URL}/api/conversations/${conv.id}/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role: 'assistant', content: tipContent }),
+      });
+
+      setTipContext(tipContent);
+      setMessages([{ role: 'user', content: userQuestion }]);
+
+      if (dcRef.current && dcRef.current.readyState === 'open') {
+        setActiveConversationId(conv.id);
+        dcRef.current.send(JSON.stringify({ type: 'switch_conversation', conversation_id: conv.id }));
+        setTimeout(() => sendChatMessage(userQuestion), 200);
+      } else {
+        setActiveConversationId(conv.id);
+      }
+
+      refreshConversations();
+      setActiveTab('chat');
+    } catch (err) {
+      console.error("Failed to chat about tip:", err);
+    }
+  }, [auth.authFetch, dcRef, sendChatMessage, refreshConversations]);
+
   const fetchMemories = useCallback(async (search?: string, append = false) => {
     const offset = append ? memoriesOffsetRef.current : 0
     if (!append) {
@@ -561,11 +642,13 @@ export default function App() {
     if (backendStatus === 'connected' && activeTab !== 'chat') {
       if (activeTab === 'memories') {
         fetchMemories()
+      } else if (activeTab === 'tips') {
+        fetchTips()
       } else {
         fetchObservations(activeTab)
       }
     }
-  }, [activeTab, backendStatus, fetchObservations, fetchMemories]);
+  }, [activeTab, backendStatus, fetchObservations, fetchMemories, fetchTips]);
 
   useEffect(() => {
     if (activeTab === 'memories' && backendStatus === 'connected') {
@@ -756,7 +839,7 @@ export default function App() {
               <>
                 <div className="fixed inset-0 z-40" onClick={() => setMobileTabOpen(false)} />
                 <div className="absolute top-full left-0 mt-1 z-50 bg-white border border-slate-200 rounded-xl shadow-lg overflow-hidden min-w-[140px]">
-                  {(['chat', 'screen', 'camera', 'insights', 'memories'] as const).map(tab => (
+                  {(['chat', 'screen', 'camera', 'insights', 'tips', 'memories'] as const).map(tab => (
                     <button
                       key={tab}
                       onClick={() => { setActiveTab(tab); setMobileTabOpen(false) }}
@@ -772,7 +855,7 @@ export default function App() {
               </>
             )}
             <div className="hidden lg:flex overflow-x-auto gap-1 bg-slate-100/80 p-1 rounded-xl border border-slate-200/40 backdrop-blur-sm shadow-inner">
-              {(['chat', 'screen', 'camera', 'insights', 'memories'] as const).map(tab => (
+              {(['chat', 'screen', 'camera', 'insights', 'tips', 'memories'] as const).map(tab => (
                 <button
                   key={tab}
                   onClick={() => setActiveTab(tab)}
@@ -802,7 +885,7 @@ export default function App() {
                 </button>
 
                 <button
-                  onClick={() => setMessages([])}
+                  onClick={() => { setMessages([]); setTipContext(null); }}
                   className="border border-slate-200 px-3 py-2 sm:py-1.5 rounded-lg shadow-sm hover:bg-slate-50 transition-colors text-xs font-medium text-slate-500"
                 >
                   {t('app.clearChat')}
@@ -815,6 +898,15 @@ export default function App() {
         {/* Chat Tab - original styling preserved */}
         <div className={`flex-1 overflow-y-auto px-3 md:px-8 py-9 ${activeTab === 'chat' ? '' : 'hidden'}`} ref={scrollRef}>
           <div className="flex flex-col gap-4 sm:gap-5 max-w-3xl mx-auto w-full">
+            {tipContext && (
+              <div className="bg-gradient-to-br from-amber-50/80 to-yellow-50/80 border border-amber-200/60 rounded-2xl p-5 mb-2 shadow-sm">
+                <div className="flex items-center gap-2 mb-2">
+                  <Lightbulb className="w-4 h-4 text-amber-600" />
+                  <span className="text-[10px] font-extrabold uppercase tracking-wider text-amber-700">{t('insights.suggestion')}</span>
+                </div>
+                <Markdown content={tipContext} />
+              </div>
+            )}
             {messages.map((m, i) => (
               <div key={i} className={`flex w-full ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                 <div className={`px-4 py-2.5 ${m.role === 'user' ? 'lux-bubble-user' : 'lux-bubble-ai'}`}>
@@ -1045,68 +1137,118 @@ export default function App() {
                         </div>
                       )
                     })()}
-
-                    {/* Proactive Tip Section */}
-                    {(() => {
-                      let tipData: any = null
-                      try {
-                        if (ins.proactive_tip) {
-                          tipData = JSON.parse(ins.proactive_tip)
-                        }
-                      } catch { }
-                      if (!tipData) return null
-                      return (
-                        <div className="mt-5 bg-gradient-to-br from-indigo-50 to-purple-50 border border-indigo-200/60 rounded-xl p-4">
-                          <div className="flex items-center gap-2 mb-3">
-                            <span className="text-lg">💡</span>
-                            <span className="text-[10px] font-extrabold text-indigo-600 uppercase tracking-wider">
-                              {t('insights.suggestion')}
-                            </span>
-                          </div>
-                          {tipData.intent_guess && (
-                            <p className="text-xs text-indigo-500 italic mb-3">
-                              {tipData.intent_guess}
-                            </p>
-                          )}
-                          {tipData.reasoning && (
-                            <p className="text-[11px] text-slate-500 mb-3 leading-relaxed">
-                              {tipData.reasoning}
-                            </p>
-                          )}
-                          <div className="bg-white/80 rounded-lg p-3 border border-indigo-100/60">
-                            <Markdown content={tipData.tip} />
-                          </div>
-                          {tipData.next_actions && tipData.next_actions.length > 0 && (
-                            <div className="mt-3">
-                              <span className="text-[10px] font-bold text-indigo-500 uppercase tracking-wider">Next Actions</span>
-                              <ul className="mt-1.5 space-y-1">
-                                {tipData.next_actions.map((action: string, i: number) => (
-                                  <li key={i} className="text-[11px] text-slate-700 flex items-start gap-2">
-                                    <span className="text-indigo-400 mt-0.5">→</span>
-                                    {action}
-                                  </li>
-                                ))}
-                              </ul>
-                            </div>
-                          )}
-                          {tipData.urls && tipData.urls.length > 0 && (
-                            <div className="mt-3">
-                              <span className="text-[10px] font-bold text-indigo-500 uppercase tracking-wider">Relevant Links</span>
-                              <div className="mt-1.5 space-y-1">
-                                {tipData.urls.map((url: string, i: number) => (
-                                  <a key={i} href={url} target="_blank" rel="noopener noreferrer"
-                                    className="block text-[11px] text-blue-600 underline underline-offset-2 truncate">
-                                    {url}
-                                  </a>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      )
-                    })()}
                   </div>
                 ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Tips Tab */}
+        <div className={`overflow-y-auto flex-1 min-h-0 px-3 sm:px-6 md:px-10 py-4 sm:py-6 bg-slate-50/40 ${activeTab === 'tips' ? '' : 'hidden'}`}>
+          <div className="max-w-3xl mx-auto w-full animate-in fade-in duration-300">
+            <div className="flex justify-between items-center mb-6">
+              <div>
+                <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider">{t('tips.title')}</h3>
+                <p className="text-[10px] text-slate-400 mt-0.5">{t('tips.desc')}</p>
+              </div>
+              <button
+                onClick={() => fetchTips()}
+                className="text-[10px] font-semibold text-slate-500 hover:text-slate-800 bg-white border border-slate-200 px-3 py-1.5 rounded-full shadow-sm hover:shadow transition-all flex items-center gap-1.5"
+              >
+                <RefreshCw className="w-3 h-3" /> {t('app.refresh')}
+              </button>
+            </div>
+
+            {(tipsLoading && proactiveTips.length === 0) ? (
+              <div className="flex items-center justify-center py-16">
+                <span className="flex gap-1.5">
+                  <span className="w-2 h-2 bg-amber-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                  <span className="w-2 h-2 bg-amber-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                  <span className="w-2 h-2 bg-amber-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                </span>
+              </div>
+            ) : proactiveTips.length === 0 ? (
+              <EmptyState
+                icon={<Lightbulb className="w-6 h-6 text-slate-400" />}
+                title={t('tips.empty')}
+                hint={t('tips.emptyHint')}
+              />
+            ) : (
+              <div className="relative border-l-2 border-slate-200/80 ml-2 sm:ml-4 pl-4 sm:pl-8 space-y-6 sm:space-y-8 py-2">
+                {proactiveTips.map(tip => {
+                  let tipData: any = null
+                  try { tipData = JSON.parse(tip.proactive_tip || ''); } catch {}
+                  if (!tipData) return null
+                  return (
+                    <div key={tip.id} className="relative bg-white rounded-2xl border border-slate-100 p-6 shadow-sm hover:shadow-md transition-all duration-300">
+                      <div className="absolute w-3.5 h-3.5 sm:w-4 sm:h-4 bg-amber-500 rounded-full -left-[26px] sm:-left-[41px] top-4 sm:top-6 border-2 sm:border-4 border-slate-50 flex items-center justify-center shadow-sm" />
+
+                      <div className="flex flex-wrap justify-between items-center gap-2 pb-3 border-b border-slate-50">
+                        <div className="flex items-center gap-2">
+                          <Lightbulb className="w-3.5 h-3.5 text-amber-600" />
+                          <span className="text-[10px] font-extrabold uppercase tracking-wider bg-amber-700 text-white px-2.5 py-0.5 rounded-md">
+                            {t('insights.suggestion')} #{tip.id}
+                          </span>
+                        </div>
+                        <span className="text-[10px] font-mono text-slate-400 flex items-center gap-1">
+                          <Clock className="w-3 h-3 text-slate-400" />
+                          {new Date(tip.timestamp).toLocaleString()}
+                        </span>
+                      </div>
+
+                      {tipData.intent_guess && (
+                        <p className="mt-4 text-xs text-amber-600 italic leading-relaxed">{tipData.intent_guess}</p>
+                      )}
+
+                      {tipData.reasoning && (
+                        <p className="mt-2 text-[11px] text-slate-500 leading-relaxed">{t('tips.reasoning')}: {tipData.reasoning}</p>
+                      )}
+
+                      <div className="mt-3 bg-gradient-to-br from-amber-50/60 to-yellow-50/60 rounded-xl p-4 border border-amber-100/60">
+                        <Markdown content={tipData.tip} />
+                      </div>
+
+                      {tipData.next_actions && tipData.next_actions.length > 0 && (
+                        <div className="mt-3">
+                          <span className="text-[10px] font-bold text-amber-600 uppercase tracking-wider">{t('tips.nextActions')}</span>
+                          <ul className="mt-1.5 space-y-1">
+                            {tipData.next_actions.map((action: string, i: number) => (
+                              <li key={i} className="text-[11px] text-slate-700 flex items-start gap-2">
+                                <span className="text-amber-500 mt-0.5">→</span>
+                                {action}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+
+                      {tipData.urls && tipData.urls.length > 0 && (
+                        <div className="mt-3">
+                          <span className="text-[10px] font-bold text-amber-600 uppercase tracking-wider">{t('tips.relevantLinks')}</span>
+                          <div className="mt-1.5 space-y-1">
+                            {tipData.urls.map((url: string, i: number) => (
+                              <a key={i} href={url} target="_blank" rel="noopener noreferrer"
+                                className="block text-[11px] text-blue-600 underline underline-offset-2 truncate">
+                                {url}
+                              </a>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="mt-4 pt-3 border-t border-slate-100 flex justify-end">
+                        <button
+                          onClick={() => handleChatWithTip(tip)}
+                          className="flex items-center gap-1.5 text-[10px] font-semibold text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 px-3 py-1.5 rounded-full transition-all"
+                        >
+                          <MessageCircle className="w-3 h-3" />
+                          {t('tips.chatWithTip')}
+                        </button>
+                      </div>
+                    </div>
+                  )
+                })}
               </div>
             )}
           </div>
@@ -1163,7 +1305,7 @@ export default function App() {
 
           {/* Scrollable memory cards */}
           <div className="max-w-3xl mx-auto px-3 sm:px-6 md:px-10 pb-8 pt-4 sm:pt-6 animate-in fade-in duration-300">
-            {memoriesLoading ? (
+            {(memoriesLoading && memories.length === 0) ? (
               <div className="flex items-center justify-center py-12">
                 <RefreshCw className="w-5 h-5 text-slate-400 animate-spin" />
               </div>

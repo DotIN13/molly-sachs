@@ -230,12 +230,30 @@ class AppDB:
                            limit: int = 15) -> list[dict]:
         cursor = await self._conn.execute(
             "SELECT id, timestamp, activity_summary, raw_transcripts, "
-            "context FROM user_events WHERE user_id = ? "
+            "context, proactive_tip FROM user_events WHERE user_id = ? "
             "ORDER BY id DESC LIMIT ?",
             (user_id, limit),
         )
         rows = await cursor.fetchall()
         return [dict(r) for r in rows]
+
+    async def get_proactive_tips(self, user_id: str, limit: int = 50,
+                                  offset: int = 0) -> tuple[list[dict], int]:
+        cursor = await self._conn.execute(
+            "SELECT COUNT(*) FROM user_events WHERE user_id = ? "
+            "AND proactive_tip IS NOT NULL",
+            (user_id,),
+        )
+        total = (await cursor.fetchone())[0]
+
+        cursor = await self._conn.execute(
+            "SELECT id, timestamp, activity_summary, proactive_tip "
+            "FROM user_events WHERE user_id = ? AND proactive_tip IS NOT NULL "
+            "ORDER BY id DESC LIMIT ? OFFSET ?",
+            (user_id, limit, offset),
+        )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows], total
 
     # ── conversations ─────────────────────────
 

@@ -29,7 +29,8 @@
     "screen": "屏幕",
     "camera": "摄像头",
     "insights": "洞察",
-    "memories": "记忆"
+    "memories": "记忆",
+    "tips": "建议"
   },
   "screen": {
     "title": "桌面捕获历史",
@@ -192,5 +193,15 @@
     "cn": "中文, 普通话",
     "enUS": "英语, 美式",
     "enGB": "英语, 英式"
+  },
+  "tips": {
+    "title": "Molly 的建议",
+    "desc": "Molly 根据你的目标和当前活动生成的主动建议。",
+    "empty": "暂无建议。",
+    "emptyHint": "Molly 会在分析你的工作区活动后生成建议。",
+    "chatWithTip": "讨论这个建议",
+    "reasoning": "推荐原因",
+    "nextActions": "下一步",
+    "relevantLinks": "相关链接"
   }
 }

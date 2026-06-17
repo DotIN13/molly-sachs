@@ -1,4 +1,4 @@
-const { spawn } = require('child_process');
+const { spawn, execSync } = require('child_process');
 const path = require('path');
 
 const backendDir = path.join(__dirname, '..', '..', 'backend');
@@ -14,6 +14,30 @@ const proc = spawn(pythonBin, [
 ], {
     cwd: backendDir,
     stdio: 'inherit',
+});
+
+function killChild() {
+    if (proc.pid) {
+        try {
+            if (process.platform === 'win32') {
+                execSync(`taskkill /pid ${proc.pid} /T /F`, { stdio: 'ignore' });
+            } else {
+                proc.kill('SIGTERM');
+            }
+        } catch (e) {
+            // process may already be dead
+        }
+    }
+}
+
+process.on('SIGINT', () => {
+    killChild();
+    process.exit(0);
+});
+
+process.on('SIGTERM', () => {
+    killChild();
+    process.exit(0);
 });
 
 proc.on('close', (code) => {

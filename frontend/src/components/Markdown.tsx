@@ -2,6 +2,8 @@ import type { Components } from 'react-markdown'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeKatex from 'rehype-katex'
+import rehypeHighlight from 'rehype-highlight'
+import 'highlight.js/styles/github-dark.css'
 
 const components: Components = {
   code({ className, children, ...props }: React.ComponentPropsWithoutRef<'code'> & { className?: string }) {
@@ -19,7 +21,7 @@ const components: Components = {
         <div className="absolute right-3 top-2 text-[10px] font-semibold uppercase tracking-widest text-slate-400">
           {match![1]}
         </div>
-        <pre className="bg-slate-900 text-slate-100 rounded-xl p-4 pt-8 overflow-x-auto text-[13px] leading-relaxed font-mono">
+        <pre className="bg-slate-900 text-slate-100 rounded-xl p-4 pt-8 overflow-x-auto text-[13px] leading-relaxed font-mono hljs">
           <code className={className} {...props}>{children}</code>
         </pre>
       </div>
@@ -63,7 +65,7 @@ export default function Markdown({ content }: { content: string }) {
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
-      rehypePlugins={[rehypeKatex]}
+      rehypePlugins={[rehypeKatex, rehypeHighlight]}
       components={components}
     >
       {content}
