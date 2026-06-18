@@ -103,7 +103,16 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('show-notification', (_event, { title, body }) => {
     if (Notification.isSupported()) {
-      new Notification({ title, body }).show();
+      const notif = new Notification({ title, body });
+      notif.on('click', () => {
+        if (mainWindow) {
+          if (mainWindow.isMinimized()) mainWindow.restore();
+          mainWindow.show();
+          mainWindow.focus();
+          mainWindow.webContents.send('navigate-tips');
+        }
+      });
+      notif.show();
     }
   });
 

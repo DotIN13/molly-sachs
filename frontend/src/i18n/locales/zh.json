@@ -53,7 +53,7 @@
     "desc": "由 AI 生成的主动活动日志、应用使用审计和生活方式建议。",
     "empty": "尚未生成 AI 洞察。",
     "emptyHint": "Molly 将定期在后台处理待处理的屏幕捕获，以记录报告并提供建议。",
-    "reportBadge": "Molly 报告 #{{id}}",
+    "reportBadge": "Molly 报告",
     "activitySummary": "活动摘要",
     "events": "事件",
     "personalities": "性格",
@@ -187,7 +187,13 @@
     "emptyHint": "Molly 会在聊天中了解你——偏好、兴趣、技能等。",
     "allTypes": "全部类型",
     "confidence": "置信度",
-    "lifespan": "有效期"
+    "lifespan": "有效期",
+    "category": "类别",
+    "addMemory": "添加记忆",
+    "addPlaceholder": "添加关于你的记忆...",
+    "save": "保存",
+    "cancel": "取消",
+    "adding": "保存中..."
   },
   "voiceLang": {
     "cn": "中文, 普通话",
@@ -200,8 +206,8 @@
     "empty": "暂无建议。",
     "emptyHint": "Molly 会在分析你的工作区活动后生成建议。",
     "chatWithTip": "讨论这个建议",
-    "reasoning": "推荐原因",
-    "nextActions": "下一步",
-    "relevantLinks": "相关链接"
+    "tip": "建议",
+    "goal": "目标",
+    "nextSteps": "下一步"
   }
 }

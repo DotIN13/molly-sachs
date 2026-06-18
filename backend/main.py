@@ -412,12 +412,13 @@ async def upload_observation(req: ObservationUploadReq,
 
 
 @app.get("/api/observations", summary="Retrieve past observations list")
-async def get_observations(type: str | None = None, limit: int = 15,
+async def get_observations(type: str | None = None, limit: int = 15, offset: int = 0,
                            current_user: dict = Depends(auth.get_current_user)):
     try:
-        return await database.app.get_observations(
-            current_user["id"], obs_type=type, limit=limit
+        items, total = await database.app.get_observations(
+            current_user["id"], obs_type=type, limit=limit, offset=offset
         )
+        return {"items": items, "total": total}
     except Exception as e:
         logger.error(f"Failed to retrieve observations: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -443,10 +444,13 @@ async def serve_observation_file(
 
 
 @app.get("/api/insights", summary="Retrieve past Gemini summaries and activity insights")
-async def get_insights(limit: int = 15,
+async def get_insights(limit: int = 15, offset: int = 0,
                        current_user: dict = Depends(auth.get_current_user)):
     try:
-        return await database.app.get_insights(current_user["id"], limit=limit)
+        items, total = await database.app.get_insights(
+            current_user["id"], limit=limit, offset=offset
+        )
+        return {"items": items, "total": total}
     except Exception as e:
         logger.error(f"Failed to retrieve insights: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -479,6 +483,121 @@ async def get_memories(q: str | None = None,
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class MemoryAddReq(BaseModel):
+    fact: str
+    category: str
+    confidence: int = 5
+    lifespan: int = 5
+
+
+@app.post("/api/memories", summary="Manually add a memory entry")
+async def add_memory_entry(req: MemoryAddReq,
+                            current_user: dict = Depends(auth.get_current_user)):
+    try:
+        valid_categories = [
+            "trait", "preference", "interest", "skill", "goal",
+            "relationship", "ownership", "weakness", "event", "other",
+        ]
+        if req.category not in valid_categories:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid category '{req.category}'. Must be: {', '.join(valid_categories)}"
+            )
+
+        settings = await Settings(current_user["id"]).load()
+        api_key = settings.get("gemini_api_key", "")
+        if not api_key:
+            raise HTTPException(status_code=400, detail="Gemini API key not configured")
+
+        confidence = max(1, min(10, int(req.confidence)))
+        lifespan = max(1, min(10, int(req.lifespan)))
+        ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+        content = f"{req.category}: {req.fact}"
+        embedding = await _embed_query(content, api_key)
+
+        new_evidence = json.dumps(
+            [{"text": "manually added by user", "timestamp": ts}],
+            ensure_ascii=False,
+        )
+
+        merge_threshold = float(os.environ.get("MOLLY_MERGE_THRESHOLD", "0.85"))
+        max_evidence = 10
+
+        if req.category == "event":
+            existing = None
+        else:
+            existing, _, _ = await database.vector.find_similar(
+                embedding, req.category, current_user["id"], merge_threshold
+            )
+
+        if existing:
+            existing_evidence = existing.get("evidence", "")
+            try:
+                evidence_list = json.loads(existing_evidence) if isinstance(existing_evidence, str) else []
+                if not isinstance(evidence_list, list):
+                    evidence_list = [{"text": str(existing_evidence), "timestamp": ""}]
+            except (json.JSONDecodeError, TypeError):
+                evidence_list = [{"text": str(existing_evidence), "timestamp": ""}]
+
+            new_entries = json.loads(new_evidence)
+            evidence_list = evidence_list + new_entries
+            if len(evidence_list) > max_evidence:
+                evidence_list = evidence_list[-max_evidence:]
+
+            merged = {
+                "type": req.category,
+                "content": content,
+                "timestamp": existing.get("timestamp", ts),
+                "user_id": current_user["id"],
+                "user_event_id": existing.get("user_event_id", "0"),
+                "confidence": max(confidence, existing.get("confidence", 0)),
+                "evidence": json.dumps(evidence_list, ensure_ascii=False),
+                "lifespan": max(lifespan, existing.get("lifespan", 0)),
+            }
+            await database.vector.update_metadata(existing["id"], merged)
+            logger.info("Memory merged [{}]: {}", req.category, req.fact[:80])
+            return {"status": "ok", "merged": True, "id": existing["id"]}
+        else:
+            mem_id = f"mem_{uuid.uuid4().hex[:12]}"
+            await database.vector.add([{
+                "id": mem_id,
+                "vector": embedding,
+                "metadata": {
+                    "type": req.category,
+                    "content": content,
+                    "timestamp": ts,
+                    "user_id": current_user["id"],
+                    "user_event_id": "0",
+                    "confidence": confidence,
+                    "evidence": new_evidence,
+                    "lifespan": lifespan,
+                },
+            }])
+            logger.info("Memory added [{}]: {}", req.category, req.fact[:80])
+            return {"status": "ok", "merged": False, "id": mem_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to add memory: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/memories/{memory_id}", summary="Delete a memory entry")
+async def delete_memory(memory_id: str,
+                         current_user: dict = Depends(auth.get_current_user)):
+    try:
+        deleted = await database.vector.delete_memory(memory_id, current_user["id"])
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Memory not found")
+        return {"status": "ok"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to delete memory: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/api/processor/trigger", summary="Trigger Gemini processor to run immediately")
 async def trigger_processor(
     current_user: dict = Depends(auth.get_current_user)
@@ -505,10 +624,14 @@ async def trigger_processor(
             try:
                 analysis = json.loads(result.get("analysis_data", "{}"))
                 current_events = analysis.get("events", [])
+                current_summary = analysis.get("summary", "")
                 tip_data = await generate_proactive_tip(
                     current_user["id"], prefs,
                     current_events=current_events,
                     current_timestamp=result.get("timestamp"),
+                    current_summary=current_summary,
+                    latest_observation=result.get("latest_screen_observation"),
+                    latest_screen_image_path=result.get("latest_screen_image_path"),
                 )
                 if tip_data:
                     await database.app.update_event_proactive_tip(

@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, startTransition } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Settings, PenSquare, Search, FileText, Clock, Bird, Mic, Volume2, VolumeX, RefreshCw, LogOut, Menu, X, ChevronDown, ArrowUp, Lightbulb, MessageCircle } from 'lucide-react'
+import { Settings, PenSquare, Search, FileText, Clock, Bird, Mic, Volume2, VolumeX, RefreshCw, LogOut, Menu, X, ChevronDown, ArrowUp, Lightbulb, MessageCircle, Trash2 } from 'lucide-react'
 import { updateObserverConfig, stopObservers } from './observers'
 import { API_URL, isElectron } from './config'
 import useAudioVisualizer from './hooks/useAudioVisualizer'
@@ -97,11 +97,33 @@ export default function App() {
   const memoriesOffsetRef = useRef(0)
   const [hasMoreMemories, setHasMoreMemories] = useState(true)
   const [memoriesLoadingMore, setMemoriesLoadingMore] = useState(false)
+
+  const screenOffsetRef = useRef(0)
+  const [hasMoreScreens, setHasMoreScreens] = useState(true)
+  const [screensLoadingMore, setScreensLoadingMore] = useState(false)
+
+  const cameraOffsetRef = useRef(0)
+  const [hasMoreCameras, setHasMoreCameras] = useState(true)
+  const [camerasLoadingMore, setCamerasLoadingMore] = useState(false)
+
+  const insightsOffsetRef = useRef(0)
+  const [hasMoreInsights, setHasMoreInsights] = useState(true)
+  const [insightsLoadingMore, setInsightsLoadingMore] = useState(false)
+
+  const tipsOffsetRef = useRef(0)
+  const [hasMoreTips, setHasMoreTips] = useState(true)
+  const [tipsLoadingMore, setTipsLoadingMore] = useState(false)
+
   const [lastRefresh, setLastRefresh] = useState(0)
+  const [newMemoryText, setNewMemoryText] = useState('')
+  const [newMemoryType, setNewMemoryType] = useState('other')
+  const [newMemoryConfidence, setNewMemoryConfidence] = useState(10)
+  const [newMemoryLifespan, setNewMemoryLifespan] = useState(10)
+  const [showAddMemory, setShowAddMemory] = useState(false)
+  const [addingMemory, setAddingMemory] = useState(false)
   const [proactiveTips, setProactiveTips] = useState<any[]>([])
   const [tipsLoading, setTipsLoading] = useState(false)
   const lastTipIdRef = useRef<number>(0)
-  const [tipContext, setTipContext] = useState<string | null>(null)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [mobileTabOpen, setMobileTabOpen] = useState(false)
 
@@ -109,6 +131,10 @@ export default function App() {
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const memoriesSentinelRef = useRef<HTMLDivElement>(null)
+  const screenSentinelRef = useRef<HTMLDivElement>(null)
+  const cameraSentinelRef = useRef<HTMLDivElement>(null)
+  const insightsSentinelRef = useRef<HTMLDivElement>(null)
+  const tipsSentinelRef = useRef<HTMLDivElement>(null)
   const refreshConversationsRef = useRef<() => void>(() => { })
   const appliedSettingsRef = useRef<Record<string, any>>({})
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -342,7 +368,6 @@ export default function App() {
       }
       if (pcRef.current) disconnectWebRTC();
       setActiveConversationId(id);
-      setTipContext(null);
 
       const res = await auth.authFetch(`${API_URL}/api/conversations/${id}/messages`);
       const data = await res.json();
@@ -376,7 +401,6 @@ export default function App() {
       setMessages([
         { role: 'assistant', content: t('app.helloDefault') }
       ]);
-      setTipContext(null);
     } catch {
       console.error("Failed to create new conversation");
     }
@@ -502,51 +526,104 @@ export default function App() {
     }
   }
 
-  const fetchObservations = useCallback(async (tab: string, forceRefresh = false) => {
+  const fetchObservations = useCallback(async (tab: string, forceRefresh = false, append = false) => {
     try {
       const now = Date.now();
+      const limit = 15;
       if (tab === 'screen') {
-        const res = await auth.authFetch(`${API_URL}/api/observations?type=screen&limit=15&_=${now}`);
+        const offset = append ? screenOffsetRef.current : 0;
+        if (!append) { screenOffsetRef.current = 0; setHasMoreScreens(true); }
+        if (append) setScreensLoadingMore(true);
+        const res = await auth.authFetch(`${API_URL}/api/observations?type=screen&limit=${limit}&offset=${offset}&_=${now}`);
         if (res.ok) {
           const data = await res.json();
-          setScreenCaptures(data || []);
+          const items = data.items || [];
+          if (append) {
+            setScreenCaptures(prev => [...prev, ...items]);
+          } else {
+            setScreenCaptures(items);
+          }
+          const nextOffset = offset + items.length;
+          screenOffsetRef.current = nextOffset;
+          setHasMoreScreens(nextOffset < (data.total || 0));
           if (forceRefresh) setLastRefresh(now);
         }
       } else if (tab === 'camera') {
-        const res = await auth.authFetch(`${API_URL}/api/observations?type=camera&limit=15&_=${now}`);
+        const offset = append ? cameraOffsetRef.current : 0;
+        if (!append) { cameraOffsetRef.current = 0; setHasMoreCameras(true); }
+        if (append) setCamerasLoadingMore(true);
+        const res = await auth.authFetch(`${API_URL}/api/observations?type=camera&limit=${limit}&offset=${offset}&_=${now}`);
         if (res.ok) {
           const data = await res.json();
-          setCameraSnapshots(data || []);
+          const items = data.items || [];
+          if (append) {
+            setCameraSnapshots(prev => [...prev, ...items]);
+          } else {
+            setCameraSnapshots(items);
+          }
+          const nextOffset = offset + items.length;
+          cameraOffsetRef.current = nextOffset;
+          setHasMoreCameras(nextOffset < (data.total || 0));
           if (forceRefresh) setLastRefresh(now);
         }
       } else if (tab === 'insights') {
-        const res = await auth.authFetch(`${API_URL}/api/insights?limit=15&_=${now}`);
+        const offset = append ? insightsOffsetRef.current : 0;
+        if (!append) { insightsOffsetRef.current = 0; setHasMoreInsights(true); }
+        if (append) setInsightsLoadingMore(true);
+        const res = await auth.authFetch(`${API_URL}/api/insights?limit=${limit}&offset=${offset}&_=${now}`);
         if (res.ok) {
           const data = await res.json();
-          setGeminiInsights(data || []);
+          const items = data.items || [];
+          if (append) {
+            setGeminiInsights(prev => [...prev, ...items]);
+          } else {
+            setGeminiInsights(items);
+          }
+          const nextOffset = offset + items.length;
+          insightsOffsetRef.current = nextOffset;
+          setHasMoreInsights(nextOffset < (data.total || 0));
           if (forceRefresh) setLastRefresh(now);
         }
       }
     } catch (err) {
       console.error("Failed to fetch observations or insights:", err);
+    } finally {
+      setScreensLoadingMore(false);
+      setCamerasLoadingMore(false);
+      setInsightsLoadingMore(false);
     }
   }, [auth.isAuthenticated, auth.accessToken, auth.authFetch]);
 
-  const fetchTips = useCallback(async (checkNotifications = false) => {
-    setTipsLoading(true);
+  const fetchTips = useCallback(async (checkNotifications = false, append = false) => {
+    const offset = append ? tipsOffsetRef.current : 0;
+    if (!append) {
+      setTipsLoading(true);
+      tipsOffsetRef.current = 0;
+      setHasMoreTips(true);
+    } else {
+      setTipsLoadingMore(true);
+    }
     try {
-      const res = await auth.authFetch(`${API_URL}/api/proactive/tips?limit=50`);
+      const res = await auth.authFetch(`${API_URL}/api/proactive/tips?limit=50&offset=${offset}`);
       if (res.ok) {
         const data = await res.json();
         const tips = data.items || [];
-        setProactiveTips(tips);
+        if (append) {
+          setProactiveTips(prev => [...prev, ...tips]);
+        } else {
+          setProactiveTips(tips);
+        }
+        const nextOffset = offset + tips.length;
+        tipsOffsetRef.current = nextOffset;
+        setHasMoreTips(nextOffset < (data.total || 0));
 
         if (checkNotifications && tips.length > 0) {
           const latest = tips[0];
           if (latest.id > lastTipIdRef.current && lastTipIdRef.current > 0) {
             let tipData: any = null;
             try { tipData = JSON.parse(latest.proactive_tip || ''); } catch {}
-            const body = tipData?.intent_guess || tipData?.reasoning || 'Molly has a new suggestion for you.';
+            const tipsArr = tipData?.tips;
+            const body = (tipsArr && tipsArr.length > 0 && tipsArr[0].tip_summary) || '';
             if (typeof window !== 'undefined' && (window as any).electronAPI?.showNotification) {
               (window as any).electronAPI.showNotification({ title: 'Molly\'s Tip', body });
             }
@@ -560,20 +637,24 @@ export default function App() {
       console.error("Failed to fetch tips:", err);
     } finally {
       setTipsLoading(false);
+      setTipsLoadingMore(false);
     }
   }, [auth.isAuthenticated, auth.accessToken, auth.authFetch]);
 
-  const handleChatWithTip = useCallback(async (tip: any) => {
+  const handleChatWithTip = useCallback(async (tipItem: { goal?: string; tip_summary?: string; tip_content?: string }) => {
     try {
-      let tipData: any = null;
-      try { tipData = JSON.parse(tip.proactive_tip || ''); } catch {}
-      const tipContent = tipData?.tip || tipData?.intent_guess || '';
+      const tipContent = [
+        tipItem.goal,
+        tipItem.tip_summary ? `**${tipItem.tip_summary}**` : '',
+        tipItem.tip_content,
+      ].filter(Boolean).join('\n\n');
       const userQuestion = 'What do you think? How can I act on this?';
+      const title = (tipItem.tip_summary || tipItem.goal || '').replace(/[#*`_~>\[\]()]/g, '').trim().slice(0, 40);
 
       const createRes = await auth.authFetch(`${API_URL}/api/conversations`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: tipContent.slice(0, 40) }),
+        body: JSON.stringify({ title }),
       });
       if (!createRes.ok) return;
       const conv = await createRes.json();
@@ -581,11 +662,13 @@ export default function App() {
       await auth.authFetch(`${API_URL}/api/conversations/${conv.id}/messages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ role: 'assistant', content: tipContent }),
+        body: JSON.stringify({ role: 'tip', content: tipContent }),
       });
 
-      setTipContext(tipContent);
-      setMessages([{ role: 'user', content: userQuestion }]);
+      setMessages([
+        { role: 'tip', content: tipContent },
+        { role: 'user', content: userQuestion },
+      ]);
 
       if (dcRef.current && dcRef.current.readyState === 'open') {
         setActiveConversationId(conv.id);
@@ -638,6 +721,46 @@ export default function App() {
     }
   }, [auth.authFetch, memoriesTypeFilter])
 
+  const addMemory = useCallback(async () => {
+    if (!newMemoryText.trim()) return
+    setAddingMemory(true)
+    try {
+      const res = await auth.authFetch(`${API_URL}/api/memories`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fact: newMemoryText.trim(),
+          category: newMemoryType,
+          confidence: newMemoryConfidence,
+          lifespan: newMemoryLifespan,
+        }),
+      })
+      if (res.ok) {
+        setNewMemoryText('')
+        setShowAddMemory(false)
+        fetchMemories()
+      }
+    } catch (err) {
+      console.error("Failed to add memory:", err)
+    } finally {
+      setAddingMemory(false)
+    }
+  }, [auth.authFetch, newMemoryText, newMemoryType, newMemoryConfidence, newMemoryLifespan, fetchMemories])
+
+  const deleteMemory = useCallback(async (memoryId: string) => {
+    try {
+      const res = await auth.authFetch(`${API_URL}/api/memories/${memoryId}`, {
+        method: 'DELETE',
+      })
+      if (res.ok) {
+        setMemories(prev => prev.filter(m => m.id !== memoryId))
+        setMemoriesTotal(prev => Math.max(0, prev - 1))
+      }
+    } catch (err) {
+      console.error("Failed to delete memory:", err)
+    }
+  }, [auth.authFetch])
+
   useEffect(() => {
     if (backendStatus === 'connected' && activeTab !== 'chat') {
       if (activeTab === 'memories') {
@@ -670,6 +793,77 @@ export default function App() {
     observer.observe(sentinel)
     return () => observer.disconnect()
   }, [hasMoreMemories, memoriesLoadingMore, activeTab, fetchMemories])
+
+  useEffect(() => {
+    const sentinel = screenSentinelRef.current
+    if (!sentinel || !hasMoreScreens || screensLoadingMore || activeTab !== 'screen') return
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          fetchObservations('screen', false, true)
+        }
+      },
+      { rootMargin: "200px" }
+    )
+    observer.observe(sentinel)
+    return () => observer.disconnect()
+  }, [hasMoreScreens, screensLoadingMore, activeTab, fetchObservations])
+
+  useEffect(() => {
+    const sentinel = cameraSentinelRef.current
+    if (!sentinel || !hasMoreCameras || camerasLoadingMore || activeTab !== 'camera') return
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          fetchObservations('camera', false, true)
+        }
+      },
+      { rootMargin: "200px" }
+    )
+    observer.observe(sentinel)
+    return () => observer.disconnect()
+  }, [hasMoreCameras, camerasLoadingMore, activeTab, fetchObservations])
+
+  useEffect(() => {
+    const sentinel = insightsSentinelRef.current
+    if (!sentinel || !hasMoreInsights || insightsLoadingMore || activeTab !== 'insights') return
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          fetchObservations('insights', false, true)
+        }
+      },
+      { rootMargin: "200px" }
+    )
+    observer.observe(sentinel)
+    return () => observer.disconnect()
+  }, [hasMoreInsights, insightsLoadingMore, activeTab, fetchObservations])
+
+  useEffect(() => {
+    const sentinel = tipsSentinelRef.current
+    if (!sentinel || !hasMoreTips || tipsLoadingMore || activeTab !== 'tips') return
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          fetchTips(false, true)
+        }
+      },
+      { rootMargin: "200px" }
+    )
+    observer.observe(sentinel)
+    return () => observer.disconnect()
+  }, [hasMoreTips, tipsLoadingMore, activeTab, fetchTips])
+
+  // Listen for notification click → navigate to tips tab
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const api = (window as any).electronAPI
+    if (!api?.onNavigateTips) return
+    const unsubscribe = api.onNavigateTips(() => {
+      setActiveTab('tips')
+    })
+    return unsubscribe
+  }, [])
 
   const handleSettingsChange = (key: keyof typeof settingsData, value: any) => {
     const setters: Record<keyof typeof settingsData, any> = {
@@ -792,7 +986,7 @@ export default function App() {
                   </svg>
                 </button>
               </div>
-            ))}
+                  ))}
           </div>
         </div>
 
@@ -854,12 +1048,12 @@ export default function App() {
                 </div>
               </>
             )}
-            <div className="hidden lg:flex overflow-x-auto gap-1 bg-slate-100/80 p-1 rounded-xl border border-slate-200/40 backdrop-blur-sm shadow-inner">
+            <div className="hidden lg:flex overflow-x-auto gap-1 bg-slate-100/80 p-1 rounded-xl border border-slate-200/40 shadow-inner">
               {(['chat', 'screen', 'camera', 'insights', 'tips', 'memories'] as const).map(tab => (
                 <button
                   key={tab}
-                  onClick={() => setActiveTab(tab)}
-                  className={`text-xs font-semibold px-4 py-1.5 rounded-lg transition-all uppercase tracking-wider text-[10px] whitespace-nowrap ${activeTab === tab
+                  onClick={() => startTransition(() => setActiveTab(tab))}
+                  className={`text-xs font-semibold px-4 py-1.5 rounded-lg transition-colors uppercase tracking-wider text-[10px] whitespace-nowrap ${activeTab === tab
                     ? 'bg-slate-900 text-white shadow-md'
                     : 'text-slate-500 hover:text-slate-800 hover:bg-slate-200/50'
                     }`}
@@ -885,7 +1079,7 @@ export default function App() {
                 </button>
 
                 <button
-                  onClick={() => { setMessages([]); setTipContext(null); }}
+                  onClick={() => setMessages([])}
                   className="border border-slate-200 px-3 py-2 sm:py-1.5 rounded-lg shadow-sm hover:bg-slate-50 transition-colors text-xs font-medium text-slate-500"
                 >
                   {t('app.clearChat')}
@@ -896,23 +1090,25 @@ export default function App() {
         </div>
 
         {/* Chat Tab - original styling preserved */}
-        <div className={`flex-1 overflow-y-auto px-3 md:px-8 py-9 ${activeTab === 'chat' ? '' : 'hidden'}`} ref={scrollRef}>
+        {activeTab === 'chat' && (
+        <div className="flex-1 overflow-y-auto px-3 md:px-8 py-9" ref={scrollRef}>
           <div className="flex flex-col gap-4 sm:gap-5 max-w-3xl mx-auto w-full">
-            {tipContext && (
-              <div className="bg-gradient-to-br from-amber-50/80 to-yellow-50/80 border border-amber-200/60 rounded-2xl p-5 mb-2 shadow-sm">
-                <div className="flex items-center gap-2 mb-2">
-                  <Lightbulb className="w-4 h-4 text-amber-600" />
-                  <span className="text-[10px] font-extrabold uppercase tracking-wider text-amber-700">{t('insights.suggestion')}</span>
-                </div>
-                <Markdown content={tipContext} />
-              </div>
-            )}
             {messages.map((m, i) => (
-              <div key={i} className={`flex w-full ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                <div className={`px-4 py-2.5 ${m.role === 'user' ? 'lux-bubble-user' : 'lux-bubble-ai'}`}>
-                  {m.role === 'user' ? m.content : <Markdown content={m.content} />}
+              m.role === 'tip' ? (
+                <div key={i} className="bg-gradient-to-br from-amber-50/80 to-yellow-50/80 border border-amber-200/60 rounded-2xl p-5 shadow-sm">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Lightbulb className="w-4 h-4 text-amber-600" />
+                    <span className="text-[10px] font-extrabold uppercase tracking-wider text-amber-700">{t('insights.suggestion')}</span>
+                  </div>
+                  <Markdown content={m.content} />
                 </div>
-              </div>
+              ) : (
+                <div key={i} className={`flex w-full ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                  <div className={`px-4 py-2.5 ${m.role === 'user' ? 'lux-bubble-user' : 'lux-bubble-ai'}`}>
+                    {m.role === 'user' ? m.content : <Markdown content={m.content} />}
+                  </div>
+                </div>
+              )
             ))}
             {thinking && (
               <div className="flex w-full justify-start">
@@ -932,9 +1128,11 @@ export default function App() {
             )}
           </div>
         </div>
+        )}
 
         {/* Screen Tab */}
-        <div className={`overflow-y-auto flex-1 min-h-0 px-3 sm:px-6 md:px-10 py-4 sm:py-6 bg-slate-50/40 ${activeTab === 'screen' ? '' : 'hidden'}`}>
+        {activeTab === 'screen' && (
+        <div className="overflow-y-auto flex-1 min-h-0 px-3 sm:px-6 md:px-10 py-4 sm:py-6 bg-slate-50/40">
           <div className="max-w-6xl mx-auto w-full animate-in fade-in duration-300">
             <div className="flex justify-between items-center mb-6">
               <div>
@@ -972,13 +1170,16 @@ export default function App() {
                     lastRefresh={lastRefresh}
                   />
                 ))}
+              <div ref={screenSentinelRef} className="h-1" />
               </div>
             )}
           </div>
         </div>
+        )}
 
         {/* Camera Tab */}
-        <div className={`overflow-y-auto flex-1 min-h-0 px-3 sm:px-6 md:px-10 py-4 sm:py-6 bg-slate-50/40 ${activeTab === 'camera' ? '' : 'hidden'}`}>
+        {activeTab === 'camera' && (
+        <div className="overflow-y-auto flex-1 min-h-0 px-3 sm:px-6 md:px-10 py-4 sm:py-6 bg-slate-50/40">
           <div className="max-w-6xl mx-auto w-full animate-in fade-in duration-300">
             <div className="flex justify-between items-center mb-6">
               <div>
@@ -1014,13 +1215,16 @@ export default function App() {
                     lastRefresh={lastRefresh}
                   />
                 ))}
+              <div ref={cameraSentinelRef} className="h-1" />
               </div>
             )}
           </div>
         </div>
+        )}
 
         {/* Insights Tab */}
-        <div className={`overflow-y-auto flex-1 min-h-0 px-3 sm:px-6 md:px-10 py-4 sm:py-6 bg-slate-50/40 ${activeTab === 'insights' ? '' : 'hidden'}`}>
+        {activeTab === 'insights' && (
+        <div className="overflow-y-auto flex-1 min-h-0 px-3 sm:px-6 md:px-10 py-4 sm:py-6 bg-slate-50/40">
           <div className="max-w-3xl mx-auto w-full animate-in fade-in duration-300">
             <div className="flex justify-between items-center mb-8">
               <div>
@@ -1139,15 +1343,18 @@ export default function App() {
                     })()}
                   </div>
                 ))}
+              <div ref={insightsSentinelRef} className="h-1" />
               </div>
             )}
           </div>
         </div>
+        )}
 
         {/* Tips Tab */}
-        <div className={`overflow-y-auto flex-1 min-h-0 px-3 sm:px-6 md:px-10 py-4 sm:py-6 bg-slate-50/40 ${activeTab === 'tips' ? '' : 'hidden'}`}>
+        {activeTab === 'tips' && (
+        <div className="overflow-y-auto flex-1 min-h-0 px-3 sm:px-6 md:px-10 py-4 sm:py-6 bg-slate-50/40">
           <div className="max-w-3xl mx-auto w-full animate-in fade-in duration-300">
-            <div className="flex justify-between items-center mb-6">
+            <div className="flex justify-between items-center mb-8">
               <div>
                 <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider">{t('tips.title')}</h3>
                 <p className="text-[10px] text-slate-400 mt-0.5">{t('tips.desc')}</p>
@@ -1176,70 +1383,52 @@ export default function App() {
               />
             ) : (
               <div className="relative border-l-2 border-slate-200/80 ml-2 sm:ml-4 pl-4 sm:pl-8 space-y-6 sm:space-y-8 py-2">
-                {proactiveTips.map(tip => {
+                {proactiveTips.flatMap(tip => {
                   let tipData: any = null
                   try { tipData = JSON.parse(tip.proactive_tip || ''); } catch {}
-                  if (!tipData) return null
+                  if (!tipData) return []
+                  const tipsArr: any[] = Array.isArray(tipData.tips) ? tipData.tips : (tipData.tip_summary ? [tipData] : [])
+                  if (tipsArr.length === 0) return []
+                  return tipsArr.map(item => ({ item, timestamp: tip.timestamp }))
+                }).map(({ item, timestamp }: { item: any; timestamp: string }, i: number) => {
+                  if (typeof item.goal !== 'string' || typeof item.tip_summary !== 'string' || typeof item.tip_content !== 'string') return null
                   return (
-                    <div key={tip.id} className="relative bg-white rounded-2xl border border-slate-100 p-6 shadow-sm hover:shadow-md transition-all duration-300">
+                    <div key={i} className="relative bg-white rounded-2xl border border-slate-100 p-6 shadow-sm hover:shadow-md transition-all duration-300">
                       <div className="absolute w-3.5 h-3.5 sm:w-4 sm:h-4 bg-amber-500 rounded-full -left-[26px] sm:-left-[41px] top-4 sm:top-6 border-2 sm:border-4 border-slate-50 flex items-center justify-center shadow-sm" />
 
                       <div className="flex flex-wrap justify-between items-center gap-2 pb-3 border-b border-slate-50">
                         <div className="flex items-center gap-2">
-                          <Lightbulb className="w-3.5 h-3.5 text-amber-600" />
                           <span className="text-[10px] font-extrabold uppercase tracking-wider bg-amber-700 text-white px-2.5 py-0.5 rounded-md">
-                            {t('insights.suggestion')} #{tip.id}
+                            {t('insights.suggestion')}
                           </span>
                         </div>
                         <span className="text-[10px] font-mono text-slate-400 flex items-center gap-1">
                           <Clock className="w-3 h-3 text-slate-400" />
-                          {new Date(tip.timestamp).toLocaleString()}
+                          {new Date(timestamp).toLocaleString()}
                         </span>
                       </div>
 
-                      {tipData.intent_guess && (
-                        <p className="mt-4 text-xs text-amber-600 italic leading-relaxed">{tipData.intent_guess}</p>
-                      )}
-
-                      {tipData.reasoning && (
-                        <p className="mt-2 text-[11px] text-slate-500 leading-relaxed">{t('tips.reasoning')}: {tipData.reasoning}</p>
-                      )}
-
-                      <div className="mt-3 bg-gradient-to-br from-amber-50/60 to-yellow-50/60 rounded-xl p-4 border border-amber-100/60">
-                        <Markdown content={tipData.tip} />
+                      <div className="mt-3">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mr-2">{t('tips.goal')}</span>
+                        <p className="text-xs text-slate-900 leading-relaxed font-medium mt-0.5">{item.goal}</p>
                       </div>
 
-                      {tipData.next_actions && tipData.next_actions.length > 0 && (
-                        <div className="mt-3">
-                          <span className="text-[10px] font-bold text-amber-600 uppercase tracking-wider">{t('tips.nextActions')}</span>
-                          <ul className="mt-1.5 space-y-1">
-                            {tipData.next_actions.map((action: string, i: number) => (
-                              <li key={i} className="text-[11px] text-slate-700 flex items-start gap-2">
-                                <span className="text-amber-500 mt-0.5">→</span>
-                                {action}
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
+                      <div className="mt-2">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mr-2">{t('tips.nextSteps')}</span>
+                        <p className="text-xs text-slate-800 leading-relaxed mt-0.5">{item.tip_summary}</p>
+                      </div>
 
-                      {tipData.urls && tipData.urls.length > 0 && (
-                        <div className="mt-3">
-                          <span className="text-[10px] font-bold text-amber-600 uppercase tracking-wider">{t('tips.relevantLinks')}</span>
-                          <div className="mt-1.5 space-y-1">
-                            {tipData.urls.map((url: string, i: number) => (
-                              <a key={i} href={url} target="_blank" rel="noopener noreferrer"
-                                className="block text-[11px] text-blue-600 underline underline-offset-2 truncate">
-                                {url}
-                              </a>
-                            ))}
-                          </div>
+                      <div className="mt-3 bg-gradient-to-br from-amber-50/60 to-yellow-50/60 rounded-xl p-4 border border-amber-100/60">
+                        <div className="flex items-center gap-1.5 mb-2">
+                          <Lightbulb className="w-3.5 h-3.5 text-amber-500" />
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-amber-700">{t('tips.tip')}</span>
                         </div>
-                      )}
+                        <Markdown content={item.tip_content} />
+                      </div>
 
                       <div className="mt-4 pt-3 border-t border-slate-100 flex justify-end">
                         <button
-                          onClick={() => handleChatWithTip(tip)}
+                          onClick={() => handleChatWithTip(item)}
                           className="flex items-center gap-1.5 text-[10px] font-semibold text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 px-3 py-1.5 rounded-full transition-all"
                         >
                           <MessageCircle className="w-3 h-3" />
@@ -1249,13 +1438,16 @@ export default function App() {
                     </div>
                   )
                 })}
+              <div ref={tipsSentinelRef} className="h-1" />
               </div>
             )}
           </div>
         </div>
+        )}
 
         {/* Memories Tab */}
-        <div className={`overflow-y-auto flex-1 min-h-0 bg-slate-50/40 ${activeTab === 'memories' ? '' : 'hidden'}`}>
+        {activeTab === 'memories' && (
+        <div className="overflow-y-auto flex-1 min-h-0 bg-slate-50/40">
           {/* Title — scrolls away */}
           <div className="max-w-3xl mx-auto px-3 sm:px-6 md:px-10 pt-4 sm:pt-6">
             <div className="flex flex-wrap justify-between items-center gap-3 mb-3">
@@ -1277,6 +1469,108 @@ export default function App() {
               </select>
             </div>
           </div>
+
+          {/* Add Memory button */}
+          <div className="max-w-3xl mx-auto px-3 sm:px-6 md:px-10 pb-2">
+            <button
+              onClick={() => setShowAddMemory(true)}
+              className="flex items-center gap-1.5 text-[10px] font-semibold text-slate-500 hover:text-slate-800 bg-white border border-slate-200 px-3 py-1.5 rounded-full shadow-sm hover:shadow transition-all"
+            >
+              <PenSquare className="w-3 h-3" />
+              {t('memories.addMemory')}
+            </button>
+          </div>
+
+          {/* Add Memory Modal */}
+          {showAddMemory && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/10 backdrop-blur-sm animate-in fade-in" onClick={() => { setShowAddMemory(false); setNewMemoryText(''); }}>
+              <div className="w-full max-w-md bg-white rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-slate-100 overflow-hidden animate-in zoom-in-95" onClick={e => e.stopPropagation()}>
+                {/* Header */}
+                <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+                  <div className="flex items-center gap-2">
+                    <PenSquare className="w-4 h-4 text-slate-500" />
+                    <h4 className="text-sm font-bold text-slate-800">{t('memories.addMemory')}</h4>
+                  </div>
+                  <button
+                    onClick={() => { setShowAddMemory(false); setNewMemoryText(''); }}
+                    className="text-slate-400 hover:text-slate-700 transition-colors"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                {/* Body */}
+                <div className="px-6 py-5 space-y-4">
+                  <textarea
+                    value={newMemoryText}
+                    onChange={e => setNewMemoryText(e.target.value)}
+                    placeholder={t('memories.addPlaceholder')}
+                    rows={3}
+                    className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-300/50 resize-none"
+                    autoFocus
+                  />
+
+                  <div>
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5 block">{t('memories.category')}</label>
+                    <select
+                      value={newMemoryType}
+                      onChange={e => setNewMemoryType(e.target.value)}
+                      className="w-full text-xs bg-white border border-slate-200 rounded-lg px-3 py-2 text-slate-600 cursor-pointer focus:outline-none focus:ring-2 focus:ring-slate-300/50"
+                    >
+                      {MEMORY_TYPES.map(t => (
+                        <option key={t.value} value={t.value}>{t.label}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{t('memories.confidence')}</label>
+                      <span className="text-[11px] font-mono text-slate-600">{newMemoryConfidence}/10</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="1" max="10"
+                      value={newMemoryConfidence}
+                      onChange={e => setNewMemoryConfidence(Number(e.target.value))}
+                      className="w-full h-1 bg-slate-200 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3.5 [&::-webkit-slider-thumb]:h-3.5 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-slate-600 [&::-webkit-slider-thumb]:shadow-sm [&::-moz-range-thumb]:w-3.5 [&::-moz-range-thumb]:h-3.5 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-slate-600 [&::-moz-range-thumb]:border-0"
+                    />
+                  </div>
+
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{t('memories.lifespan')}</label>
+                      <span className="text-[11px] font-mono text-slate-600">{newMemoryLifespan}/10</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="1" max="10"
+                      value={newMemoryLifespan}
+                      onChange={e => setNewMemoryLifespan(Number(e.target.value))}
+                      className="w-full h-1 bg-slate-200 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3.5 [&::-webkit-slider-thumb]:h-3.5 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-slate-600 [&::-webkit-slider-thumb]:shadow-sm [&::-moz-range-thumb]:w-3.5 [&::-moz-range-thumb]:h-3.5 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-slate-600 [&::-moz-range-thumb]:border-0"
+                    />
+                  </div>
+                </div>
+
+                {/* Footer */}
+                <div className="flex items-center gap-2 justify-end px-6 py-4 border-t border-slate-100 bg-slate-50/50">
+                  <button
+                    onClick={() => { setShowAddMemory(false); setNewMemoryText(''); }}
+                    className="text-xs text-slate-500 hover:text-slate-800 px-4 py-2 rounded-lg transition-colors"
+                  >
+                    {t('memories.cancel')}
+                  </button>
+                  <button
+                    onClick={addMemory}
+                    disabled={addingMemory || !newMemoryText.trim()}
+                    className="text-xs font-semibold bg-slate-900 text-white px-5 py-2 rounded-lg hover:bg-slate-800 disabled:opacity-40 transition-all"
+                  >
+                    {addingMemory ? t('memories.adding') : t('memories.save')}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Search bar — sticky, full width */}
           <div className="sticky top-0 z-10 px-3 sm:px-6 md:px-10 pb-3 pt-2 bg-slate-50/40 backdrop-blur-sm">
@@ -1320,7 +1614,7 @@ export default function App() {
                 {memories.map(mem => {
                   const color = CATEGORY_COLORS[mem.type] || CATEGORY_COLORS.other
                   return (
-                    <div key={mem.id} className="bg-white rounded-xl border border-slate-100 p-4 shadow-sm hover:shadow-md transition-shadow duration-200">
+                    <div key={mem.id} className="group bg-white rounded-xl border border-slate-100 p-4 shadow-sm hover:shadow-md transition-shadow duration-200">
                       <div className="flex items-start gap-3">
                         <span className={`text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-md border shrink-0 mt-0.5 ${color}`}>
                           {mem.type}
@@ -1347,6 +1641,13 @@ export default function App() {
                             )}
                           </div>
                         </div>
+                        <button
+                          onClick={() => deleteMemory(mem.id)}
+                          className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-rose-500 p-1 rounded transition-all shrink-0"
+                          title="Delete memory"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
                       </div>
                     </div>
                   )
@@ -1361,9 +1662,11 @@ export default function App() {
             )}
           </div>
         </div>
+        )}
 
         {/* Input Area */}
-        <div className={`p-3 sm:p-4 lg:p-6 bg-gradient-to-t from-white via-white to-transparent flex-shrink-0 border-t border-slate-50 ${activeTab === 'chat' ? '' : 'hidden'}`}>
+        {activeTab === 'chat' && (
+        <div className="p-3 sm:p-4 lg:p-6 bg-gradient-to-t from-white via-white to-transparent flex-shrink-0 border-t border-slate-50">
           <div className="max-w-2xl mx-auto flex items-end gap-2 sm:gap-2 bg-[#f9f9f9] border border-slate-200 rounded-2xl px-3 sm:px-4 py-2.5 shadow-sm focus-within:ring-1 focus-within:ring-slate-350 transition-all">
             <div className="text-slate-400 flex items-center justify-center h-10">
               <span className="text-lg leading-none mb-1 opacity-60">...</span>
@@ -1435,6 +1738,7 @@ export default function App() {
             </button>
           </div>
         </div>
+        )}
       </div>
 
       <SettingsModal

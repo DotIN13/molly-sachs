@@ -1,6 +1,6 @@
 fastapi
 uvicorn
-pipecat-ai[cartesia,silero,google,webrtc,rnnoise]
+pipecat-ai[cartesia,silero,google,webrtc,rnnoise]>=1.4.0
 python-dotenv
 google-genai
 chromadb

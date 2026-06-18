@@ -138,6 +138,8 @@ async def process_pending_observations(user_id: str, prefs: dict[str, str]) -> d
 
     image_paths = []
     all_windows = set()
+    latest_screen_entry = None
+    latest_screen_image_path = None
     for row in rows:
         image_path = row["image_path"]
         image_paths.append(image_path)
@@ -151,6 +153,8 @@ async def process_pending_observations(user_id: str, prefs: dict[str, str]) -> d
             if entry.get("type") == "screen":
                 windows = entry.get("windows") or []
                 all_windows.update(windows)
+                latest_screen_entry = entry
+                latest_screen_image_path = image_path
 
     windows_section = ""
     if all_windows:
@@ -198,7 +202,7 @@ async def process_pending_observations(user_id: str, prefs: dict[str, str]) -> d
 
         categories = [
             "events", "personalities", "skills", "interests",
-            "preferences", "ownerships", "relationships", "weaknesses", "goals",
+            "preferences", "ownerships", "relationships", "weaknesses",
         ]
 
         analysis_ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
@@ -278,7 +282,7 @@ async def process_pending_observations(user_id: str, prefs: dict[str, str]) -> d
                 merged_meta = {
                     **existing,
                     "type": meta["type"],
-                    "content": meta["content"] if len(meta.get("content", "")) > len(existing.get("content", "")) else existing.get("content", meta["content"]),
+                    "content": meta.get("content", existing.get("content", "")),
                     "confidence": max(meta.get("confidence", 0), existing.get("confidence", 0)),
                     "lifespan": max(meta.get("lifespan", 0), existing.get("lifespan", 0)),
                     "evidence": merged_evidence,
@@ -311,6 +315,8 @@ async def process_pending_observations(user_id: str, prefs: dict[str, str]) -> d
             "analysis_data": analysis_json,
             "raw_transcripts": raw_transcripts,
             "items": item_records,
+            "latest_screen_observation": latest_screen_entry,
+            "latest_screen_image_path": latest_screen_image_path,
         }
 
     except json.JSONDecodeError as e:

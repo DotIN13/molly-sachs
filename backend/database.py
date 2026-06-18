@@ -227,15 +227,21 @@ class AppDB:
             await self._conn.commit()
 
     async def get_insights(self, user_id: str,
-                           limit: int = 15) -> list[dict]:
+                           limit: int = 15,
+                           offset: int = 0) -> tuple[list[dict], int]:
+        count_cursor = await self._conn.execute(
+            "SELECT COUNT(*) FROM user_events WHERE user_id = ?",
+            (user_id,),
+        )
+        total = (await count_cursor.fetchone())[0]
         cursor = await self._conn.execute(
             "SELECT id, timestamp, activity_summary, raw_transcripts, "
             "context, proactive_tip FROM user_events WHERE user_id = ? "
-            "ORDER BY id DESC LIMIT ?",
-            (user_id, limit),
+            "ORDER BY id DESC LIMIT ? OFFSET ?",
+            (user_id, limit, offset),
         )
         rows = await cursor.fetchall()
-        return [dict(r) for r in rows]
+        return [dict(r) for r in rows], total
 
     async def get_proactive_tips(self, user_id: str, limit: int = 50,
                                   offset: int = 0) -> tuple[list[dict], int]:
@@ -374,24 +380,34 @@ class AppDB:
         return [dict(r) for r in rows]
 
     async def get_observations(self, user_id: str,
-                               obs_type: str | None = None,
-                               limit: int = 15) -> list[dict]:
+                                obs_type: str | None = None,
+                                limit: int = 15,
+                                offset: int = 0) -> tuple[list[dict], int]:
         if obs_type:
+            count_cursor = await self._conn.execute(
+                "SELECT COUNT(*) FROM observations WHERE user_id = ? AND type = ?",
+                (user_id, obs_type),
+            )
             cursor = await self._conn.execute(
                 "SELECT id, type, image_path, timestamp, processed "
                 "FROM observations WHERE user_id = ? AND type = ? "
-                "ORDER BY id DESC LIMIT ?",
-                (user_id, obs_type, limit),
+                "ORDER BY id DESC LIMIT ? OFFSET ?",
+                (user_id, obs_type, limit, offset),
             )
         else:
+            count_cursor = await self._conn.execute(
+                "SELECT COUNT(*) FROM observations WHERE user_id = ?",
+                (user_id,),
+            )
             cursor = await self._conn.execute(
                 "SELECT id, type, image_path, timestamp, processed "
                 "FROM observations WHERE user_id = ? "
-                "ORDER BY id DESC LIMIT ?",
-                (user_id, limit),
+                "ORDER BY id DESC LIMIT ? OFFSET ?",
+                (user_id, limit, offset),
             )
+        total = (await count_cursor.fetchone())[0]
         rows = await cursor.fetchall()
-        return [dict(r) for r in rows]
+        return [dict(r) for r in rows], total
 
     async def mark_observations_processed(self, image_paths: list) -> None:
         if not image_paths:
@@ -561,6 +577,28 @@ class VectorDB:
         except Exception as e:
             logger.warning("VectorDB: delete_by_type '{}' failed: {}", item_type, e)
             return 0
+
+    async def delete_memory(self, memory_id: str, user_id: str) -> bool:
+        """Delete a single memory entry by ID, verified against user_id.
+        Returns True if deleted, False if not found or not owned."""
+        await self.init()
+        try:
+            results = self._collection.get(
+                ids=[memory_id],
+                include=["metadatas"],
+            )
+            ids = results.get("ids", [])
+            if not ids:
+                return False
+            meta = (results.get("metadatas") or [[]])[0]
+            if not meta or meta.get("user_id") != user_id:
+                return False
+            self._collection.delete(ids=[memory_id])
+            logger.info("VectorDB: deleted memory {}", memory_id)
+            return True
+        except Exception as e:
+            logger.warning("VectorDB: delete_memory '{}' failed: {}", memory_id, e)
+            return False
 
     async def get_all(self, user_id: str, item_type: str | None = None,
                       limit: int = 50, offset: int = 0) -> tuple[list[dict], int]:

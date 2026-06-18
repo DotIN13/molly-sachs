@@ -2,8 +2,9 @@
   "type": "object",
   "properties": {
     "summary": {
-      "type": "string", "minLength": 1,
-      "description": "A long-form, detailed narrative summary (2-4 paragraphs). Describe the context, the applications and tools being used, the state of their workspace, their apparent focus and intent. Mention visible file names, project directories, code snippets, UI states, terminal output, and any other relevant details. Be specific and concrete."
+      "type": "string",
+      "minLength": 1,
+      "description": "A long-form, detailed narrative summary (2-4 paragraphs). Open with a clear statement of the user's immediate focus and inferred goal — what they are trying to accomplish right now — based on visual cues in the screenshots: the frontmost (active) window, cursor or caret position, text being typed or edited, highlighted selections, open files and tabs, scroll position, and frontmost application context. Then describe the broader context, applications and tools being used, the state of their workspace, their apparent intent. Mention visible file names, project directories, code snippets, UI states, terminal output, and any other relevant details. Be specific and concrete."
     },
     "events": {
       "type": "array",
@@ -12,7 +13,8 @@
         "type": "object",
         "properties": {
           "event": {
-            "type": "string", "minLength": 1,
+            "type": "string",
+            "minLength": 1,
             "description": "A specific action or event inferred. 1-2 descriptive sentences."
           },
           "confidence": {
@@ -22,7 +24,8 @@
             "description": "Confidence score 1-10. 10 = absolutely certain from visual evidence."
           },
           "evidence": {
-            "type": "string", "minLength": 1,
+            "type": "string",
+            "minLength": 1,
             "description": "1-2 sentences citing specific visual details from the screenshots that support this."
           },
           "lifespan": {
@@ -32,11 +35,15 @@
             "description": "How long this observation is likely to stay relevant. 1 = short-lived (a one-time event that happened right now), 10 = long-lasting insight or pattern (e.g., a stable personality trait, skill, or preference). Rate by considering urgency (immediate time pressure vs no deadline) and durability (will this matter 24 hours from now?)."
           }
         },
-        "required": ["event", "confidence", "evidence", "lifespan"],
+        "required": [
+          "event",
+          "confidence",
+          "evidence",
+          "lifespan"
+        ],
         "additionalProperties": false
       },
-      "minItems": 2,
-      "maxItems": 4
+      "minItems": 2
     },
     "personalities": {
       "type": "array",
@@ -45,7 +52,8 @@
         "type": "object",
         "properties": {
           "personality": {
-            "type": "string", "minLength": 1,
+            "type": "string",
+            "minLength": 1,
             "description": "A personality trait observed. 1-2 descriptive sentences."
           },
           "confidence": {
@@ -55,7 +63,8 @@
             "description": "Confidence score 1-10."
           },
           "evidence": {
-            "type": "string", "minLength": 1,
+            "type": "string",
+            "minLength": 1,
             "description": "1-2 sentences citing visual details that support this observation."
           },
           "lifespan": {
@@ -65,11 +74,15 @@
             "description": "How long this observation is likely to stay relevant. 1 = short-lived, 10 = long-lasting insight or pattern. Rate by considering urgency and durability."
           }
         },
-        "required": ["personality", "confidence", "evidence", "lifespan"],
+        "required": [
+          "personality",
+          "confidence",
+          "evidence",
+          "lifespan"
+        ],
         "additionalProperties": false
       },
-      "minItems": 2,
-      "maxItems": 5
+      "minItems": 0
     },
     "skills": {
       "type": "array",
@@ -78,7 +91,8 @@
         "type": "object",
         "properties": {
           "skill": {
-            "type": "string", "minLength": 1,
+            "type": "string",
+            "minLength": 1,
             "description": "A technical skill demonstrated. 1-2 descriptive sentences."
           },
           "confidence": {
@@ -88,7 +102,8 @@
             "description": "Confidence score 1-10."
           },
           "evidence": {
-            "type": "string", "minLength": 1,
+            "type": "string",
+            "minLength": 1,
             "description": "1-2 sentences citing visual details that support this."
           },
           "lifespan": {
@@ -98,11 +113,15 @@
             "description": "How long this observation is likely to stay relevant. 1 = short-lived, 10 = long-lasting insight or pattern. Rate by considering urgency and durability."
           }
         },
-        "required": ["skill", "confidence", "evidence", "lifespan"],
+        "required": [
+          "skill",
+          "confidence",
+          "evidence",
+          "lifespan"
+        ],
         "additionalProperties": false
       },
-      "minItems": 1,
-      "maxItems": 3
+      "minItems": 0
     },
     "interests": {
       "type": "array",
@@ -111,7 +130,8 @@
         "type": "object",
         "properties": {
           "interest": {
-            "type": "string", "minLength": 1,
+            "type": "string",
+            "minLength": 1,
             "description": "A topic or domain of active engagement. 1-2 descriptive sentences."
           },
           "confidence": {
@@ -121,7 +141,8 @@
             "description": "Confidence score 1-10."
           },
           "evidence": {
-            "type": "string", "minLength": 1,
+            "type": "string",
+            "minLength": 1,
             "description": "1-2 sentences citing visual details that support this."
           },
           "lifespan": {
@@ -131,11 +152,15 @@
             "description": "How long this observation is likely to stay relevant. 1 = short-lived, 10 = long-lasting insight or pattern. Rate by considering urgency and durability."
           }
         },
-        "required": ["interest", "confidence", "evidence", "lifespan"],
+        "required": [
+          "interest",
+          "confidence",
+          "evidence",
+          "lifespan"
+        ],
         "additionalProperties": false
       },
-      "minItems": 1,
-      "maxItems": 3
+      "minItems": 0
     },
     "preferences": {
       "type": "array",
@@ -144,7 +169,8 @@
         "type": "object",
         "properties": {
           "preference": {
-            "type": "string", "minLength": 1,
+            "type": "string",
+            "minLength": 1,
             "description": "A tool, workflow, or UI preference observed. 1-2 descriptive sentences."
           },
           "confidence": {
@@ -154,7 +180,8 @@
             "description": "Confidence score 1-10."
           },
           "evidence": {
-            "type": "string", "minLength": 1,
+            "type": "string",
+            "minLength": 1,
             "description": "1-2 sentences citing visual details that support this."
           },
           "lifespan": {
@@ -164,11 +191,15 @@
             "description": "How long this observation is likely to stay relevant. 1 = short-lived, 10 = long-lasting insight or pattern. Rate by considering urgency and durability."
           }
         },
-        "required": ["preference", "confidence", "evidence", "lifespan"],
+        "required": [
+          "preference",
+          "confidence",
+          "evidence",
+          "lifespan"
+        ],
         "additionalProperties": false
       },
-      "minItems": 1,
-      "maxItems": 3
+      "minItems": 0
     },
     "ownerships": {
       "type": "array",
@@ -177,7 +208,8 @@
         "type": "object",
         "properties": {
           "ownership": {
-            "type": "string", "minLength": 1,
+            "type": "string",
+            "minLength": 1,
             "description": "A project, tool, or asset owned. 1-2 descriptive sentences."
           },
           "confidence": {
@@ -187,7 +219,8 @@
             "description": "Confidence score 1-10."
           },
           "evidence": {
-            "type": "string", "minLength": 1,
+            "type": "string",
+            "minLength": 1,
             "description": "1-2 sentences citing visual details that support this."
           },
           "lifespan": {
@@ -197,11 +230,15 @@
             "description": "How long this observation is likely to stay relevant. 1 = short-lived, 10 = long-lasting insight or pattern. Rate by considering urgency and durability."
           }
         },
-        "required": ["ownership", "confidence", "evidence", "lifespan"],
+        "required": [
+          "ownership",
+          "confidence",
+          "evidence",
+          "lifespan"
+        ],
         "additionalProperties": false
       },
-      "minItems": 0,
-      "maxItems": 3
+      "minItems": 0
     },
     "relationships": {
       "type": "array",
@@ -210,8 +247,9 @@
         "type": "object",
         "properties": {
           "relationship": {
-            "type": "string", "minLength": 1,
-            "description": "A relationship the user has. 1-2 descriptive sentences."
+            "type": "string",
+            "minLength": 1,
+            "description": "A relationship the user has, specifically what relationship and who. 1-2 descriptive sentences."
           },
           "confidence": {
             "type": "integer",
@@ -220,7 +258,8 @@
             "description": "Confidence score 1-10."
           },
           "evidence": {
-            "type": "string", "minLength": 1,
+            "type": "string",
+            "minLength": 1,
             "description": "1-2 sentences citing visual details that support this."
           },
           "lifespan": {
@@ -230,11 +269,15 @@
             "description": "How long this observation is likely to stay relevant. 1 = short-lived, 10 = long-lasting insight or pattern. Rate by considering urgency and durability."
           }
         },
-        "required": ["relationship", "confidence", "evidence", "lifespan"],
+        "required": [
+          "relationship",
+          "confidence",
+          "evidence",
+          "lifespan"
+        ],
         "additionalProperties": false
       },
-      "minItems": 0,
-      "maxItems": 3
+      "minItems": 0
     },
     "weaknesses": {
       "type": "array",
@@ -243,7 +286,8 @@
         "type": "object",
         "properties": {
           "weakness": {
-            "type": "string", "minLength": 1,
+            "type": "string",
+            "minLength": 1,
             "description": "A potential inefficiency or risk observed. Be constructive. 1-2 descriptive sentences."
           },
           "confidence": {
@@ -253,7 +297,8 @@
             "description": "Confidence score 1-10."
           },
           "evidence": {
-            "type": "string", "minLength": 1,
+            "type": "string",
+            "minLength": 1,
             "description": "1-2 sentences citing visual details that support this."
           },
           "lifespan": {
@@ -263,11 +308,15 @@
             "description": "How long this observation is likely to stay relevant. 1 = short-lived, 10 = long-lasting insight or pattern. Rate by considering urgency and durability."
           }
         },
-        "required": ["weakness", "confidence", "evidence", "lifespan"],
+        "required": [
+          "weakness",
+          "confidence",
+          "evidence",
+          "lifespan"
+        ],
         "additionalProperties": false
       },
-      "minItems": 1,
-      "maxItems": 3
+      "minItems": 0
     },
     "goals": {
       "type": "array",
@@ -276,7 +325,8 @@
         "type": "object",
         "properties": {
           "goal": {
-            "type": "string", "minLength": 1,
+            "type": "string",
+            "minLength": 1,
             "description": "An abstract objective inferred. 1-2 descriptive sentences."
           },
           "confidence": {
@@ -286,7 +336,8 @@
             "description": "Confidence score 1-10."
           },
           "evidence": {
-            "type": "string", "minLength": 1,
+            "type": "string",
+            "minLength": 1,
             "description": "1-2 sentences citing visual details that support this."
           },
           "lifespan": {
@@ -296,11 +347,15 @@
             "description": "How long this observation is likely to stay relevant. 1 = short-lived, 10 = long-lasting insight or pattern. Rate by considering urgency and durability."
           }
         },
-        "required": ["goal", "confidence", "evidence", "lifespan"],
+        "required": [
+          "goal",
+          "confidence",
+          "evidence",
+          "lifespan"
+        ],
         "additionalProperties": false
       },
-      "minItems": 1,
-      "maxItems": 3
+      "minItems": 0
     }
   },
   "required": [
@@ -312,8 +367,7 @@
     "preferences",
     "ownerships",
     "relationships",
-    "weaknesses",
-    "goals"
+    "weaknesses"
   ],
   "additionalProperties": false
 }

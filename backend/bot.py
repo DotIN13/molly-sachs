@@ -30,7 +30,6 @@ from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair, LLMUserAggregatorParams
 from pipecat.turns.user_turn_strategies import UserTurnStrategies
 from pipecat.turns.user_start.vad_user_turn_start_strategy import VADUserTurnStartStrategy
-from pipecat.adapters.schemas.tools_schema import ToolsSchema
 from pipecat.frames.frames import (
     TextFrame,
     AudioRawFrame,
@@ -52,11 +51,15 @@ import database
 from db.settings import Settings
 
 SYSTEM_PROMPT = (
-    "你是Molly，和用户是好朋友，用微信聊天的语气回复。"
-    "不要用markdown格式，除非用户明确要求，否则不要用bullet points或者列表。"
-    "回复要简短自然，像好朋友间发微信一样。适当用一些emoji和口语化表达，但不要太频繁。"
-    "你可以使用search_memory工具查找用户过去的活动和记忆。聊到过去的事情、回忆、习惯或需要context时，可以先调用search_memory查询后再回复。"
-    "你可以使用add_memory工具来记住用户的喜好、习惯、技能、目标等信息。当用户在对话中透露了关于自己的新信息（比如提到的偏好、正在做的项目、兴趣爱好、性格特点等），用add_memory来记录，这样以后聊天时可以通过search_memory查找到。"
+    '你是Molly，和用户是好朋友，用微信聊天的语气回复。'
+    '不要用markdown格式，除非用户明确要求或者确实需要markdown来解释代码、表格、数学证明等，否则不要用bullet points或者列表。'
+    '回复要简短自然，像好朋友间发微信一样。适当使用口语化表达，不要频繁使用emoji。不要总是追问用户细节，不要过度延伸。'
+    '你可以使用search_memory工具查找用户过去的活动和记忆。聊到过去的事情、回忆、习惯或需要context时，可以先调用search_memory查询后再回复。'
+    '你可以使用add_memory工具来记住用户透露的关于自己的任何信息。每当用户说了关于自己的新事实，可以使用add_memory来记录。'
+    '比如用户说"我最近在学Python"→ category="skill"；用户说"我喜欢用VSCode"→ category="preference"；'
+    '用户说"我对机器学习很感兴趣"→ category="interest"；用户说"我想学炒股"、"我想减肥"、"我打算考驾照"→ category="goal"；'
+    '用户说"我是社恐"→ category="trait"；用户说"我在腾讯工作"→ category="relationship"；'
+    '用户说"我有一个GitHub项目叫xxx"→ category="ownership"；用户说"我总是拖延"→ category="weakness"。'
 )
 
 # Settings that require tearing down and rebuilding the pipeline
@@ -104,7 +107,8 @@ def _build_messages(past_messages: list, timezone: str | None = None) -> list:
     system_with_time = f"{SYSTEM_PROMPT}现在用户那边的设备时间是{now_str}，回复的时候注意事情时间关系。"
     result = [{"role": "system", "content": system_with_time}]
     for msg in past_messages:
-        result.append({"role": msg["role"], "content": msg["content"]})
+        role = "assistant" if msg["role"] == "tip" else msg["role"]
+        result.append({"role": role, "content": msg["content"]})
     return result
 
 
@@ -125,10 +129,19 @@ def make_search_memory(user_id: str, api_key: str, send_fn=None):
     avoiding race conditions between concurrent sessions."""
 
     async def search_memory(params: FunctionCallParams, query: str):
-        """Searches the user's past activity memory and context for relevant information.
+        """Search the user's long-term memory for relevant information.
+
+        The memory stores categorized facts about the user: traits (personality),
+        preferences (tools, workflows, habits), interests (topics they care about),
+        skills (technical abilities), goals (learning or achievement targets),
+        relationships (workplaces, teams, people), ownerships (projects, assets),
+        weaknesses (areas for improvement), and events (past activities).
+
+        Use this when the user asks about their past, mentions something you should
+        recall context for, or when you need background before giving advice.
 
         Args:
-            query: The search string to look up in the memory vector database.
+            query: A natural-language search string to find semantically similar memories.
         """
         try:
             if send_fn:
@@ -191,11 +204,20 @@ def make_add_memory(user_id: str, api_key: str, send_fn=None):
                          confidence: int = 5, lifespan: int = 5):
         """Add an inferred fact about the user to their long-term memory.
 
-        Use this when the user reveals something about themselves — preferences,
-        habits, projects, personality traits, skills, goals, etc.
+        Use this whenever the user reveals something about themselves. Be proactive — better to record than forget.
+        Category mapping examples:
+        - trait: "I'm an introvert", "I'm very detail-oriented"
+        - preference: "I prefer dark mode", "I like working late at night"
+        - interest: "I'm really into machine learning", "I love indie games"
+        - skill: "I've been learning React", "I can speak Japanese"
+        - goal: "I want to learn stock trading", "I'm trying to lose weight", "I plan to get a driver's license"
+        - relationship: "I work at Tencent", "I'm on the backend team"
+        - ownership: "I have a project called MyApp", "I run a blog"
+        - weakness: "I procrastinate a lot", "I'm bad at time management"
+        - event: "I just finished a marathon today"
 
         Args:
-            fact: A concise sentence describing what was learned (e.g., "The user prefers dark mode IDEs").
+            fact: A concise sentence describing what was learned.
             category: The type of fact. One of: trait, preference, interest, skill, goal, relationship, ownership, weakness, event, other.
             confidence: How certain you are (1-10). Use 5+ for clear statements, lower for vague hints.
             lifespan: How long this stays relevant. 1 = short-lived, 10 = long-lasting insight.
@@ -259,8 +281,7 @@ def make_add_memory(user_id: str, api_key: str, send_fn=None):
 
                 merged = {
                     "type": category,
-                    "content": f"{category}: {fact}" if len(fact) > len(existing.get("content", ""))
-                               else existing.get("content", f"{category}: {fact}"),
+                    "content": f"{category}: {fact}",
                     "timestamp": existing.get("timestamp", ts),
                     "user_id": user_id,
                     "user_event_id": existing.get("user_event_id", "0"),
@@ -469,9 +490,6 @@ async def start_pipecat_session(
                 OutputTransportMessageFrame(message=msg)
             )
         )
-        llm.register_direct_function(memory_tool)
-        llm.register_direct_function(add_memory_tool)
-
         stt_provider = prefs.get("stt_provider", "soniox")
         stt_language = prefs.get("stt_language", "zh")
         if stt_provider == "cartesia":
@@ -515,8 +533,7 @@ async def start_pipecat_session(
         past_messages = await database.app.get_messages(conv_id, user_id)
         formatted_messages = _build_messages(past_messages, prefs.get("timezone"))
 
-        tools = ToolsSchema(standard_tools=[memory_tool, add_memory_tool])
-        context = LLMContext(messages=formatted_messages, tools=tools)
+        context = LLMContext(messages=formatted_messages, tools=[memory_tool, add_memory_tool])
         vad_params = VADParams(
             start_secs=0.2, stop_secs=0.8, confidence=0.75, min_volume=0.1,
         )

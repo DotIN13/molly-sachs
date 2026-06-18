@@ -9,4 +9,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('system-idle-changed', handler);
   },
   showNotification: (opts) => ipcRenderer.invoke('show-notification', opts),
+  onNavigateTips: (callback) => {
+    const handler = () => callback();
+    ipcRenderer.on('navigate-tips', handler);
+    return () => ipcRenderer.removeListener('navigate-tips', handler);
+  },
 });
