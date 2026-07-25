@@ -1,140 +1,129 @@
 # Molly Sachs
 
-A real-time AI voice companion desktop app with workspace awareness. Molly observes your
-screen, builds a long-term memory of your traits and goals, generates proactive tips, and
-chats with you naturally via voice or text.
+A real-time AI voice & text companion desktop app. Molly is the **interaction layer** — a
+voice/chat client you can use on its own. When you point it at a [hypogum](../hypogum)
+backend (the memory & autonomy brain), Molly gains long-term memory, a calendar, and the
+ability to delegate background agent tasks.
+
+> **Two-repo design.** Molly Sachs = interaction (voice + desktop UI + chat LLM).
+> **hypogum** = memory + autonomy (screen observation, a markdown memory wiki with a
+> semantic index, calendars, and an agent that runs tasks). Molly talks to a per-user
+> hypogum instance over its local REST API. Without a hypogum URL configured, Molly is a
+> plain chat client and all memory/work features stay hidden.
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────┐
-│  Electron Desktop App (React 19 + TypeScript)   │
-│  ┌──────────┐ ┌──────────┐ ┌─────────────────┐ │
-│  │ 6 Tabs   │ │ Settings │ │ Observer Engine  │ │
-│  │ chat     │ │ Modal    │ │ screen/camera    │ │
-│  │ screen   │ │          │ │ capture + upload │ │
-│  │ camera   │ │          │ └─────────────────┘ │
-│  │ insights │ │          │                      │
-│  │ tips     │ │          │  WebRTC DataChannel  │
-│  │ memories │ │          │  + Audio Track       │
-│  └──────────┘ └──────────┘ ─────────────────────│
-└──────────────────────┬──────────────────────────┘
-                       │ HTTP + WebRTC
-┌──────────────────────┴──────────────────────────┐
-│  Python FastAPI Backend (port 8000)              │
-│                                                  │
-│  ┌───────────┐ ┌──────────┐ ┌────────────────┐ │
-│  │ REST API  │ │ Pipecat  │ │ Processor      │ │
-│  │ auth      │ │ WebRTC   │ │ screenshots →  │ │
-│  │ settings  │ │ pipeline │ │ Gemini analysis│ │
-│  │ memories  │ │ STT+TTS  │ │ → vector store │ │
-│  │ tips      │ │ + LLM    │ │ + proactive tip│ │
-│  └─────┬─────┘ └──────────┘ └────────────────┘ │
-│        │                                         │
-│  ┌─────┴──────────────────────────────────┐     │
-│  │  SQLite (app.db)   ChromaDB (vectors)  │     │
-│  │  users, events,    events collection   │     │
-│  │  conversations,    per-user metadata   │     │
-│  │  messages,         type=goal/trait/    │     │
-│  │  observations      skill/preference... │     │
-│  └────────────────────────────────────────┘     │
-└─────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────┐
+│  Electron Desktop App (React 19 + TypeScript + Vite)       │
+│                                                            │
+│  Sidebar ── two modes ─────────────────────────────────┐  │
+│   • Chat   : new chat · ⌘K search · conversation list   │  │
+│   • Memory : work-view tabs (calendar/artifacts/plans/  │  │
+│              work/observers) + grouped memory pages     │  │
+│              (goals·entities·traits·struggles)          │  │
+│                                                            │
+│  Chat transcript renders tool-call cards + markdown.       │
+│  Memory mode is enabled only when hypogum is reachable.    │
+└───────────────┬───────────────────────┬───────────────────┘
+                │ HTTP + WebRTC          │ HTTP (per-user URL)
+┌───────────────┴───────────────┐  ┌────┴───────────────────────┐
+│  Molly Backend — FastAPI :8000 │  │  hypogum (separate repo)    │
+│                                │  │  local REST API :8056       │
+│  • Auth (JWT) + settings       │  │                             │
+│  • SQLite: users, convos, msgs │  │  • memory wiki + semantic   │
+│  • Pipecat WebRTC pipeline     │  │    index (goals/entities/…) │
+│      STT → VAD → LLM → TTS     │  │  • calendar (observed/      │
+│  • Chat LLM: Google / OpenAI / │  │    planned/suggested)       │
+│    Anthropic / DeepSeek        │  │  • runs / artifacts / plans │
+│  • Chat tools ─────────────────┼──┼─▶ search_memory, add_memory │
+│    (only when hypogum is set)  │  │    read_memory_page,        │
+│  • hypogum_client (async REST) │  │    fetch_calendar,          │
+│                                │  │    list_artifacts, run_task │
+└────────────────────────────────┘  └─────────────────────────────┘
 ```
 
-**Tech Stack**:
-- **Frontend**: Electron 42 + React 19 + TypeScript + Vite 8 + Tailwind CSS 3
-- **Backend**: Python FastAPI + Pipecat-ai WebRTC pipeline
-- **LLM**: Google Gemini 3.1 Flash Lite (analysis + proactive tips + chat)
-- **Embeddings**: Gemini Embedding-002 (semantic search + deduplication)
-- **Voice**: Cartesia TTS, Soniox or Cartesia STT, Silero VAD
-- **Memory**: SQLite (relational), ChromaDB (vector embeddings, persistent)
+**Tech Stack**
+- **Frontend**: Electron 42 · React 19 · TypeScript · Vite 8 · Tailwind CSS 3 · react-i18next
+- **Backend**: Python 3.12 · FastAPI · Pipecat-ai 1.6 (WebRTC)
+- **Chat LLM**: selectable per user — Google Gemini · OpenAI · Anthropic Claude · DeepSeek
+- **Voice**: Cartesia TTS · Soniox or Cartesia STT · Silero VAD · RNNoise
+- **Storage (Molly)**: SQLite only — users, conversations, messages, per-user settings
+- **Memory/autonomy**: delegated to **hypogum** over REST (Molly stores no vector data)
 
 ---
 
 ## Features
 
-### Six Tabs
+### Sidebar: Chat / Memory
 
-| Tab | Purpose |
-|-----|---------|
-| **Chat** | Voice or text conversation with Molly. WebRTC audio for TTS output. |
-| **Screen** | Timeline of desktop screenshot captures with thumbnail previews. |
-| **Camera** | Timeline of webcam snapshot captures. |
-| **Insights** | AI-generated analysis reports from Gemini — narrative summaries, events, personality traits, skills, interests, preferences, weaknesses. |
-| **Tips** | Proactive suggestions generated by matching your goals to current activity. Each tip targets a specific focus area with concrete advice, next steps, links, and coding-agent prompts. |
-| **Memories** | Browse, search, add, and delete your long-term memory entries across all categories (traits, preferences, interests, skills, goals, relationships, ownerships, weaknesses, events). |
+The app has two top-level modes. **Chat** works with no backend beyond Molly itself.
+**Memory** unlocks only when a reachable hypogum URL is configured (health-checked every
+15 s; if it drops, you snap back to Chat).
 
-### Desktop Observer
+| Mode | Sidebar | Main view |
+|------|---------|-----------|
+| **Chat** | New chat · ⌘K search popup · conversation list | The conversation (voice + text) |
+| **Memory** | ⌘K search · memory pages grouped by category (goals · entities · traits · struggles) | Work-view tabs in the header |
 
-The Electron app captures periodic screenshots and camera snapshots at configurable
-intervals. Captures are uploaded to the backend as JPEG base64, stored on disk, and
-marked for processing. The observer respects system idle/lock state — pausing when
-you're away, resuming when you return.
+Work-view tabs (Memory mode): **Calendar · Artifacts · Plans · Work · Observers** — all
+served live from the connected hypogum instance.
 
-### Workspace Analysis (Processor)
+### Voice & text chat (WebRTC)
 
-On a configurable interval (or manually triggered), the processor:
+The chat pipeline runs via Pipecat over WebRTC:
 
-1. Gathers unprocessed screenshots (latest N, capped by `MOLLY_MAX_ARTEFACTS`)
-2. Reads window titles from capture metadata
-3. Sends a multimodal prompt (text + JPEG images) to Gemini 3.1 Flash Lite
-4. Gemini analyzes the screenshots for:
-   - **Summary** — 2-4 paragraph narrative of current activity with inferred focus/goal
-   - **Events** — specific actions (required, min 2)
-   - **Personalities**, **Skills**, **Interests**, **Preferences**, **Ownerships**, **Relationships**, **Weaknesses** — optional categories
-5. Each extracted item is embedded (Gemini Embedding-002) and stored in ChromaDB
-6. Before storage, new items are deduplicated against existing entries (cosine similarity ≥ 0.85) — similar facts are merged rather than duplicated
-7. A proactive tip is generated and attached to the analysis event
+- **Audio in** → RNNoise → audio-level meter → VAD (Silero) → STT (Soniox/Cartesia) → text
+- **LLM** (selected provider) → response → text chunking → TTS (Cartesia) → **audio out**
 
-All category caps and confidence thresholds are configurable via environment variables.
+Voice mode toggles on/off (mic muted + TTS silenced when off). Text chat works in parallel
+over the DataChannel with or without voice. Conversation history persists in SQLite, and
+you can hot-switch conversations without tearing down the WebRTC connection.
 
-### Proactive Tips
+### Selectable chat LLM
 
-After each processor run, the proactive tip engine:
+Pick the chat provider and model in **Settings → API Config**:
 
-1. Loads recent events from ChromaDB
-2. Searches for semantically similar **goals** (user-defined or AI-discovered)
-3. Searches for semantically similar **traits** (personality, skills, interests, etc.)
-4. Loads the latest screen observation metadata (window titles) and the **actual screenshot image** as multimodal input
-5. Generates 0-5 tips via Gemini — one per distinct focus area if multitasking
-6. Each tip includes:
-   - `goal` — the specific focus area (research question, project goal, learning objective, etc.)
-   - `tip_summary` — 1-2 sentence executive summary
-   - `tip_content` — rich markdown with advice, next steps, links, and optionally copy-paste coding-agent prompts (for opencode, Claude Code, etc.)
+| Provider | Default model | Key |
+|----------|---------------|-----|
+| Google Gemini | `gemini-3.1-flash-lite` | `gemini_api_key` |
+| OpenAI | `gpt-4.1` | `openai_api_key` |
+| Anthropic Claude | `claude-sonnet-4-6` | `anthropic_api_key` |
+| DeepSeek | `deepseek-chat` | `deepseek_api_key` |
 
-Tips are displayed in the Tips tab as a timeline. Desktop notifications alert you to new
-tips — clicking a notification brings the app to the front and switches to the Tips tab.
+Leave the model field blank to use the provider default. Changing provider/model/key
+rebuilds the pipeline transparently.
 
-### Long-Term Memory
+### Chat tools (memory & autonomy)
 
-Molly builds a persistent memory of who you are. Entries are stored in ChromaDB as vector
-embeddings with rich metadata. Three paths lead to memory:
+When a hypogum backend is configured, Molly's LLM gains six tools that call the user's
+hypogum instance. Each tool call — and its result — is recorded to the conversation and
+rendered as a collapsible **tool card** in the transcript.
 
-1. **Passive (chat)**: When you reveal info in conversation, the LLM calls `add_memory`
-2. **Passive (processor)**: Screen analysis extracts traits from your workspace behavior
-3. **Manual (UI)**: You add entries directly in the Memories tab
+| Tool | What it does |
+|------|--------------|
+| `search_memory` | Semantic search over the user's memory wiki |
+| `read_memory_page` | Read a specific memory page in full |
+| `add_memory` | Queue the user's statement to hypogum's **ingest** inbox; the ingest agent categorizes and files it (Molly does not categorize) |
+| `fetch_calendar` | Look up observed / planned / suggested calendar entries |
+| `list_artifacts` | List deliverables produced by background agent runs |
+| `run_task` | Delegate a background task to the hypogum agent; returns immediately, then narrates the result by voice when it completes |
 
-Each entry has:
-- **Category**: trait, preference, interest, skill, goal, relationship, ownership, weakness, event, other
-- **Content**: a concise fact sentence
-- **Confidence** (1-10): how certain the system is
-- **Lifespan** (1-10): how long it stays relevant
-- **Evidence**: chronological log of supporting observations
+`run_task` completion is **LLM-in-the-loop**: when the background run finishes, a briefing
+is injected into the live context and one inference is triggered, so Molly narrates the
+outcome in her own words through the normal TTS path.
 
-### Voice Chat (WebRTC)
+### Memory pages
 
-The chat pipeline runs via Pipecat-ai over WebRTC:
+Memory pages live in hypogum and are browsed from Molly's sidebar, grouped by category.
+Clicking a page opens it in the main view with **in-place markdown editing** (saved back to
+hypogum via `PUT /api/v1/memory/page`).
 
-- **Audio in** → Noise suppression → Audio Level → VAD (Silero) → STT (Soniox/Cartesia) → transcribed text
-- **LLM** (Gemini) with two tools: `search_memory` and `add_memory`
-- **Response** → text chunking → TTS (Cartesia) → Audio out
+### Calendar
 
-Voice mode can be toggled on/off. When off, the mic is muted and TTS is silenced. Text
-chat works in parallel via the DataChannel — you can type messages with or without voice
-mode active.
-
-Conversation history persists in SQLite. Hot-switching conversations is supported without
-tearing down the WebRTC connection.
+Day and Apple-style week views. Click any event to open a detail drawer showing its full
+info, accept/dismiss suggested blocks, run any linked agent tasks, or launch an ad-hoc
+agent run seeded from the event.
 
 ---
 
@@ -143,211 +132,104 @@ tearing down the WebRTC connection.
 ```
 molly-sachs/
 ├── backend/
-│   ├── main.py               # FastAPI server — all REST endpoints
-│   ├── bot.py                # WebRTC pipeline (Pipecat), LLM tools, system prompt
-│   ├── database.py           # SQLite (AppDB) + ChromaDB (VectorDB) singletons
-│   ├── processor.py          # Screenshot analysis pipeline
-│   ├── proactive.py          # Proactive tip generation engine
-│   ├── auth.py               # JWT auth, password hashing
-│   ├── config.py             # Paths, CORS, ICE servers, env helpers
-│   ├── mailer.py             # SMTP email verification
-│   ├── ratelimit.py          # In-memory rate limiter
+│   ├── main.py            # FastAPI server — auth, settings, conversations, WebRTC
+│   ├── bot.py             # Pipecat WebRTC pipeline, chat LLM selection, tools, prompts
+│   ├── hypogum_client.py  # Async REST client to the user's hypogum instance
+│   ├── database.py        # SQLite (AppDB): users, conversations, messages, observations
+│   ├── auth.py            # JWT auth + password hashing (pwdlib)
+│   ├── config.py          # Paths, CORS, ICE servers, env helpers
+│   ├── mailer.py          # SMTP email verification
+│   ├── ratelimit.py       # In-memory rate limiter
 │   ├── requirements.txt
-│   ├── .env.example
 │   ├── db/
-│   │   └── settings.py       # Per-user encrypted settings (Fernet)
-│   └── prompts/
-│       ├── analysis_prompt.md        # Gemini instruction for screenshot analysis
-│       ├── analysis_schema.json      # JSON schema for analysis output
-│       ├── proactive_prompt.md       # Gemini instruction for tip generation
-│       └── proactive_schema.json     # JSON schema for proactive tip output
+│   │   └── settings.py    # Per-user settings; API keys encrypted at rest (Fernet)
+│   └── scripts/           # One-off maintenance scripts
 │
 ├── frontend/
-│   ├── package.json
-│   ├── vite.config.ts
-│   ├── tailwind.config.js
-│   ├── electron/
-│   │   ├── main.cjs           # Electron main process
-│   │   └── preload.cjs        # Context bridge (IPC API for renderer)
+│   ├── electron/          # main.cjs + preload.cjs (context bridge)
 │   └── src/
-│       ├── main.tsx            # React entry point
-│       ├── App.tsx             # Main application (tabs, state, WebRTC, observers)
-│       ├── config.ts           # API URL, token storage, platform detection
+│       ├── App.tsx        # Shell: sidebar modes, header tabs, chat, WebRTC wiring
+│       ├── hypogum.ts     # REST client for the connected hypogum instance
+│       ├── config.ts      # API URL, token storage, platform detection
 │       ├── components/
-│       │   ├── SettingsModal.tsx    # Tabbed settings modal
-│       │   ├── Markdown.tsx         # Markdown renderer (code highlight + KaTeX)
-│       │   ├── ObservationCard.tsx  # Screenshot/camera thumbnail card
-│       │   └── EmptyState.tsx       # Empty state placeholder
-│       ├── hooks/
-│       │   ├── useWebRTC.ts         # RTCPeerConnection + DataChannel management
-│       │   └── useAudioVisualizer.ts # Mic level visualization
-│       ├── contexts/
-│       │   └── AuthContext.tsx       # Auth state, login/register/verify
-│       ├── observers/
-│       │   └── index.ts             # Screen/camera capture scheduling + upload
-│       ├── pages/
-│       │   └── Login.tsx            # Login, register, email verification UI
-│       └── i18n/
-│           ├── config.ts            # i18next init
-│           └── locales/
-│               ├── en.json          # English translations
-│               └── zh.json          # Chinese translations
+│       │   ├── CalendarTab.tsx / CalendarEventDetail.tsx  # day+week views, event drawer
+│       │   ├── MemoryDetailView.tsx    # memory page viewer + markdown editor
+│       │   ├── ToolCallCard.tsx        # tool-call transcript cards
+│       │   ├── WorkTab.tsx / PlansTab.tsx / ArtifactsTab.tsx / ObserversTab.tsx
+│       │   ├── SettingsModal.tsx       # LLM / speech / hypogum settings
+│       │   └── Markdown.tsx, EmptyState.tsx, ui/…
+│       ├── hooks/         # useWebRTC, useAudioVisualizer
+│       ├── contexts/      # AuthContext
+│       ├── pages/         # Login (register + email verification)
+│       └── i18n/          # react-i18next (en.json / zh.json)
 │
-└── data/                    # Runtime data (gitignored)
-    ├── app.db               # SQLite database
-    ├── chroma.db/           # ChromaDB persistent storage
-    └── observations/        # Screen/camera captures organized by date
-        └── YYYY-MM-DD/
-            ├── entries/     # JSON metadata per capture
-            └── artefacts/   # JPEG images per capture
+└── data/                  # Runtime data (gitignored): app.db (SQLite)
 ```
-
----
-
-## Data Flow: Screenshot → Analysis → Tip
-
-```
-Observer captures screenshot
-        │
-        ▼
-POST /api/observations
-  → JPEG saved to disk
-  → JSON entry saved (windows, timestamp)
-  → SQLite observations row (processed=0)
-        │
-        ▼ (on interval or manual trigger)
-POST /api/processor/trigger
-  → Load unprocessed observations
-  → Read window titles from entries
-  → Gemini 3.1 Flash Lite (multimodal)
-      Input: analysis_prompt.md + windows + JPEG images
-      Schema: analysis_schema.json
-      Output: summary, events, traits, skills, interests, ...
-        │
-        ▼
-  → Filter by confidence ≥ threshold
-  → Embed each item (Gemini Embedding-002)
-  → Deduplicate against ChromaDB (cosine ≥ 0.85)
-  → Merge similar items or add new ones
-  → Mark observations processed
-  → Save event to SQLite user_events
-        │
-        ▼
-Proactive tip generation (proactive.py)
-  → Load recent events from ChromaDB
-  → Semantic search for matching goals
-  → Semantic search for matching traits
-  → Build prompt with goals + events + summary + traits
-  → Attach latest screenshot as multimodal input
-  → Gemini 3.1 Flash Lite
-      Schema: proactive_schema.json
-      Output: {"tips": [{"goal", "tip_summary", "tip_content"}]}
-  → Store as JSON in user_events.proactive_tip
-        │
-        ▼
-Frontend polls GET /api/proactive/tips
-  → Desktop notification if new tips detected
-  → Tips tab renders cards with goal + summary + markdown content
-```
-
----
-
-## Memory Categories
-
-| Category | Example | How It's Created |
-|----------|---------|------------------|
-| **trait** | "I'm very detail-oriented" | Chat `add_memory`, screen analysis |
-| **preference** | "I prefer dark mode IDEs" | Chat `add_memory`, screen analysis |
-| **interest** | "I'm really into machine learning" | Chat `add_memory`, screen analysis |
-| **skill** | "I've been learning React" | Chat `add_memory`, screen analysis |
-| **goal** | "I want to learn stock trading" | **User-defined** (Memories tab, chat `add_memory`) |
-| **relationship** | "I work at Tencent" | Chat `add_memory`, screen analysis |
-| **ownership** | "I run a blog called X" | Chat `add_memory`, screen analysis |
-| **weakness** | "I procrastinate a lot" | Chat `add_memory`, screen analysis |
-| **event** | "Just finished Q3 dashboard" | Screen analysis (events from activity) |
-
-Goals are a special category — they are no longer auto-extracted from screenshots. The
-user defines their own goals (via the Memories tab or in chat), and the proactive tip
-engine matches them to current activity to generate personalized suggestions.
 
 ---
 
 ## Configuration
 
-### Environment Variables (`.env`)
+### Environment Variables (`backend/.env`)
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `GEMINI_API_KEY` | — | Gemini API key (analysis + tips + chat) |
-| `CARTESIA_API_KEY` | — | Cartesia TTS API key |
-| `SONIOX_API_KEY` | — | Soniox STT API key |
+| `GEMINI_API_KEY` | — | Default chat-LLM key (also usable per-user in Settings) |
+| `CARTESIA_API_KEY` | — | Cartesia TTS/STT key |
+| `SONIOX_API_KEY` | — | Soniox STT key |
+| `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `DEEPSEEK_API_KEY` | — | Optional chat-LLM provider keys |
+| `HYPOGUM_BASE_URL` | `http://127.0.0.1:8056` | Default hypogum URL (overridable per user) |
 | `JWT_SECRET` | auto-generated | HS256 signing key |
 | `FERNET_KEY` | auto-generated | Symmetric encryption for stored API keys |
-| `MOLLY_MAX_ARTEFACTS` | 20 | Max screenshots per analysis batch |
-| `MOLLY_CONFIDENCE_THRESHOLD` | 5 | Min confidence to keep an extracted item (1-10) |
-| `MOLLY_MERGE_THRESHOLD` | 0.85 | Cosine similarity threshold for deduplication |
-| `MOLLY_TRAIT_SIMILARITY_THRESHOLD` | 0.5 | Min similarity for trait matching in tips |
 | `DEBUG` | false | Enable debug panel in settings |
-| `DATA_DIR` | `../data` | Root path for all persistent data |
+| `DATA_DIR` | `../data` | Root path for SQLite storage |
+
+API keys can also be set per-user in the app (encrypted at rest with Fernet); those take
+priority over the environment defaults.
 
 ### In-App Settings
 
-Configure via the settings gear icon:
-- **General** — Language (English / 中文), timezone
-- **Speech** — TTS voice, volume, speed, emotion; STT provider, language
-- **Observers** — Enable/disable screen capture, camera capture; set capture intervals and processing interval
-- **API** — Gemini, Cartesia, Soniox API keys (encrypted at rest with Fernet)
+- **General** — language (English / 中文), timezone
+- **Speech** — TTS voice/volume/speed/emotion; STT provider + language
+- **API Config** — chat LLM provider + model + provider key; Cartesia/Soniox speech keys
+- **Hypogum** — the backend URL (with a reachable/unreachable badge) plus the hypogum
+  instance's own observer/agent knobs (persisted in hypogum; its `.env` supplies defaults)
 
 ---
 
 ## Getting Started
 
 ### Prerequisites
-
 - Node.js 20+
 - Python 3.12+
-- Windows (Electron desktop capture currently Windows-only)
+- Windows (Electron desktop client is currently Windows-focused)
+- *(optional)* a running [hypogum](../hypogum) instance for memory/autonomy features
 
 ### Backend
-
 ```bash
 cd backend
 python -m venv venv
-.\venv\Scripts\activate   # Windows
+.\venv\Scripts\activate        # Windows
 pip install -r requirements.txt
-```
-
-Copy `.env.example` to `.env` and configure at minimum `GEMINI_API_KEY`:
-
-```env
-GEMINI_API_KEY=your_key_here
-DEBUG=true                 # enables debug panel
+cp .env.example .env           # then set at least one chat-LLM key + speech keys
 ```
 
 ### Frontend
-
 ```bash
 cd frontend
 npm install
 ```
 
-### Run (Development)
-
+### Run (development)
 ```bash
 cd frontend
 npm run dev
 ```
+Starts the Vite dev server, the Electron app, and the Python backend (uvicorn on `:8000`)
+together. First launch shows login/register; after verifying your email, set your API keys
+in Settings. To enable memory features, set your hypogum URL there too.
 
-This starts three processes via `concurrently`:
-- Vite dev server (localhost:5173)
-- Electron app (connects to Vite dev server)
-- Python backend (localhost:8000 via uvicorn)
-
-The first launch shows the login/register page. After creating an account and verifying
-your email, configure your API keys in Settings.
-
-### Run (Production Build)
-
+### Run (production build)
 ```bash
 cd frontend
 npm run build
@@ -355,50 +237,38 @@ npm run build
 
 ---
 
-## API Endpoints Summary
+## API Endpoints (Molly backend)
 
 ### Auth
 | Method | Route | Purpose |
 |--------|-------|---------|
 | POST | `/api/auth/register` | Register with email + password |
-| POST | `/api/auth/verify` | Verify email with 6-digit code |
+| POST | `/api/auth/verify` | Verify email with a 6-digit code |
 | POST | `/api/auth/login` | Login, receive JWT tokens |
-| POST | `/api/auth/refresh` | Refresh expired access token |
-
-### Data
-| Method | Route | Purpose |
-|--------|-------|---------|
-| GET | `/api/observations` | List screen/camera captures (paginated) |
-| POST | `/api/observations` | Upload a capture |
-| GET | `/api/insights` | List analysis reports (paginated) |
-| GET | `/api/memories` | Search or list vector memories |
-| POST | `/api/memories` | Manually add a memory |
-| DELETE | `/api/memories/{id}` | Delete a memory |
-| GET | `/api/proactive/tips` | List proactive tips (paginated) |
-| POST | `/api/proactive/tip` | Generate a tip on demand |
-
-### Processor
-| Method | Route | Purpose |
-|--------|-------|---------|
-| POST | `/api/processor/trigger` | Run analysis + tip generation immediately |
+| POST | `/api/auth/refresh` | Refresh an expired access token |
+| POST | `/api/auth/resend-verification` | Resend the verification code |
+| GET | `/api/auth/me` | Current user |
 
 ### Conversations
 | Method | Route | Purpose |
 |--------|-------|---------|
 | POST | `/api/conversations` | Create a conversation |
-| GET | `/api/conversations` | List all conversations |
+| GET | `/api/conversations` | List conversations |
 | DELETE | `/api/conversations/{id}` | Delete a conversation |
 | POST | `/api/conversations/{id}/messages` | Persist a message |
-| GET | `/api/conversations/{id}/messages` | Load all messages |
+| GET | `/api/conversations/{id}/messages` | Load messages (incl. `tool` records) |
 
-### Settings
+### Settings & WebRTC
 | Method | Route | Purpose |
 |--------|-------|---------|
-| GET | `/api/settings` | Load user settings |
+| GET | `/api/settings` | Load user settings (keys returned as `*_configured` booleans) |
 | POST | `/api/settings` | Save user settings |
+| POST | `/api/webrtc/connect` | SDP offer → start the Pipecat session |
+| PATCH | `/api/webrtc/connect` | Trickle-ICE candidate relay |
+| GET | `/api/health` | Health check |
 
-### WebRTC
-| Method | Route | Purpose |
-|--------|-------|---------|
-| POST | `/api/webrtc/connect` | SDP offer → pipeline start |
-| PATCH | `/api/webrtc/connect` | Trickle ICE candidate relay |
+> Memory, calendar, observations, runs, and artifacts are read **directly from the
+> connected hypogum instance** — by the frontend (`frontend/src/hypogum.ts`) and by the
+> chat tools (`backend/hypogum_client.py`), not through Molly's own backend. (A couple of
+> legacy read-only endpoints — `/api/observations`, `/api/insights` — remain in `main.py`
+> but are unused.) See the [hypogum README](../hypogum/README.md) for that API.

@@ -50,13 +50,34 @@ DEFAULT_TTL = 5.0
 _cipher: Fernet | None = None
 _cache: dict[str, tuple[float, dict[str, str]]] = {}
 
+# State of the stored secrets blob, per user, refreshed on every real load():
+#   "ok"          – decrypted fine, or there was nothing stored to decrypt
+#   "unreadable"  – a blob exists but Fernet rejected it (FERNET_KEY rotated)
+#   "no_cipher"   – a blob exists but no usable FERNET_KEY is configured
+_secrets_state: dict[str, str] = {}
+
+# The ciphertext exactly as read from the DB. Kept so save() can write it back
+# verbatim when we could not decrypt it — dropping it there is what silently
+# wiped users' API keys after a FERNET_KEY change.
+_secrets_blob: dict[str, str] = {}
+
+
+def secrets_status(user_id: str) -> str:
+    """State of `user_id`'s secrets blob as of the last load(). See _secrets_state."""
+    return _secrets_state.get(user_id, "ok")
+
 
 def _get_cipher() -> Fernet | None:
     global _cipher
     if _cipher is None:
         key = config.fernet_key()
         if key:
-            _cipher = Fernet(key.encode())
+            try:
+                _cipher = Fernet(key.encode())
+            except Exception:
+                # Malformed FERNET_KEY. Return None so callers treat secrets as
+                # unreadable-but-preserved instead of crashing every settings read.
+                logger.error("Settings: FERNET_KEY is not a valid Fernet key")
     return _cipher
 
 
@@ -81,15 +102,28 @@ class Settings:
         raw = await database.app.get_user_settings(self.user_id)
         cipher = _get_cipher()
 
+        blob = raw.get("secrets") or ""
+        _secrets_blob[self.user_id] = blob
+
         secrets: dict[str, str] = {}
-        if cipher and "secrets" in raw:
+        if not blob:
+            _secrets_state[self.user_id] = "ok"
+        elif cipher is None:
+            _secrets_state[self.user_id] = "no_cipher"
+            logger.error("Settings: stored API keys for user {} cannot be read — "
+                         "no usable FERNET_KEY is configured", self.user_id)
+        else:
             try:
-                plain = cipher.decrypt(raw["secrets"].encode())
+                plain = cipher.decrypt(blob.encode())
                 secrets = json.loads(plain)
+                _secrets_state[self.user_id] = "ok"
                 logger.info("Settings: decrypted {} secret keys for user {}",
                             len(secrets), self.user_id)
             except Exception:
-                logger.warning("Settings: secrets decryption failed")
+                _secrets_state[self.user_id] = "unreadable"
+                logger.warning("Settings: secrets decryption failed for user {} — "
+                               "FERNET_KEY likely changed; stored API keys are "
+                               "unreadable and must be re-entered", self.user_id)
 
         result: dict[str, str] = {}
         for key, default in _DEFAULTS.items():
@@ -109,10 +143,17 @@ class Settings:
         logger.info("Settings: loaded {} keys for user {}", len(result), self.user_id)
         return result
 
-    async def save(self, values: dict[str, str | None]) -> None:
-        """Persist the given values for this user. Encrypts API keys. Invalidate cache."""
+    async def save(self, values: dict[str, str | None]) -> dict[str, str]:
+        """Persist the given values for this user. Encrypts API keys, invalidates
+        the cache, and returns ``{"secrets_status": …}`` (see _secrets_state).
+
+        Secrets we could not decrypt are written back untouched rather than
+        dropped, so a bad/rotated FERNET_KEY can no longer destroy stored keys
+        as a side effect of saving an unrelated setting."""
         _cache.pop(self.user_id, None)
-        current = await self.load()
+        current = await self.load()  # also refreshes _secrets_state / _secrets_blob
+        state = _secrets_state.get(self.user_id, "ok")
+        stale_blob = _secrets_blob.get(self.user_id, "")
 
         for k, v in values.items():
             if v is not None and str(v) != "":
@@ -134,13 +175,41 @@ class Settings:
                 db_dict[k] = v
 
         cipher = _get_cipher()
-        if cipher and secrets_to_encrypt:
+        wrote_secrets = bool(secrets_to_encrypt) and cipher is not None
+
+        if wrote_secrets:
             db_dict["secrets"] = cipher.encrypt(
                 json.dumps(secrets_to_encrypt).encode()
             ).decode()
+        elif stale_blob and state != "ok":
+            # We could not read this blob, so we cannot re-encrypt its contents.
+            # Preserve it byte-for-byte: it may still be recoverable by restoring
+            # the original FERNET_KEY. (When state is "ok" an empty
+            # secrets_to_encrypt genuinely means the user cleared their keys, so
+            # the blob is intentionally dropped.)
+            db_dict["secrets"] = stale_blob
+
+        status = "ok"
+        if secrets_to_encrypt and cipher is None:
+            status = "no_cipher"
+            logger.error("Settings: FERNET_KEY unavailable — refusing to store "
+                         "API keys for user {} in plaintext; they were NOT saved",
+                         self.user_id)
+        elif wrote_secrets and stale_blob and state == "unreadable":
+            status = "secrets_replaced"
+            logger.warning("Settings: replaced the undecryptable secrets blob for "
+                           "user {} with newly entered keys", self.user_id)
+        elif state != "ok":
+            status = state
+            logger.warning("Settings: preserved the existing ({}) secrets blob for "
+                           "user {} instead of dropping it", state, self.user_id)
 
         await database.app.save_user_settings(
             self.user_id, json.dumps(db_dict)
         )
+        # load() above repopulated the cache with the pre-save values; drop it
+        # again so the next read reflects what we just wrote.
+        _cache.pop(self.user_id, None)
         logger.info("Settings: saved {} keys to DB for user {}",
                     len(db_dict), self.user_id)
+        return {"secrets_status": status}

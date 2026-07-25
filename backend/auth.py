@@ -1,5 +1,4 @@
 import os
-import secrets
 from datetime import datetime, timedelta, timezone
 
 from fastapi import Depends, HTTPException, status
@@ -8,10 +7,8 @@ from jose import JWTError, jwt
 from pwdlib import PasswordHash
 from pwdlib.hashers.argon2 import Argon2Hasher
 from pwdlib.hashers.bcrypt import BcryptHasher
-from loguru import logger
 
 import database
-import config
 
 # ── password hashing ──────────────────────
 
@@ -73,11 +70,11 @@ def decode_token(token: str, token_type: str = "access") -> dict:
                 detail="Invalid token",
             )
         return payload
-    except JWTError:
+    except JWTError as e:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired token",
-        )
+        ) from e
 
 
 def decode_token_safe(token: str, token_type: str = "access") -> dict | None:

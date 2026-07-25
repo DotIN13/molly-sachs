@@ -1,9 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Settings, PenSquare, Search, Mic, Volume2, VolumeX, LogOut, Menu, X, ArrowUp, Lightbulb, Trash2 } from 'lucide-react'
-import { updateObserverConfig, stopObservers } from './observers'
 import { setHypogumUrl, hypogumHealthy, fetchHypogumMemories, addHypogumMemory, deleteHypogumMemory } from './hypogum'
-import { API_URL, isElectron } from './config'
+import { API_URL } from './config'
 import useAudioVisualizer from './hooks/useAudioVisualizer'
 import useWebRTC from './hooks/useWebRTC'
 import SettingsModal from './components/SettingsModal'
@@ -57,6 +56,9 @@ export default function App() {
   // Chat LLM provider selection
   const [llmProvider, setLlmProvider] = useState('google')
   const [llmModel, setLlmModel] = useState('')
+  // Whether the backend can still decrypt the stored API keys ("ok" |
+  // "unreadable" | "no_cipher"); surfaced as a warning in Settings → API.
+  const [secretsStatus, setSecretsStatus] = useState('ok')
   const [openaiKey, setOpenaiKey] = useState('')
   const [anthropicKey, setAnthropicKey] = useState('')
   const [deepseekKey, setDeepseekKey] = useState('')
@@ -82,7 +84,6 @@ export default function App() {
   const [observerScreenInterval, setObserverScreenInterval] = useState(60)
   const [observerCameraInterval, setObserverCameraInterval] = useState(120)
   const [observerProcessInterval, setObserverProcessInterval] = useState(300)
-  const [isSystemIdle, setIsSystemIdle] = useState(false)
   const [debugMode, setDebugMode] = useState(false)
   const [timezone, setTimezone] = useState('')
 
@@ -224,6 +225,7 @@ export default function App() {
         setObserverProcessInterval(procInt);
         setDebugMode(data.debug ?? false);
         setTimezone(data.timezone || '');
+        setSecretsStatus(data.secrets_status || 'ok');
         // Point the frontend at the user's hypogum instance (memory brain).
         setHypogumBaseUrl(data.hypogum_base_url || '');
         setHypogumUrl(data.hypogum_base_url);
@@ -236,66 +238,9 @@ export default function App() {
             body: JSON.stringify({ timezone: detected })
           }).then(() => setTimezone(detected)).catch(() => { })
         }
-
-        updateObserverConfig({
-          screenActive: scrActive,
-          cameraActive: camActive,
-          screenInterval: scrInt,
-          cameraInterval: camInt,
-        });
       })
       .catch(console.error)
   }, [backendStatus, auth.isAuthenticated])
-
-  // System idle detection — poll every 10s and listen for immediate lock/suspend events
-  useEffect(() => {
-    if (!isElectron) return;
-    const api = (window as any).electronAPI;
-    if (!api?.getSystemIdleState) return;
-
-    let polling = true;
-
-    const poll = async () => {
-      if (!polling) return;
-      try {
-        const state = await api.getSystemIdleState();
-        if (state.idleState === 'locked' || state.idleState === 'idle') {
-          setIsSystemIdle(true);
-        } else if (state.idleState === 'active') {
-          setIsSystemIdle(false);
-        }
-      } catch { /* ignore */ }
-      if (polling) setTimeout(poll, 10000);
-    };
-    poll();
-
-    const unsub = api.onSystemIdleChanged?.((data: { idle: boolean; reason: string }) => {
-      console.log('[Molly] System idle changed:', data.reason, '→ idle:', data.idle);
-      setIsSystemIdle(data.idle);
-    });
-
-    return () => {
-      polling = false;
-      if (typeof unsub === 'function') unsub();
-    };
-  }, []);
-
-  // Pause observers when system goes idle, resume when active
-  useEffect(() => {
-    if (!isElectron) return;
-    if (isSystemIdle) {
-      console.log('[Molly] System idle — pausing observers');
-      stopObservers();
-    } else {
-      console.log('[Molly] System active — resuming observers');
-      updateObserverConfig({
-        screenActive: observerScreenActive,
-        cameraActive: observerCameraActive,
-        screenInterval: observerScreenInterval,
-        cameraInterval: observerCameraInterval,
-      });
-    }
-  }, [isSystemIdle]);
 
 
   useEffect(() => {
@@ -460,17 +405,18 @@ export default function App() {
       if (openaiKey) body.openai_api_key = openaiKey
       if (anthropicKey) body.anthropic_api_key = anthropicKey
       if (deepseekKey) body.deepseek_api_key = deepseekKey
-      await auth.authFetch(`${API_URL}/api/settings`, {
+      const saveRes = await auth.authFetch(`${API_URL}/api/settings`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
       })
-      updateObserverConfig({
-        screenActive: observerScreenActive,
-        cameraActive: observerCameraActive,
-        screenInterval: observerScreenInterval,
-        cameraInterval: observerCameraInterval,
-      })
+      // The backend reports whether it could actually store the API keys.
+      // "secrets_replaced" means the unreadable blob was successfully replaced,
+      // so the warning is cleared; "no_cipher" means the keys were NOT saved.
+      const saved = await saveRes.json().catch(() => ({}))
+      if (saved?.secrets_status) {
+        setSecretsStatus(saved.secrets_status === 'secrets_replaced' ? 'ok' : saved.secrets_status)
+      }
       setIsSettingsOpen(false)
 
       const curr = {
@@ -608,6 +554,7 @@ export default function App() {
       debugMode: setDebugMode,
       timezone: setTimezone,
       hypogumBaseUrl: setHypogumBaseUrl,
+      secretsStatus: setSecretsStatus,
     }
     setters[key]?.(value)
   }
@@ -622,7 +569,7 @@ export default function App() {
     sttLanguage, sttProvider, ttsLanguage,
     observerScreenActive, observerCameraActive, observerScreenInterval,
     observerCameraInterval, observerCaptureInterval, observerProcessInterval,
-    settingsTab, debugMode, timezone, hypogumBaseUrl,
+    settingsTab, debugMode, timezone, hypogumBaseUrl, secretsStatus,
   }
 
   // Memory features (all tabs except Chat, and the chat memory/run tools) light

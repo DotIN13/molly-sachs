@@ -13,10 +13,6 @@ export function setHypogumUrl(url?: string | null): void {
   hypogumUrl = (url && url.trim()) || DEFAULT_HYPOGUM_URL
 }
 
-export function getHypogumUrl(): string {
-  return hypogumUrl
-}
-
 /** URL that serves a hypogum observation image by its relative path. */
 export function hypogumImageUrl(relPath: string): string {
   return `${hypogumUrl}/api/v1/observations/file?path=${encodeURIComponent(relPath)}`
@@ -129,7 +125,7 @@ export async function fetchHypogumMemories(
     const data = await hgGet('/api/v1/memory/tree')
     const groups = data.groups || {}
     for (const [group, entries] of Object.entries(groups)) {
-      if (group === 'pages') continue // skip index.md / log.md / MEMORY.md
+      if (group === 'pages') continue // skip index.md / log.md / AGENTS.md
       for (const e of (entries as any[])) rows.push(toMemoryRow(e, group))
     }
   }
@@ -212,9 +208,6 @@ export async function submitHypogumRun(prompt: string): Promise<any> {
   if (!res.ok) throw new Error(`run -> ${res.status}`)
   return res.json()
 }
-export async function fetchHypogumRun(id: string): Promise<any | null> {
-  try { return await hgGet(`/api/v1/runs/${id}`) } catch { return null }
-}
 export async function fetchHypogumRunEvents(id: string, after = 0): Promise<any[]> {
   const data = await hgGet(`/api/v1/runs/${id}/events?after=${after}&limit=2000`)
   return data.events || []
@@ -222,16 +215,6 @@ export async function fetchHypogumRunEvents(id: string, after = 0): Promise<any[
 export async function abortHypogumRun(id: string): Promise<void> {
   const res = await fetch(`${hypogumUrl}/api/v1/runs/${id}/abort`, { method: 'POST' })
   if (!res.ok) throw new Error(`abort -> ${res.status}`)
-}
-
-// ── opencode sessions (agent transcripts) ──
-export async function fetchHypogumSessions(): Promise<any[]> {
-  const data = await hgGet('/api/v1/opencode/sessions')
-  return data.sessions || []
-}
-export async function fetchHypogumSessionMessages(sid: string): Promise<any[]> {
-  const data = await hgGet(`/api/v1/opencode/sessions/${sid}/messages`)
-  return data.messages || []
 }
 
 // ── Artifacts (run deliverables) ──
@@ -265,16 +248,9 @@ export async function runHypogumPlanTask(
   return res.json()
 }
 
-// ── Agent status + notes ──
+// ── Agent status ──
 export async function fetchHypogumAgentStatus(): Promise<any | null> {
   try { return await hgGet('/api/v1/agent/status') } catch { return null }
-}
-export async function postHypogumNote(text: string): Promise<void> {
-  const res = await fetch(`${hypogumUrl}/api/v1/note`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text }),
-  })
-  if (!res.ok) throw new Error(`note -> ${res.status}`)
 }
 
 // ── Memory page detail ──

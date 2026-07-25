@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
+import { AlertTriangle } from 'lucide-react'
 import { Input } from '@/components/ui/input'
+import ModelPicker from './ModelPicker'
 import { fetchHypogumSettings, patchHypogumSettings, hypogumHealthy, setHypogumUrl } from '../hypogum'
 
 const TIMEZONES: { value: string; label: string }[] = (() => {
@@ -70,6 +72,8 @@ export interface SettingsData {
   debugMode: boolean
   timezone: string
   hypogumBaseUrl: string
+  /** Backend's report on the stored API keys: "ok" | "unreadable" | "no_cipher". */
+  secretsStatus: string
 }
 
 interface Props {
@@ -191,6 +195,18 @@ export default function SettingsModal({ isOpen, onClose, onSave, settings, onCha
             )}
             {settings.settingsTab === 'api' && (
               <div className="flex flex-col gap-4">
+                {/* Stored keys exist but the backend cannot decrypt them — without
+                    this the whole tab just reads as "nothing configured". */}
+                {settings.secretsStatus && settings.secretsStatus !== 'ok' && (
+                  <div className="flex items-start gap-2 px-3 py-2.5 rounded-md bg-amber-50 border border-amber-200">
+                    <AlertTriangle className="w-3.5 h-3.5 text-amber-600 flex-shrink-0 mt-0.5" />
+                    <p className="text-[11px] text-amber-800 leading-relaxed">
+                      {t(`settings.secretsStatus.${settings.secretsStatus}`, {
+                        defaultValue: t('settings.secretsStatus.unreadable'),
+                      })}
+                    </p>
+                  </div>
+                )}
                 {/* Chat LLM: provider + model + provider-specific key */}
                 <div className="pb-1 border-b border-slate-100">
                   <h4 className="text-[11px] font-bold uppercase tracking-wider text-slate-400">{t('settings.llmSection')}</h4>
@@ -199,7 +215,9 @@ export default function SettingsModal({ isOpen, onClose, onSave, settings, onCha
                   <label className="text-xs font-medium text-slate-700">{t('settings.llmProvider')}</label>
                   <select
                     value={settings.llmProvider}
-                    onChange={e => onChange('llmProvider', e.target.value)}
+                    // A model id is provider-specific, so switching providers
+                    // clears it back to that provider's default.
+                    onChange={e => { onChange('llmProvider', e.target.value); onChange('llmModel', '') }}
                     className="bg-[#f9f9f9] border border-slate-200 text-sm focus-visible:ring-slate-300 rounded-md h-9 px-3 outline-none"
                   >
                     <option value="google">{t('settings.llmGoogle')}</option>
@@ -210,7 +228,12 @@ export default function SettingsModal({ isOpen, onClose, onSave, settings, onCha
                 </div>
                 <div className="flex flex-col gap-1.5">
                   <label className="text-xs font-medium text-slate-700">{t('settings.llmModel')}</label>
-                  <Input value={settings.llmModel} onChange={e => onChange('llmModel', e.target.value)} className="bg-[#f9f9f9] border-slate-200 text-sm focus-visible:ring-slate-300" placeholder={LLM_MODEL_PLACEHOLDER[settings.llmProvider] || ''} />
+                  <ModelPicker
+                    provider={settings.llmProvider}
+                    value={settings.llmModel}
+                    defaultModel={LLM_MODEL_PLACEHOLDER[settings.llmProvider] || ''}
+                    onChange={id => onChange('llmModel', id)}
+                  />
                   <span className="text-[10px] text-slate-400">{t('settings.llmModelHint')}</span>
                 </div>
                 <div className="flex flex-col gap-1.5">

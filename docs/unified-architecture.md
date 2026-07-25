@@ -182,7 +182,7 @@ write-time hook alone would miss them. The index must reconcile against the file
 **Primary mechanism — reconciliation sweep on every process cycle** (hypogum already runs one
 every `HYPOGUM_PROCESS_INTERVAL`, default 600s; hook the indexer into it, right after ingest):
 
-1. Walk the markdown tree (excluding `.tasks/`, `MEMORY.md`, `calendar_events/`).
+1. Walk the markdown tree (excluding `.tasks/`, `AGENTS.md`, `calendar_events/`).
 2. For each page, compute a content hash; compare to the hash stored in the index.
 3. **New or changed** → (re)embed and upsert. **Missing on disk** → delete from the index.
 4. Unchanged → skip (no wasted embedding calls). This makes the sweep cheap and idempotent.

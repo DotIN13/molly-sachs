@@ -1,11 +1,11 @@
 import os
 import sys
-import asyncio
 import uuid
 import secrets
 import logging
 import datetime
 from datetime import timedelta, timezone
+import httpx
 from loguru import logger
 from fastapi import FastAPI, BackgroundTasks, HTTPException, Depends, Query
 from fastapi.responses import FileResponse
@@ -22,6 +22,8 @@ from pipecat.transports.smallwebrtc.request_handler import (
 from bot import start_pipecat_session, SessionState, PipelineRestartRequested
 import database
 import config
+import llm_models
+from db import settings as db_settings
 from db.settings import Settings
 import auth
 import mailer
@@ -324,8 +326,8 @@ async def save_settings(req: SettingsReq,
     if req.hypogum_base_url is not None:
         data["hypogum_base_url"] = req.hypogum_base_url
 
-    await Settings(current_user["id"]).save(data)
-    return {"status": "ok"}
+    result = await Settings(current_user["id"]).save(data)
+    return {"status": "ok", **result}
 
 
 @app.get("/api/settings", summary="Retrieve active API keys and speech preferences")
@@ -357,7 +359,41 @@ async def get_settings(current_user: dict = Depends(auth.get_current_user)):
         "timezone": s.get("timezone", ""),
         "speak_text": s.get("speak_text", "true").lower() == "true",
         "hypogum_base_url": s.get("hypogum_base_url", ""),
+        # "ok" | "unreadable" | "no_cipher" — lets the UI explain why every key
+        # suddenly reads as unconfigured instead of leaving the user guessing.
+        "secrets_status": db_settings.secrets_status(current_user["id"]),
     }
+
+# ── Chat model catalogue ────────────────────
+
+@app.get("/api/llm/models", summary="List a provider's chat models, fetched live")
+async def list_llm_models(provider: str = Query("google"),
+                          refresh: bool = Query(False),
+                          current_user: dict = Depends(auth.get_current_user)):
+    """Proxy the provider's own models endpoint using this user's stored key.
+
+    Proxied rather than called from the renderer so the API key never leaves the
+    backend. `detail` carries a machine-readable code the UI maps to a message."""
+    provider = (provider or "").strip().lower()
+    if provider not in llm_models.PROVIDERS:
+        raise HTTPException(status_code=400, detail="unknown_provider")
+
+    s = await Settings(current_user["id"]).load()
+    api_key = s.get(llm_models.KEY_FIELD[provider], "")
+    try:
+        models, cached = await llm_models.list_models(provider, api_key, refresh=refresh)
+    except llm_models.MissingKey:
+        raise HTTPException(status_code=400, detail="no_key")
+    except httpx.HTTPStatusError as e:
+        code = e.response.status_code
+        logger.warning("llm_models: {} returned {}", provider, code)
+        raise HTTPException(status_code=502,
+                            detail="bad_key" if code in (401, 403) else "upstream_error")
+    except Exception as e:
+        logger.warning("llm_models: {} fetch failed: {}", provider, e)
+        raise HTTPException(status_code=502, detail="upstream_error")
+
+    return {"provider": provider, "cached": cached, "models": models}
 
 # ── Health ──────────────────────────────────
 
@@ -383,7 +419,7 @@ async def get_observations(type: str | None = None, limit: int = 15, offset: int
         return {"items": items, "total": total}
     except Exception as e:
         logger.error(f"Failed to retrieve observations: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @app.get("/api/observations/file", summary="Serve an observation image file")
@@ -415,7 +451,7 @@ async def get_insights(limit: int = 15, offset: int = 0,
         return {"items": items, "total": total}
     except Exception as e:
         logger.error(f"Failed to retrieve insights: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 # NOTE (Phase 3): Molly's memory + proactive-tip endpoints have been removed.
@@ -536,7 +572,7 @@ async def webrtc_connect(
         raise
     except Exception as e:
         logger.error(f"WebRTC connection error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @app.patch("/api/webrtc/connect", summary="Receive trickle ICE candidates from client")
@@ -548,18 +584,7 @@ async def webrtc_patch(request: SmallWebRTCPatchRequest):
 
 @app.on_event("startup")
 async def startup_event():
-
-    async def heartbeat():
-        count = 0
-        while True:
-            await asyncio.sleep(10)
-            count += 1
-            logger.info(f"[LOOP-HEARTBEAT #{count}] Event loop is alive")
-
-    asyncio.create_task(heartbeat())
-
     await database.init()
-
     logger.info("Server startup complete")
 
 

@@ -213,7 +213,7 @@ def make_search_memory(user_id: str, hypogum_url: str | None, send_fn=None):
 
             await params.result_callback(context_str)
         except Exception as e:
-            await params.result_callback(f"Error searching memory: {str(e)}")
+            await params.result_callback(f"Error searching memory: {e!s}")
 
     return search_memory
 
@@ -248,12 +248,16 @@ def make_add_memory(user_id: str, hypogum_url: str | None, send_fn=None):
             await params.result_callback(f"记下了,稍后会整理进记忆:{fact}")
         except Exception as e:
             logger.error("Error queueing memory note: {}", e)
-            await params.result_callback(f"Failed to store memory: {str(e)}")
+            await params.result_callback(f"Failed to store memory: {e!s}")
 
     return add_memory
 
 
 _RUN_TERMINAL = {"done", "error", "timeout", "aborted"}
+
+# Hold references to fire-and-forget background tasks so they aren't garbage
+# collected mid-flight (see asyncio.create_task docs).
+_BG_TASKS: set[asyncio.Task] = set()
 
 
 def make_run_task(hypogum_url: str | None, *, task_holder: dict, send_fn=None):
@@ -351,14 +355,16 @@ def make_run_task(hypogum_url: str | None, *, task_holder: dict, send_fn=None):
             if not run_id:
                 await params.result_callback("Failed to start the task (no run id).")
                 return
-            asyncio.create_task(_poll_and_narrate(run_id, task_description))
+            bg = asyncio.create_task(_poll_and_narrate(run_id, task_description))
+            _BG_TASKS.add(bg)
+            bg.add_done_callback(_BG_TASKS.discard)
             logger.info("run_task queued {}: {}", run_id, task_description[:80])
             await params.result_callback(
                 f"好的，我已经让后台开始处理「{task_description}」了，完成后我告诉你。"
             )
         except Exception as e:
             logger.error("run_task failed: {}", e)
-            await params.result_callback(f"启动任务失败：{str(e)}")
+            await params.result_callback(f"启动任务失败：{e!s}")
 
     return run_task
 
@@ -386,7 +392,7 @@ def make_read_memory_page(hypogum_url: str | None, send_fn=None):
             body = (page.get("body") or page.get("content") or "").strip()
             await params.result_callback(f"# {title}\n\n{body}" if body else title)
         except Exception as e:
-            await params.result_callback(f"Error reading memory page: {str(e)}")
+            await params.result_callback(f"Error reading memory page: {e!s}")
 
     return read_memory_page
 
@@ -418,7 +424,7 @@ def make_fetch_calendar(hypogum_url: str | None, send_fn=None):
                     f"[{e.get('bucket', '?')}] {when} — {e.get('title', '(untitled)')}")
             await params.result_callback("\n".join(lines))
         except Exception as e:
-            await params.result_callback(f"Error fetching calendar: {str(e)}")
+            await params.result_callback(f"Error fetching calendar: {e!s}")
 
     return fetch_calendar
 
@@ -444,7 +450,7 @@ def make_list_artifacts(hypogum_url: str | None, send_fn=None):
                 lines.append(f"- {label}{f' ({when})' if when else ''}")
             await params.result_callback("\n".join(lines))
         except Exception as e:
-            await params.result_callback(f"Error listing artifacts: {str(e)}")
+            await params.result_callback(f"Error listing artifacts: {e!s}")
 
     return list_artifacts
 
@@ -643,7 +649,7 @@ async def start_pipecat_session(
         )
 
         @transport.event_handler("on_app_message")
-        async def _early_session_state(transport, message, sender):
+        async def _early_session_state(transport, message, _sender):
             if isinstance(message, dict) and message.get("type") == "session_state_updated":
                 changes = message.get("changes", {})
                 if not isinstance(changes, dict):
@@ -773,7 +779,7 @@ async def start_pipecat_session(
             logger.info("Pipeline task cancelled after client disconnect")
 
         @transport.event_handler("on_app_message")
-        async def on_app_message(transport, message, sender):
+        async def on_app_message(transport, message, _sender):
             nonlocal conv_id
             if isinstance(message, dict) and message.get("type") == "chat":
                 text = message.get("text")

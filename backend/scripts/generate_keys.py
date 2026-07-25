@@ -10,7 +10,7 @@ jwt_secret = secrets.token_hex(32)
 
 lines = []
 if os.path.exists(env_path):
-    with open(env_path, "r") as f:
+    with open(env_path) as f:
         lines = f.readlines()
 
 existing_fernet = any(

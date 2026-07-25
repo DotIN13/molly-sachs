@@ -25,7 +25,6 @@ export function getApiUrl(): string {
 
 export const PLATFORM: string = typeof __PLATFORM__ !== 'undefined' ? __PLATFORM__ : 'electron'
 
-export const isElectron: boolean = PLATFORM === 'electron'
 export const isWeb: boolean = PLATFORM === 'web'
 
 const TOKEN_KEY = 'molly_access_token'
