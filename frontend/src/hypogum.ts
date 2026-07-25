@@ -99,13 +99,18 @@ const CATEGORY_MAP: Record<string, string> = {
 // ── Memories: hypogum pages, shaped like Molly's flat memory rows ──
 // Row contract used by the tab: { id(path), type, content, confidence, evidence }.
 export interface HypogumMemoryRow {
-  id: string; type: string; content: string; confidence: number | null; evidence: string
+  id: string; group: string; type: string; content: string; confidence: number | null; evidence: string
 }
 
 function toMemoryRow(e: any, fallbackType: string): HypogumMemoryRow {
   const conf = e.confidence != null && e.confidence !== '' ? Number(e.confidence) : null
+  const path = e.path || ''
+  // Top-level directory is the category group (goals/entities/traits/struggles),
+  // matching the original hypogum wiki layout.
+  const group = path.split('/')[0] || fallbackType || 'other'
   return {
     id: e.path,
+    group,
     type: e.category || e.type || fallbackType || 'other',
     content: e.title || (e.snippet ? String(e.snippet).slice(0, 120) : e.path),
     confidence: Number.isFinite(conf as number) ? (conf as number) : null,
@@ -198,6 +203,15 @@ export async function fetchHypogumRuns(): Promise<any[]> {
   const data = await hgGet('/api/v1/runs')
   return data.runs || []
 }
+// Queue a freeform/adhoc agent run from a natural-language prompt (no plan/task).
+export async function submitHypogumRun(prompt: string): Promise<any> {
+  const res = await fetch(`${hypogumUrl}/api/v1/runs`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prompt }),
+  })
+  if (!res.ok) throw new Error(`run -> ${res.status}`)
+  return res.json()
+}
 export async function fetchHypogumRun(id: string): Promise<any | null> {
   try { return await hgGet(`/api/v1/runs/${id}`) } catch { return null }
 }
@@ -266,5 +280,14 @@ export async function postHypogumNote(text: string): Promise<void> {
 // ── Memory page detail ──
 export async function fetchHypogumMemoryPage(path: string): Promise<any> {
   return hgGet(`/api/v1/memory/page?path=${encodeURIComponent(path)}`)
+}
+
+export async function saveHypogumMemoryPage(path: string, content: string): Promise<void> {
+  const res = await fetch(`${hypogumUrl}/api/v1/memory/page`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path, content }),
+  })
+  if (!res.ok) throw new Error(`hypogum save memory page -> ${res.status}`)
 }
 

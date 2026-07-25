@@ -96,23 +96,45 @@ async def list_artifacts(limit: int = 20, base_url: str | None = None,
         return r.json().get("artifacts", [])
 
 
-async def add_memory(content: str, category: str, *,
-                     evidence: str | None = None,
-                     confidence: int = 5, lifespan: int = 5,
-                     base_url: str | None = None,
-                     timeout: float = 30.0) -> dict:
-    """Create or update a memory page. Returns hypogum's
-    ``{status, path, created}`` result."""
+async def submit_note(text: str, title: str | None = None, *,
+                      base_url: str | None = None,
+                      timeout: float = 15.0) -> dict:
+    """Drop raw user input into hypogum's ingest inbox. The ingest agent picks
+    it up next cycle and folds it into memory (categorization + dedup handled
+    agent-side). Returns ``{queued: <filename>}``."""
     url = resolve_base_url(base_url)
-    payload = {
-        "content": content,
-        "category": map_category(category),
-        "evidence": evidence,
-        "confidence": confidence,
-        "lifespan": lifespan,
-        "source": "molly",
-    }
     async with httpx.AsyncClient(base_url=url, timeout=timeout) as client:
-        r = await client.post("/api/v1/memory", json=payload)
+        r = await client.post("/api/v1/note", json={"text": text, "title": title})
         r.raise_for_status()
         return r.json()
+
+
+async def read_memory_page(path: str, base_url: str | None = None,
+                           timeout: float = 15.0) -> dict | None:
+    """Fetch a single memory page: ``{path, title, frontmatter, body, content,
+    wikilinks, backlinks}``. Returns None if the page doesn't exist."""
+    url = resolve_base_url(base_url)
+    async with httpx.AsyncClient(base_url=url, timeout=timeout) as client:
+        r = await client.get("/api/v1/memory/page", params={"path": path})
+        if r.status_code == 404:
+            return None
+        r.raise_for_status()
+        return r.json()
+
+
+async def fetch_calendar(frm: str | None = None, to: str | None = None,
+                         base_url: str | None = None,
+                         timeout: float = 15.0) -> list[dict]:
+    """List calendar entries (observed / planned / suggested), optionally within
+    a ``YYYY-MM-DD`` date range. Each entry: ``{bucket, date, start, end,
+    title, category, ...}``."""
+    url = resolve_base_url(base_url)
+    params: dict[str, str] = {}
+    if frm:
+        params["from"] = frm
+    if to:
+        params["to"] = to
+    async with httpx.AsyncClient(base_url=url, timeout=timeout) as client:
+        r = await client.get("/api/v1/calendar", params=params)
+        r.raise_for_status()
+        return r.json().get("entries", [])

@@ -9,12 +9,21 @@ import database
 import config
 
 
-SECRET_KEYS = {"gemini_api_key", "cartesia_api_key", "soniox_api_key"}
+SECRET_KEYS = {
+    "gemini_api_key", "cartesia_api_key", "soniox_api_key",
+    "openai_api_key", "anthropic_api_key", "deepseek_api_key",
+}
 
 _DEFAULTS: dict[str, str] = {
     "gemini_api_key": "",
     "cartesia_api_key": "",
     "soniox_api_key": "",
+    # Chat LLM provider + optional model override (blank model → provider default).
+    "llm_provider": "google",
+    "llm_model": "",
+    "openai_api_key": "",
+    "anthropic_api_key": "",
+    "deepseek_api_key": "",
     "tts_voice": "6eb8965c-e295-47bd-a9e4-3eeebb3abcff",
     "tts_volume": "1.0",
     "tts_speed": "1.0",

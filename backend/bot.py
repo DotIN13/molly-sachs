@@ -1,4 +1,5 @@
 import asyncio
+import json
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -10,6 +11,9 @@ from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.task import PipelineTask, PipelineParams
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.services.google.llm import GoogleLLMService
+from pipecat.services.openai.llm import OpenAILLMService
+from pipecat.services.anthropic.llm import AnthropicLLMService
+from pipecat.services.deepseek.llm import DeepSeekLLMService
 from pipecat.services.soniox.stt import SonioxSTTService
 from pipecat.services.cartesia.stt import CartesiaSTTService
 from pipecat.services.cartesia.tts import CartesiaTTSService, GenerationConfig
@@ -29,10 +33,11 @@ from pipecat.turns.user_turn_strategies import UserTurnStrategies
 from pipecat.turns.user_start.vad_user_turn_start_strategy import VADUserTurnStartStrategy
 from pipecat.frames.frames import (
     TextFrame,
-    TTSSpeakFrame,
     AudioRawFrame,
     Frame,
     TranscriptionFrame,
+    FunctionCallInProgressFrame,
+    FunctionCallResultFrame,
     LLMFullResponseStartFrame,
     LLMFullResponseEndFrame,
     LLMMessagesAppendFrame,
@@ -58,11 +63,11 @@ SYSTEM_PROMPT_BASE = (
 # (i.e. the search_memory / add_memory / run_task tools are available).
 SYSTEM_PROMPT_MEMORY = (
     '你可以使用search_memory工具查找用户过去的活动和记忆。聊到过去的事情、回忆、习惯或需要context时，可以先调用search_memory查询后再回复。'
-    '你可以使用add_memory工具来记住用户透露的关于自己的任何信息。每当用户说了关于自己的新事实，可以使用add_memory来记录。'
-    '比如用户说"我最近在学Python"→ category="skill"；用户说"我喜欢用VSCode"→ category="preference"；'
-    '用户说"我对机器学习很感兴趣"→ category="interest"；用户说"我想学炒股"、"我想减肥"、"我打算考驾照"→ category="goal"；'
-    '用户说"我是社恐"→ category="trait"；用户说"我在腾讯工作"→ category="relationship"；'
-    '用户说"我有一个GitHub项目叫xxx"→ category="ownership"；用户说"我总是拖延"→ category="weakness"。'
+    '如果search_memory返回了某个记忆页的路径而你需要它的完整内容，用read_memory_page(path)读取详情。'
+    '你可以使用add_memory工具来记住用户透露的关于自己的任何信息——每当用户说了关于自己的新事实（爱好、偏好、计划、工作、生活等），就用add_memory把这句话原样记下来。'
+    '注意：你不需要自己判断分类，只要清楚、如实地把事实用一句话概括传给add_memory即可；后台的记忆整理agent会自动分类并整合进长期记忆。'
+    '需要了解用户的日程、最近做了什么、接下来的安排时，使用fetch_calendar工具查询日历。'
+    '用户问后台agent产出了哪些成果/文件时，使用list_artifacts工具列出最近的产物。'
     '当用户让你帮他做一件需要动手的准备工作时（比如"帮我起草那封邮件"、"帮我查一下xxx"、'
     '"帮我整理一下资料"、"帮我准备xxx"），使用run_task工具把任务交给后台agent去做。'
     'run_task会立刻返回，你先告诉用户已经开始处理；等任务完成后你会自动收到结果并念给用户听。'
@@ -71,6 +76,8 @@ SYSTEM_PROMPT_MEMORY = (
 # Settings that require tearing down and rebuilding the pipeline
 _RESTART_KEYS = {
     "gemini_api_key", "cartesia_api_key", "soniox_api_key",
+    "llm_provider", "llm_model",
+    "openai_api_key", "anthropic_api_key", "deepseek_api_key",
     "stt_provider", "stt_language",
     "tts_provider", "tts_voice", "tts_volume", "tts_speed", "tts_emotion", "tts_language",
     # Toggling the hypogum backend adds/removes the memory + run tools and
@@ -105,6 +112,45 @@ class PipelineRestartRequested(Exception):
         self.changes = changes
 
 
+# Provider default models when the user leaves the model field blank.
+_LLM_DEFAULT_MODELS = {
+    "google": "gemini-3.1-flash-lite",
+    "openai": "gpt-4.1",
+    "anthropic": "claude-sonnet-4-6",
+    "deepseek": "deepseek-chat",
+}
+
+
+def _build_llm(prefs: dict):
+    """Instantiate the chat LLM service for the user's selected provider.
+
+    All four services subclass pipecat's LLMService and speak the universal
+    LLMContext, so they're drop-in interchangeable in the pipeline and with the
+    tool list. A blank ``llm_model`` falls back to the provider's default."""
+    provider = (prefs.get("llm_provider") or "google").strip().lower()
+    model = (prefs.get("llm_model") or "").strip() or \
+        _LLM_DEFAULT_MODELS.get(provider) or _LLM_DEFAULT_MODELS["google"]
+    if provider == "openai":
+        return OpenAILLMService(
+            api_key=prefs.get("openai_api_key", ""),
+            settings=OpenAILLMService.Settings(model=model),
+        )
+    if provider == "anthropic":
+        return AnthropicLLMService(
+            api_key=prefs.get("anthropic_api_key", ""),
+            settings=AnthropicLLMService.Settings(model=model),
+        )
+    if provider == "deepseek":
+        return DeepSeekLLMService(
+            api_key=prefs.get("deepseek_api_key", ""),
+            settings=DeepSeekLLMService.Settings(model=model),
+        )
+    return GoogleLLMService(
+        api_key=prefs.get("gemini_api_key", ""),
+        settings=GoogleLLMService.Settings(model=model),
+    )
+
+
 def _build_messages(past_messages: list, timezone: str | None = None,
                     memory_enabled: bool = True) -> list:
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S %A")
@@ -118,6 +164,11 @@ def _build_messages(past_messages: list, timezone: str | None = None,
     system_with_time = f"{prompt}现在用户那边的设备时间是{now_str}，回复的时候注意事情时间关系。"
     result = [{"role": "system", "content": system_with_time}]
     for msg in past_messages:
+        # "tool" rows are display-only records of tool calls/results for the
+        # chat transcript — never feed them back to the LLM (they aren't valid
+        # tool-response turns; live tool-calling context is managed by pipecat).
+        if msg["role"] == "tool":
+            continue
         role = "assistant" if msg["role"] == "tip" else msg["role"]
         result.append({"role": role, "content": msg["content"]})
     return result
@@ -144,8 +195,6 @@ def make_search_memory(user_id: str, hypogum_url: str | None, send_fn=None):
             query: A natural-language search string to find semantically similar memories.
         """
         try:
-            if send_fn:
-                await send_fn({"type": "thinking", "action": "searching_memory", "detail": query[:80]})
             results = await hypogum_client.search_memory(query, limit=8, base_url=hypogum_url)
 
             search_lines = [f"search-memory \"{query[:100]}\" → {len(results)} results"]
@@ -165,76 +214,41 @@ def make_search_memory(user_id: str, hypogum_url: str | None, send_fn=None):
             await params.result_callback(context_str)
         except Exception as e:
             await params.result_callback(f"Error searching memory: {str(e)}")
-        finally:
-            if send_fn:
-                await send_fn({"type": "thinking_done"})
 
     return search_memory
 
 
-_VALID_MEMORY_CATEGORIES = [
-    "trait", "preference", "interest", "skill", "goal",
-    "relationship", "ownership", "weakness", "event", "other",
-]
-
-
 def make_add_memory(user_id: str, hypogum_url: str | None, send_fn=None):
-    """Factory returning an add_memory callable that writes facts about the user
-    to their hypogum instance (the memory brain). Deduplication and evidence
-    merging are handled by hypogum; Molly just forwards the fact."""
+    """Factory returning an add_memory callable.
 
-    async def add_memory(params: FunctionCallParams, fact: str, category: str,
-                         confidence: int = 5, lifespan: int = 5):
-        """Add an inferred fact about the user to their long-term memory.
+    Rather than writing a structured memory page directly, it drops the user's
+    statement into hypogum's ingest inbox. The memory *ingest agent* picks it up
+    next cycle, decides the category, and merges it into the wiki (dedup +
+    evidence). Molly just captures the raw fact — categorization is agent-side."""
 
-        Use this whenever the user reveals something about themselves. Be proactive — better to record than forget.
-        Category mapping examples:
-        - trait: "I'm an introvert", "I'm very detail-oriented"
-        - preference: "I prefer dark mode", "I like working late at night"
-        - interest: "I'm really into machine learning", "I love indie games"
-        - skill: "I've been learning React", "I can speak Japanese"
-        - goal: "I want to learn stock trading", "I'm trying to lose weight", "I plan to get a driver's license"
-        - relationship: "I work at Tencent", "I'm on the backend team"
-        - ownership: "I have a project called MyApp", "I run a blog"
-        - weakness: "I procrastinate a lot", "I'm bad at time management"
-        - event: "I just finished a marathon today"
+    async def add_memory(params: FunctionCallParams, fact: str):
+        """Remember something the user revealed about themselves.
+
+        The raw statement is queued for the memory ingest agent, which decides
+        the category (trait, preference, interest, skill, goal, relationship,
+        ownership, weakness, event) and folds it into long-term memory. You do
+        NOT categorize — just capture the fact clearly, in the user's own terms.
+
+        Be proactive: call this whenever the user shares something about
+        themselves, their preferences, plans, work, or life — better to record
+        than to forget.
 
         Args:
-            fact: A concise sentence describing what was learned.
-            category: The type of fact. One of: trait, preference, interest, skill, goal, relationship, ownership, weakness, event, other.
-            confidence: How certain you are (1-10). Use 5+ for clear statements, lower for vague hints.
-            lifespan: How long this stays relevant. 1 = short-lived, 10 = long-lasting insight.
+            fact: A concise, self-contained sentence capturing what the user said.
         """
         try:
-            if send_fn:
-                await send_fn({"type": "thinking", "action": "storing_memory", "detail": fact[:80]})
-
-            if category not in _VALID_MEMORY_CATEGORIES:
-                await params.result_callback(
-                    f"Invalid category '{category}'. Must be: {', '.join(_VALID_MEMORY_CATEGORIES)}"
-                )
-                return
-
-            confidence = max(1, min(10, int(confidence)))
-            lifespan = max(1, min(10, int(lifespan)))
-
-            result = await hypogum_client.add_memory(
-                fact, category,
-                evidence="inferred from conversation",
-                confidence=confidence, lifespan=lifespan,
-                base_url=hypogum_url,
-            )
-            created = result.get("created", True)
-            logger.info("Memory {} [{}]: {} [{}]",
-                        "added" if created else "updated", category, fact[:100],
-                        result.get("path", ""))
-            await params.result_callback(f"Remembered: [{category}] {fact}")
+            result = await hypogum_client.submit_note(fact, base_url=hypogum_url)
+            logger.info("Memory note queued for ingest: {} [{}]",
+                        fact[:100], result.get("queued", ""))
+            await params.result_callback(f"记下了,稍后会整理进记忆:{fact}")
         except Exception as e:
-            logger.error("Error adding memory: {}", e)
+            logger.error("Error queueing memory note: {}", e)
             await params.result_callback(f"Failed to store memory: {str(e)}")
-        finally:
-            if send_fn:
-                await send_fn({"type": "thinking_done"})
 
     return add_memory
 
@@ -242,21 +256,27 @@ def make_add_memory(user_id: str, hypogum_url: str | None, send_fn=None):
 _RUN_TERMINAL = {"done", "error", "timeout", "aborted"}
 
 
-def make_run_task(hypogum_url: str | None, *, session, task_holder: dict, send_fn=None):
+def make_run_task(hypogum_url: str | None, *, task_holder: dict, send_fn=None):
     """Factory for the `run_task` tool — voice-driven autonomy.
 
     Enqueues a freeform run on the user's hypogum agent, returns immediately,
-    then narrates the outcome by voice + UI when the run completes.
+    then, when the run completes, injects a result briefing into the LLM context
+    and triggers one inference so Molly narrates the outcome in her own words.
 
     `task_holder` is a mutable dict whose "task" key is set to the PipelineTask
-    after the pipeline is built (so narration can speak via TTS). `session`
-    supplies the current conversation/user at completion time.
+    after the pipeline is built, so completion can push frames into the pipeline.
     """
 
     async def _poll_and_narrate(run_id: str, task_desc: str):
+        """Poll the run to completion, then inject a result briefing into the LLM
+        context and trigger one inference so Molly narrates the outcome in her own
+        words (context-consistent, natural phrasing). The generated reply flows
+        through the normal pipeline → AssistantBroadcaster (persist + broadcast)
+        → TTS, so no manual DB write or TTS frame is needed here."""
         status = "queued"
         deadline = time.time() + 1900  # ~31 min ceiling
         try:
+            run = None
             while time.time() < deadline:
                 await asyncio.sleep(5)
                 run = await hypogum_client.get_run(run_id, base_url=hypogum_url)
@@ -267,40 +287,50 @@ def make_run_task(hypogum_url: str | None, *, session, task_holder: dict, send_f
                     break
             else:
                 run = None
+                status = "timeout"
 
+            # Assemble a briefing for the model. We inject it as a user-role turn
+            # (guaranteed to reach the LLM and trigger a natural reply); it is NOT
+            # persisted to the DB — only the assistant's generated narration is.
             if status == "done":
                 summary = (run or {}).get("summary")
-                if summary:
-                    line = f"「{task_desc}」完成啦。{summary}"
-                else:
-                    try:
-                        arts = await hypogum_client.list_artifacts(limit=5, base_url=hypogum_url)
-                    except Exception:
-                        arts = []
-                    if arts:
-                        titles = "、".join(a.get("title") or a.get("id", "") for a in arts[:3])
-                        line = f"「{task_desc}」搞定了，产出了{len(arts)}个结果：{titles}。要看看吗？"
-                    else:
-                        line = f"「{task_desc}」完成啦，要我说说结果吗？"
+                try:
+                    arts = await hypogum_client.list_artifacts(limit=5, base_url=hypogum_url)
+                except Exception:
+                    arts = []
+                art_titles = "、".join(
+                    (a.get("title") or a.get("name") or a.get("id", "")) for a in arts[:3]
+                )
+                brief = (
+                    f"[后台任务完成通知] 你之前交给后台 agent 的任务「{task_desc}」已经完成（状态：done）。"
+                    f"结果摘要：{summary or '（无摘要）'}。"
+                    f"{('产出物：' + art_titles + '。') if art_titles else ''}"
+                    "请你现在主动、自然、口语化地把这个结果告诉用户，简短一点，"
+                    "并可以顺带问一句是否需要查看结果。"
+                )
             else:
-                line = f"「{task_desc}」这次没能完成（{status}），要不要我再试一次？"
+                brief = (
+                    f"[后台任务完成通知] 你之前交给后台 agent 的任务「{task_desc}」这次没能完成"
+                    f"（状态：{status}）。请你自然地把这个情况告诉用户，并询问是否要再试一次。"
+                )
 
-            conv_id = session.conversation_id
-            user_id = session.user_id
-            try:
-                await database.app.add_message(conv_id, "assistant", line, user_id)
-            except Exception as e:
-                logger.warning("run narrate persist failed: {}", e)
             if send_fn:
-                await send_fn({"type": "run_done", "run_id": run_id,
-                               "status": status, "text": line})
+                await send_fn({"type": "run_done", "run_id": run_id, "status": status})
+
             task = task_holder.get("task")
             if task is not None:
                 try:
-                    await task.queue_frames([TTSSpeakFrame(line)])
+                    await task.queue_frames([
+                        LLMMessagesAppendFrame(
+                            messages=[{"role": "user", "content": brief}],
+                            run_llm=True,
+                        )
+                    ])
                 except Exception as e:
-                    logger.warning("run narrate speak failed: {}", e)
-            logger.info("run {} narrated ({}): {}", run_id, status, task_desc[:60])
+                    logger.warning("run narrate trigger failed: {}", e)
+            else:
+                logger.warning("run {} done but pipeline task gone; skip narrate", run_id)
+            logger.info("run {} narrate-triggered ({}): {}", run_id, status, task_desc[:60])
         except Exception as e:
             logger.error("run narrate failed for {}: {}", run_id, e)
 
@@ -316,9 +346,6 @@ def make_run_task(hypogum_url: str | None, *, session, task_holder: dict, send_f
             task_description: A clear, self-contained instruction for the agent.
         """
         try:
-            if send_fn:
-                await send_fn({"type": "thinking", "action": "starting_task",
-                               "detail": task_description[:80]})
             run = await hypogum_client.submit_run(task_description, base_url=hypogum_url)
             run_id = run.get("id")
             if not run_id:
@@ -332,11 +359,94 @@ def make_run_task(hypogum_url: str | None, *, session, task_holder: dict, send_f
         except Exception as e:
             logger.error("run_task failed: {}", e)
             await params.result_callback(f"启动任务失败：{str(e)}")
-        finally:
-            if send_fn:
-                await send_fn({"type": "thinking_done"})
 
     return run_task
+
+
+def make_read_memory_page(hypogum_url: str | None, send_fn=None):
+    """Factory for the `read_memory_page` tool — read one memory page in full."""
+
+    async def read_memory_page(params: FunctionCallParams, path: str):
+        """Read the full content of a specific memory page.
+
+        Use after `search_memory` returns a page path whose details you need, or
+        when the user asks about a specific remembered topic. Returns the page's
+        title and body text.
+
+        Args:
+            path: The memory page path (e.g. "goals/learn_trading.md"), as
+                returned in `search_memory` results.
+        """
+        try:
+            page = await hypogum_client.read_memory_page(path, base_url=hypogum_url)
+            if not page:
+                await params.result_callback(f"No memory page found at {path}.")
+                return
+            title = (page.get("title") or path).strip()
+            body = (page.get("body") or page.get("content") or "").strip()
+            await params.result_callback(f"# {title}\n\n{body}" if body else title)
+        except Exception as e:
+            await params.result_callback(f"Error reading memory page: {str(e)}")
+
+    return read_memory_page
+
+
+def make_fetch_calendar(hypogum_url: str | None, send_fn=None):
+    """Factory for the `fetch_calendar` tool — look up the user's schedule."""
+
+    async def fetch_calendar(params: FunctionCallParams,
+                             from_date: str = "", to_date: str = ""):
+        """Look up the user's calendar events (observed, planned, suggested).
+
+        Use when the user asks about their schedule, upcoming events, what they
+        did on a given day, or when you need to plan around their time.
+
+        Args:
+            from_date: Optional start date (YYYY-MM-DD) to filter from. Empty = no lower bound.
+            to_date: Optional end date (YYYY-MM-DD) to filter to. Empty = no upper bound.
+        """
+        try:
+            entries = await hypogum_client.fetch_calendar(
+                frm=from_date or None, to=to_date or None, base_url=hypogum_url)
+            if not entries:
+                await params.result_callback("No calendar entries found.")
+                return
+            lines = []
+            for e in entries[:30]:
+                when = e.get("start") or e.get("date") or "?"
+                lines.append(
+                    f"[{e.get('bucket', '?')}] {when} — {e.get('title', '(untitled)')}")
+            await params.result_callback("\n".join(lines))
+        except Exception as e:
+            await params.result_callback(f"Error fetching calendar: {str(e)}")
+
+    return fetch_calendar
+
+
+def make_list_artifacts(hypogum_url: str | None, send_fn=None):
+    """Factory for the `list_artifacts` tool — list agent-produced deliverables."""
+
+    async def list_artifacts(params: FunctionCallParams):
+        """List recent deliverables (artifacts) produced by background agent runs.
+
+        Use when the user asks what files or results the agent has produced, or
+        to reference a past deliverable.
+        """
+        try:
+            arts = await hypogum_client.list_artifacts(limit=20, base_url=hypogum_url)
+            if not arts:
+                await params.result_callback("No artifacts yet.")
+                return
+            lines = []
+            for a in arts[:20]:
+                label = (a.get("title") or a.get("name") or a.get("id") or "?").strip()
+                when = (a.get("created") or "")[:10]
+                lines.append(f"- {label}{f' ({when})' if when else ''}")
+            await params.result_callback("\n".join(lines))
+        except Exception as e:
+            await params.result_callback(f"Error listing artifacts: {str(e)}")
+
+    return list_artifacts
 
 
 class MicFilterProcessor(FrameProcessor):
@@ -464,6 +574,56 @@ class AssistantBroadcaster(FrameProcessor):
         await self.push_frame(frame, direction)
 
 
+class ToolCallBroadcaster(FrameProcessor):
+    """Records every LLM tool call + its result and streams them to the frontend
+    so they render as tool cards inside the chat transcript.
+
+    Observes the function-call frames the LLM service emits downstream:
+      • FunctionCallInProgressFrame → live "tool running" card
+      • FunctionCallResultFrame     → fill in the result + persist a `tool` row
+    The persisted rows are display-only (skipped by `_build_messages`)."""
+
+    def __init__(self, transport: SmallWebRTCTransport, session: "SessionState"):
+        super().__init__()
+        self._transport = transport
+        self._session = session
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+        if isinstance(frame, FunctionCallInProgressFrame):
+            await self._transport._client.send_message(
+                OutputTransportMessageFrame(message={
+                    "type": "tool_start",
+                    "tool_call_id": frame.tool_call_id,
+                    "name": frame.function_name,
+                    "args": frame.arguments,
+                }))
+        elif isinstance(frame, FunctionCallResultFrame):
+            result = frame.result
+            result_str = result if isinstance(result, str) else json.dumps(
+                result, ensure_ascii=False, default=str)
+            payload = {
+                "name": frame.function_name,
+                "args": frame.arguments,
+                "result": result_str,
+            }
+            try:
+                await database.app.add_message(
+                    self._session.conversation_id, "tool",
+                    json.dumps(payload, ensure_ascii=False),
+                    self._session.user_id,
+                )
+            except Exception as e:
+                logger.warning("tool record persist failed: {}", e)
+            await self._transport._client.send_message(
+                OutputTransportMessageFrame(message={
+                    "type": "tool_result",
+                    "tool_call_id": frame.tool_call_id,
+                    **payload,
+                }))
+        await self.push_frame(frame, direction)
+
+
 async def start_pipecat_session(
     connection: SmallWebRTCConnection,
     session: SessionState,
@@ -493,12 +653,8 @@ async def start_pipecat_session(
                 if "speak_text" in changes:
                     session.prefs["speak_text"] = "true" if changes["speak_text"] else "false"
 
-        gemini_key = prefs.get("gemini_api_key", "")
         hypogum_url = prefs.get("hypogum_base_url") or None
-        llm = GoogleLLMService(
-            api_key=gemini_key,
-            settings=GoogleLLMService.Settings(model="gemini-3.1-flash-lite")
-        )
+        llm = _build_llm(prefs)
         # Memory + autonomy tools activate only when a hypogum backend is set.
         # Without one, Molly is a plain chat client (no tools, base prompt).
         memory_enabled = bool(hypogum_url)
@@ -510,7 +666,10 @@ async def start_pipecat_session(
             tools = [
                 make_search_memory(user_id, hypogum_url, send_fn=_send),
                 make_add_memory(user_id, hypogum_url, send_fn=_send),
-                make_run_task(hypogum_url, session=session, task_holder=task_holder, send_fn=_send),
+                make_read_memory_page(hypogum_url, send_fn=_send),
+                make_fetch_calendar(hypogum_url, send_fn=_send),
+                make_list_artifacts(hypogum_url, send_fn=_send),
+                make_run_task(hypogum_url, task_holder=task_holder, send_fn=_send),
             ]
         stt_provider = prefs.get("stt_provider", "soniox")
         stt_language = prefs.get("stt_language", "zh")
@@ -573,6 +732,7 @@ async def start_pipecat_session(
         tts_filter = TTSFilterProcessor(session)
         user_broadcaster = UserBroadcaster(transport, conv_id, user_id)
         assistant_broadcaster = AssistantBroadcaster(transport, conv_id, user_id)
+        tool_broadcaster = ToolCallBroadcaster(transport, session)
         audio_level = AudioLevelProcessor(transport)
 
         pipeline = Pipeline([
@@ -583,6 +743,7 @@ async def start_pipecat_session(
             user_broadcaster,
             user_aggregator,
             llm,
+            tool_broadcaster,
             assistant_broadcaster,
             tts,
             tts_filter,

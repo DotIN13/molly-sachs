@@ -90,6 +90,11 @@ class SettingsReq(BaseModel):
     gemini_api_key: str | None = None
     cartesia_api_key: str | None = None
     soniox_api_key: str | None = None
+    llm_provider: str | None = None
+    llm_model: str | None = None
+    openai_api_key: str | None = None
+    anthropic_api_key: str | None = None
+    deepseek_api_key: str | None = None
     tts_voice: str | None = None
     tts_volume: float | None = None
     tts_speed: float | None = None
@@ -278,6 +283,16 @@ async def save_settings(req: SettingsReq,
         data["cartesia_api_key"] = req.cartesia_api_key
     if req.soniox_api_key is not None:
         data["soniox_api_key"] = req.soniox_api_key
+    if req.openai_api_key is not None and req.openai_api_key != "":
+        data["openai_api_key"] = req.openai_api_key
+    if req.anthropic_api_key is not None and req.anthropic_api_key != "":
+        data["anthropic_api_key"] = req.anthropic_api_key
+    if req.deepseek_api_key is not None and req.deepseek_api_key != "":
+        data["deepseek_api_key"] = req.deepseek_api_key
+    if req.llm_provider is not None:
+        data["llm_provider"] = req.llm_provider
+    if req.llm_model is not None:
+        data["llm_model"] = req.llm_model
     if req.tts_voice is not None:
         data["tts_voice"] = req.tts_voice
     if req.tts_volume is not None:
@@ -320,6 +335,11 @@ async def get_settings(current_user: dict = Depends(auth.get_current_user)):
         "gemini_key_configured": bool(s.get("gemini_api_key", "")),
         "cartesia_key_configured": bool(s.get("cartesia_api_key", "")),
         "soniox_key_configured": bool(s.get("soniox_api_key", "")),
+        "openai_key_configured": bool(s.get("openai_api_key", "")),
+        "anthropic_key_configured": bool(s.get("anthropic_api_key", "")),
+        "deepseek_key_configured": bool(s.get("deepseek_api_key", "")),
+        "llm_provider": s.get("llm_provider", "google"),
+        "llm_model": s.get("llm_model", ""),
         "tts_voice": s.get("tts_voice"),
         "tts_volume": float(s.get("tts_volume", "1.0")),
         "tts_speed": float(s.get("tts_speed", "1.0")),
@@ -485,7 +505,14 @@ async def webrtc_connect(
         await database.app.create_conversation(conv_id, database.default_conversation_title(), user["id"])
 
         session = await SessionState.create(user["id"], conv_id)
-        if not session.prefs.get("gemini_api_key") or not session.prefs.get("cartesia_api_key"):
+        # The required LLM key depends on the selected chat provider.
+        _llm_key = {
+            "google": "gemini_api_key",
+            "openai": "openai_api_key",
+            "anthropic": "anthropic_api_key",
+            "deepseek": "deepseek_api_key",
+        }.get(session.prefs.get("llm_provider", "google"), "gemini_api_key")
+        if not session.prefs.get(_llm_key) or not session.prefs.get("cartesia_api_key"):
             raise HTTPException(status_code=400, detail="Missing API keys. Configure in Settings.")
 
         async def webrtc_connection_callback(connection: SmallWebRTCConnection):

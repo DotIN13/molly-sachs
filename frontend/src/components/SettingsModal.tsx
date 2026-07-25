@@ -45,6 +45,14 @@ export interface SettingsData {
   geminiKeyConfigured: boolean
   cartesiaKeyConfigured: boolean
   sonioxKeyConfigured: boolean
+  llmProvider: string
+  llmModel: string
+  openaiKey: string
+  anthropicKey: string
+  deepseekKey: string
+  openaiKeyConfigured: boolean
+  anthropicKeyConfigured: boolean
+  deepseekKeyConfigured: boolean
   ttsVoice: string
   ttsVolume: number
   ttsSpeed: number
@@ -122,6 +130,18 @@ export default function SettingsModal({ isOpen, onClose, onSave, settings, onCha
     }
   }
 
+  // LLM provider → its API-key field + placeholders (chat model selection).
+  const LLM_KEY_FIELDS: Record<string, { label: string; field: keyof SettingsData; configured: keyof SettingsData; placeholder: string }> = {
+    google: { label: 'settings.geminiApiKey', field: 'geminiKey', configured: 'geminiKeyConfigured', placeholder: 'settings.placeholderGemini' },
+    openai: { label: 'settings.openaiApiKey', field: 'openaiKey', configured: 'openaiKeyConfigured', placeholder: 'settings.placeholderOpenai' },
+    anthropic: { label: 'settings.anthropicApiKey', field: 'anthropicKey', configured: 'anthropicKeyConfigured', placeholder: 'settings.placeholderAnthropic' },
+    deepseek: { label: 'settings.deepseekApiKey', field: 'deepseekKey', configured: 'deepseekKeyConfigured', placeholder: 'settings.placeholderDeepseek' },
+  }
+  const LLM_MODEL_PLACEHOLDER: Record<string, string> = {
+    google: 'gemini-3.1-flash-lite', openai: 'gpt-4.1', anthropic: 'claude-sonnet-4-6', deepseek: 'deepseek-chat',
+  }
+  const llmKey = LLM_KEY_FIELDS[settings.llmProvider] || LLM_KEY_FIELDS.google
+
   if (!isOpen) return null
 
   const handleClose = () => {
@@ -171,14 +191,41 @@ export default function SettingsModal({ isOpen, onClose, onSave, settings, onCha
             )}
             {settings.settingsTab === 'api' && (
               <div className="flex flex-col gap-4">
+                {/* Chat LLM: provider + model + provider-specific key */}
+                <div className="pb-1 border-b border-slate-100">
+                  <h4 className="text-[11px] font-bold uppercase tracking-wider text-slate-400">{t('settings.llmSection')}</h4>
+                </div>
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-medium text-slate-700">{t('settings.geminiApiKey')}</label>
+                  <label className="text-xs font-medium text-slate-700">{t('settings.llmProvider')}</label>
+                  <select
+                    value={settings.llmProvider}
+                    onChange={e => onChange('llmProvider', e.target.value)}
+                    className="bg-[#f9f9f9] border border-slate-200 text-sm focus-visible:ring-slate-300 rounded-md h-9 px-3 outline-none"
+                  >
+                    <option value="google">{t('settings.llmGoogle')}</option>
+                    <option value="openai">{t('settings.llmOpenai')}</option>
+                    <option value="anthropic">{t('settings.llmAnthropic')}</option>
+                    <option value="deepseek">{t('settings.llmDeepseek')}</option>
+                  </select>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-medium text-slate-700">{t('settings.llmModel')}</label>
+                  <Input value={settings.llmModel} onChange={e => onChange('llmModel', e.target.value)} className="bg-[#f9f9f9] border-slate-200 text-sm focus-visible:ring-slate-300" placeholder={LLM_MODEL_PLACEHOLDER[settings.llmProvider] || ''} />
+                  <span className="text-[10px] text-slate-400">{t('settings.llmModelHint')}</span>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-medium text-slate-700">{t(llmKey.label)}</label>
                   <div className="relative">
-                    <Input type="password" value={settings.geminiKey} onChange={e => onChange('geminiKey', e.target.value)} className="bg-[#f9f9f9] border-slate-200 text-sm focus-visible:ring-slate-300" placeholder={t('settings.placeholderGemini')} />
-                    {settings.geminiKeyConfigured && (
+                    <Input type="password" value={settings[llmKey.field] as string} onChange={e => onChange(llmKey.field, e.target.value)} className="bg-[#f9f9f9] border-slate-200 text-sm focus-visible:ring-slate-300" placeholder={t(llmKey.placeholder)} />
+                    {(settings[llmKey.configured] as boolean) && (
                       <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100 pointer-events-none">{t('settings.configured')}</span>
                     )}
                   </div>
+                </div>
+
+                {/* Speech service keys */}
+                <div className="pt-2 pb-1 border-b border-slate-100">
+                  <h4 className="text-[11px] font-bold uppercase tracking-wider text-slate-400">{t('settings.speechKeys')}</h4>
                 </div>
                 <div className="flex flex-col gap-1.5">
                   <label className="text-xs font-medium text-slate-700">{t('settings.cartesiaApiKey')}</label>

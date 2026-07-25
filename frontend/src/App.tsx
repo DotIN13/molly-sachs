@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef, useCallback, startTransition } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Settings, PenSquare, Search, FileText, Clock, Mic, Volume2, VolumeX, RefreshCw, LogOut, Menu, X, ChevronDown, ArrowUp, Lightbulb, Trash2 } from 'lucide-react'
+import { Settings, PenSquare, Search, Mic, Volume2, VolumeX, LogOut, Menu, X, ArrowUp, Lightbulb, Trash2 } from 'lucide-react'
 import { updateObserverConfig, stopObservers } from './observers'
 import { setHypogumUrl, hypogumHealthy, fetchHypogumMemories, addHypogumMemory, deleteHypogumMemory } from './hypogum'
 import { API_URL, isElectron } from './config'
@@ -12,25 +12,13 @@ import ObserversTab from './components/ObserversTab'
 import WorkTab from './components/WorkTab'
 import ArtifactsTab from './components/ArtifactsTab'
 import PlansTab from './components/PlansTab'
-import MemoryDetailModal from './components/MemoryDetailModal'
+import MemoryDetailView from './components/MemoryDetailView'
+import ToolCallCard from './components/ToolCallCard'
 import CalendarTab from './components/CalendarTab'
 
 import { useAuth } from './contexts/AuthContext'
 import Login from './pages/Login'
 import 'katex/dist/katex.min.css'
-
-const CATEGORY_COLORS: Record<string, string> = {
-  trait: 'bg-purple-50 text-purple-700 border-purple-200',
-  preference: 'bg-blue-50 text-blue-700 border-blue-200',
-  interest: 'bg-green-50 text-green-700 border-green-200',
-  skill: 'bg-amber-50 text-amber-700 border-amber-200',
-  goal: 'bg-rose-50 text-rose-700 border-rose-200',
-  relationship: 'bg-pink-50 text-pink-700 border-pink-200',
-  ownership: 'bg-orange-50 text-orange-700 border-orange-200',
-  weakness: 'bg-gray-50 text-gray-600 border-gray-200',
-  event: 'bg-cyan-50 text-cyan-700 border-cyan-200',
-  other: 'bg-slate-50 text-slate-600 border-slate-200',
-}
 
 const MEMORY_TYPES = [
   { value: "event", label: "Events" },
@@ -48,7 +36,7 @@ export default function App() {
   const auth = useAuth()
   const { t } = useTranslation()
 
-  const [messages, setMessages] = useState<{ role: string, content: string }[]>([
+  const [messages, setMessages] = useState<{ role: string, content: string, toolCallId?: string }[]>([
     { role: 'assistant', content: t('app.helloDefault') }
   ])
   const [thinking, setThinking] = useState<{ action: string; detail: string } | null>(null)
@@ -65,6 +53,16 @@ export default function App() {
   const [geminiKeyConfigured, setGeminiKeyConfigured] = useState(false)
   const [cartesiaKeyConfigured, setCartesiaKeyConfigured] = useState(false)
   const [sonioxKeyConfigured, setSonioxKeyConfigured] = useState(false)
+
+  // Chat LLM provider selection
+  const [llmProvider, setLlmProvider] = useState('google')
+  const [llmModel, setLlmModel] = useState('')
+  const [openaiKey, setOpenaiKey] = useState('')
+  const [anthropicKey, setAnthropicKey] = useState('')
+  const [deepseekKey, setDeepseekKey] = useState('')
+  const [openaiKeyConfigured, setOpenaiKeyConfigured] = useState(false)
+  const [anthropicKeyConfigured, setAnthropicKeyConfigured] = useState(false)
+  const [deepseekKeyConfigured, setDeepseekKeyConfigured] = useState(false)
 
   const [ttsVoice, setTtsVoice] = useState('6eb8965c-e295-47bd-a9e4-3eeebb3abcff')
   const [ttsVolume, setTtsVolume] = useState(1.0)
@@ -89,19 +87,15 @@ export default function App() {
   const [timezone, setTimezone] = useState('')
 
   // Dashboard & Navigation States
-  const [activeTab, setActiveTab] = useState<'chat' | 'observers' | 'calendar' | 'plans' | 'work' | 'artifacts' | 'memories'>('chat')
+  const [mode, setMode] = useState<'chat' | 'work'>('chat')
+  const [workView, setWorkView] = useState<'calendar' | 'observers' | 'work' | 'plans' | 'artifacts'>('calendar')
+  const [convSearch, setConvSearch] = useState('')
+  const [searchOpen, setSearchOpen] = useState(false)
   const [memPath, setMemPath] = useState<string | null>(null)
   const [hypogumBaseUrl, setHypogumBaseUrl] = useState('')
   const [hypogumConnected, setHypogumConnected] = useState(false)
   const [memories, setMemories] = useState<any[]>([])
-  const [memoriesTotal, setMemoriesTotal] = useState(0)
   const [memoriesSearch, setMemoriesSearch] = useState("")
-  const [memoriesTypeFilter, setMemoriesTypeFilter] = useState("")
-  const [memoriesLoading, setMemoriesLoading] = useState(false)
-  const [, setMemoriesOffset] = useState(0)
-  const memoriesOffsetRef = useRef(0)
-  const [hasMoreMemories, setHasMoreMemories] = useState(true)
-  const [memoriesLoadingMore, setMemoriesLoadingMore] = useState(false)
 
   const [newMemoryText, setNewMemoryText] = useState('')
   const [newMemoryType, setNewMemoryType] = useState('other')
@@ -110,12 +104,10 @@ export default function App() {
   const [showAddMemory, setShowAddMemory] = useState(false)
   const [addingMemory, setAddingMemory] = useState(false)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
-  const [mobileTabOpen, setMobileTabOpen] = useState(false)
 
   const audioBars = useAudioVisualizer(voiceMode, 5)
 
   const scrollRef = useRef<HTMLDivElement>(null)
-  const memoriesSentinelRef = useRef<HTMLDivElement>(null)
   const refreshConversationsRef = useRef<() => void>(() => { })
   const appliedSettingsRef = useRef<Record<string, any>>({})
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -187,6 +179,12 @@ export default function App() {
         setGeminiKeyConfigured(data.gemini_key_configured || false)
         setCartesiaKeyConfigured(data.cartesia_key_configured || false)
         setSonioxKeyConfigured(data.soniox_key_configured || false)
+        setLlmProvider(data.llm_provider || 'google')
+        setLlmModel(data.llm_model || '')
+        setOpenaiKey(''); setAnthropicKey(''); setDeepseekKey('')
+        setOpenaiKeyConfigured(data.openai_key_configured || false)
+        setAnthropicKeyConfigured(data.anthropic_key_configured || false)
+        setDeepseekKeyConfigured(data.deepseek_key_configured || false)
         setTtsVoice(data.tts_voice || '6eb8965c-e295-47bd-a9e4-3eeebb3abcff')
         setTtsVolume(data.tts_volume ?? 1.0)
         setTtsSpeed(data.tts_speed ?? 1.0)
@@ -206,6 +204,8 @@ export default function App() {
           ttsLanguage: data.tts_language || 'en',
           sttProvider: data.stt_provider || 'soniox',
           sttLanguage: data.stt_language || 'en',
+          llmProvider: data.llm_provider || 'google',
+          llmModel: data.llm_model || '',
         }
 
         // Load Observers settings
@@ -433,6 +433,8 @@ export default function App() {
         stt_language: sttLanguage,
         tts_language: ttsLanguage,
         stt_provider: sttProvider,
+        llm_provider: llmProvider,
+        llm_model: llmModel,
         observer_screen_active: observerScreenActive,
         observer_camera_active: observerCameraActive,
         observer_screen_interval: observerScreenInterval,
@@ -455,6 +457,9 @@ export default function App() {
       if (sonioxKey && sonioxKey !== appliedSettingsRef.current?.sonioxKey) {
         body.soniox_api_key = sonioxKey
       }
+      if (openaiKey) body.openai_api_key = openaiKey
+      if (anthropicKey) body.anthropic_api_key = anthropicKey
+      if (deepseekKey) body.deepseek_api_key = deepseekKey
       await auth.authFetch(`${API_URL}/api/settings`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -472,6 +477,8 @@ export default function App() {
         geminiKey, cartesiaKey, sonioxKey,
         ttsVoice, ttsVolume, ttsSpeed, ttsEmotion, ttsLanguage,
         sttProvider, sttLanguage,
+        llmProvider, llmModel,
+        openaiKey, anthropicKey, deepseekKey,
       }
       const pipelineChanged = hasPipelineChanged(curr)
       if (pipelineChanged) {
@@ -493,30 +500,16 @@ export default function App() {
 
 
 
-  const fetchMemories = useCallback(async (search?: string, append = false) => {
-    if (!append) {
-      setMemoriesLoading(true)
-      setMemoriesOffset(0)
-      memoriesOffsetRef.current = 0
-    } else {
-      setMemoriesLoadingMore(true)
-    }
+  const fetchMemories = useCallback(async (search?: string) => {
     try {
-      // Phase 3: memories come from hypogum (semantic search when querying,
-      // otherwise the full page tree). No server-side pagination.
-      const data = await fetchHypogumMemories(search, memoriesTypeFilter)
-      if (!append) setMemories(data.items)
-      setMemoriesTotal(data.total)
-      setMemoriesOffset(data.items.length)
-      memoriesOffsetRef.current = data.items.length
-      setHasMoreMemories(false)
+      // Memories come from hypogum (semantic search when querying, otherwise
+      // the full page tree). No server-side pagination.
+      const data = await fetchHypogumMemories(search)
+      setMemories(data.items)
     } catch (err) {
       console.error("Failed to fetch memories:", err)
-    } finally {
-      setMemoriesLoading(false)
-      setMemoriesLoadingMore(false)
     }
-  }, [memoriesTypeFilter])
+  }, [])
 
   const addMemory = useCallback(async () => {
     if (!newMemoryText.trim()) return
@@ -539,20 +532,20 @@ export default function App() {
     try {
       await deleteHypogumMemory(memoryId)
       setMemories(prev => prev.filter(m => m.id !== memoryId))
-      setMemoriesTotal(prev => Math.max(0, prev - 1))
     } catch (err) {
       console.error("Failed to delete memory:", err)
     }
   }, [])
 
+  // Load the memory list whenever Work mode is active (sidebar list).
   useEffect(() => {
-    if (backendStatus === 'connected' && activeTab === 'memories') {
+    if (backendStatus === 'connected' && mode === 'work') {
       fetchMemories()
     }
-  }, [activeTab, backendStatus, fetchMemories]);
+  }, [mode, backendStatus, fetchMemories]);
 
-  // Memory tabs exist only while hypogum is reachable. Poll its health from the
-  // configured URL; when it's unreachable, only Chat is shown (and we snap back).
+  // Work mode + its memory/tools require a reachable hypogum. Poll its health
+  // from the configured URL; when unreachable, only Chat is available.
   useEffect(() => {
     let stop = false
     const check = async () => {
@@ -566,29 +559,21 @@ export default function App() {
   }, [hypogumBaseUrl])
 
   useEffect(() => {
-    if (!hypogumConnected && activeTab !== 'chat') setActiveTab('chat')
-  }, [hypogumConnected, activeTab])
+    if (!hypogumConnected && mode !== 'chat') setMode('chat')
+  }, [hypogumConnected, mode])
 
+  // Cmd/Ctrl+K opens the search popup (conversations in chat mode, memory pages
+  // in work mode).
   useEffect(() => {
-    if (activeTab === 'memories' && backendStatus === 'connected') {
-      fetchMemories()
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault()
+        setSearchOpen(o => !o)
+      }
     }
-  }, [memoriesTypeFilter])
-
-  useEffect(() => {
-    const sentinel = memoriesSentinelRef.current
-    if (!sentinel || !hasMoreMemories || memoriesLoadingMore || activeTab !== 'memories') return
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        if (entry.isIntersecting) {
-          fetchMemories(undefined, true)
-        }
-      },
-      { rootMargin: "200px" }
-    )
-    observer.observe(sentinel)
-    return () => observer.disconnect()
-  }, [hasMoreMemories, memoriesLoadingMore, activeTab, fetchMemories])
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
 
   const handleSettingsChange = (key: keyof typeof settingsData, value: any) => {
     const setters: Record<keyof typeof settingsData, any> = {
@@ -598,6 +583,14 @@ export default function App() {
       geminiKeyConfigured: setGeminiKeyConfigured,
       cartesiaKeyConfigured: setCartesiaKeyConfigured,
       sonioxKeyConfigured: setSonioxKeyConfigured,
+      llmProvider: setLlmProvider,
+      llmModel: setLlmModel,
+      openaiKey: setOpenaiKey,
+      anthropicKey: setAnthropicKey,
+      deepseekKey: setDeepseekKey,
+      openaiKeyConfigured: setOpenaiKeyConfigured,
+      anthropicKeyConfigured: setAnthropicKeyConfigured,
+      deepseekKeyConfigured: setDeepseekKeyConfigured,
       ttsVoice: setTtsVoice,
       ttsVolume: setTtsVolume,
       ttsSpeed: setTtsSpeed,
@@ -622,6 +615,9 @@ export default function App() {
   const settingsData = {
     geminiKey, cartesiaKey, sonioxKey,
     geminiKeyConfigured, cartesiaKeyConfigured, sonioxKeyConfigured,
+    llmProvider, llmModel,
+    openaiKey, anthropicKey, deepseekKey,
+    openaiKeyConfigured, anthropicKeyConfigured, deepseekKeyConfigured,
     ttsVoice, ttsVolume, ttsSpeed, ttsEmotion,
     sttLanguage, sttProvider, ttsLanguage,
     observerScreenActive, observerCameraActive, observerScreenInterval,
@@ -632,8 +628,8 @@ export default function App() {
   // Memory features (all tabs except Chat, and the chat memory/run tools) light
   // up only once the user has configured a hypogum backend. Without one, Molly
   // is a plain voice/text chat client.
-  const ALL_TABS = ['chat', 'observers', 'calendar', 'plans', 'work', 'artifacts', 'memories'] as const
-  const visibleTabs = hypogumConnected ? ALL_TABS : (['chat'] as const)
+  const WORK_VIEWS = ['calendar', 'artifacts', 'plans', 'work', 'observers'] as const
+  const MEM_GROUP_ORDER = ['goals', 'entities', 'traits', 'struggles'] as const
 
   const sendMessage = () => {
     if (!input.trim()) return
@@ -678,48 +674,83 @@ export default function App() {
           <span className="font-semibold text-slate-800 text-sm tracking-wide">{t('app.title')}</span>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-3 space-y-0.5">
-          <button onClick={() => { createNewConversation(); setMobileMenuOpen(false) }} className="w-full flex items-center gap-2 px-3 py-1 text-sm text-slate-600 hover:bg-slate-100 rounded-md transition-colors">
-            <PenSquare className="w-3.5 h-3.5" /> {t('app.newChat')}
-          </button>
-          <button className="w-full flex items-center gap-2 px-3 py-1 text-sm text-slate-600 hover:bg-slate-100 rounded-md transition-colors">
-            <Search className="w-3.5 h-3.5" /> {t('app.search')}
-          </button>
-          <button className="w-full flex items-center justify-between px-3 py-1 text-sm font-medium text-slate-800 bg-[#eef2fc] rounded-md transition-colors">
-            <div className="flex items-center gap-2"><FileText className="w-3.5 h-3.5 text-blue-600" /> {t('app.activeContext')}</div>
-            <span className="text-[9px] uppercase tracking-wider bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded">{t('app.beta')}</span>
-          </button>
-          <button className="w-full flex items-center gap-2 px-3 py-1 text-sm text-slate-600 hover:bg-slate-100 rounded-md transition-colors">
-            <Clock className="w-3.5 h-3.5" /> {t('app.routines')}
-          </button>
-
-          <div className="pt-6 pb-2 px-3 text-[10px] uppercase font-semibold tracking-wider text-slate-400">{t('app.conversations')}</div>
-          <div className="space-y-0 overflow-y-auto max-h-[300px] pr-1">
-            {conversations.map(conv => (
-              <div
-                key={conv.id}
-                className={`group w-full flex items-center justify-between px-3 py-1 rounded-md text-sm transition-all ${activeConversationId === conv.id
-                  ? 'bg-[#eef2fc] text-blue-700 font-medium'
-                  : 'text-slate-600 hover:bg-slate-50 hover:text-slate-800'
-                  }`}
-              >
+        <div className="flex-1 overflow-y-auto px-3 flex flex-col min-h-0">
+          {/* Top-level mode switch: Chat / Work */}
+          <div className="flex mx-1 gap-1 mb-3 bg-slate-100 rounded-lg p-0.5 border border-slate-200/60 flex-shrink-0">
+            {(['chat', 'work'] as const).map(m => {
+              const disabled = m === 'work' && !hypogumConnected
+              return (
                 <button
-                  onClick={() => { loadConversation(conv.id); setMobileMenuOpen(false) }}
-                  className="flex-1 text-left truncate mr-2"
+                  key={m}
+                  disabled={disabled}
+                  onClick={() => { setMode(m); setMobileMenuOpen(false) }}
+                  title={disabled ? t('nav.workDisabled') : undefined}
+                  className={`flex-1 text-xs font-semibold uppercase tracking-wider py-1.5 rounded-md transition-colors ${mode === m ? 'bg-white text-slate-900 shadow-sm' : disabled ? 'text-slate-300 cursor-not-allowed' : 'text-slate-500 hover:text-slate-800'}`}
                 >
-                  {conv.title}
+                  {m === 'chat' ? t('tabs.chat') : t('nav.memoryMode')}
                 </button>
-                <button
-                  onClick={(e) => { e.stopPropagation(); deleteConversation(conv.id); }}
-                  className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-rose-500 p-0.5 rounded transition-all"
-                >
-                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                  </svg>
-                </button>
-              </div>
-                  ))}
+              )
+            })}
           </div>
+
+          {mode === 'chat' ? (
+            <div className="flex flex-col min-h-0 space-y-0.5">
+              <button onClick={() => { createNewConversation(); setMobileMenuOpen(false) }} className="w-full flex items-center gap-2 px-3 py-1 text-sm text-slate-600 hover:bg-slate-100 rounded-md transition-colors flex-shrink-0">
+                <PenSquare className="w-3.5 h-3.5" /> {t('app.newChat')}
+              </button>
+              <button onClick={() => { setConvSearch(''); setSearchOpen(true) }} className="w-full flex items-center gap-2 px-3 py-1 text-sm text-slate-600 hover:bg-slate-100 rounded-md transition-colors flex-shrink-0">
+                <Search className="w-3.5 h-3.5" /> {t('app.search')}
+              </button>
+              <div className="pt-6 pb-2 px-3 text-[10px] uppercase font-semibold tracking-wider text-slate-400 flex-shrink-0">{t('app.conversations')}</div>
+              <div className="space-y-0 overflow-y-auto pr-1">
+                {conversations.map(conv => (
+                  <div key={conv.id} className={`group w-full flex items-center justify-between px-3 py-1 rounded-md text-sm transition-all ${activeConversationId === conv.id ? 'bg-[#eef2fc] text-blue-700 font-medium' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-800'}`}>
+                    <button onClick={() => { loadConversation(conv.id); setMobileMenuOpen(false) }} className="flex-1 text-left truncate mr-2">{conv.title}</button>
+                    <button onClick={(e) => { e.stopPropagation(); deleteConversation(conv.id); }} className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-rose-500 p-0.5 rounded transition-all">
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-col min-h-0 space-y-0.5">
+              <button onClick={() => { setMemoriesSearch(''); setSearchOpen(true) }} className="w-full flex items-center gap-2 px-3 py-1 text-sm text-slate-600 hover:bg-slate-100 rounded-md transition-colors flex-shrink-0">
+                <Search className="w-3.5 h-3.5" /> {t('app.search')}
+              </button>
+              {/* Memory pages */}
+              <div className="pt-6 pb-2 px-3 text-[10px] uppercase font-semibold tracking-wider text-slate-400 flex-shrink-0">{t('memories.title')}</div>
+              <div className="space-y-0 overflow-y-auto pr-1">
+                {memories.length === 0 ? (
+                  <p className="px-3 py-2 text-[11px] text-slate-400">{t('memories.empty')}</p>
+                ) : (() => {
+                  const grouped: Record<string, typeof memories> = {}
+                  for (const m of memories) (grouped[m.group] ||= []).push(m)
+                  const order = [
+                    ...MEM_GROUP_ORDER.filter(g => grouped[g]),
+                    ...Object.keys(grouped).filter(g => !(MEM_GROUP_ORDER as readonly string[]).includes(g)),
+                  ]
+                  return order.map(g => (
+                    <div key={g} className="mb-1">
+                      <div className="px-3 pt-1.5 pb-0.5 text-[9px] uppercase font-semibold tracking-wider text-slate-400/70">
+                        {t(`memoryGroups.${g}`, g)}
+                      </div>
+                      {grouped[g].map(mem => (
+                        <div key={mem.id} className={`group w-full flex items-center justify-between px-3 py-1 rounded-md text-sm transition-all ${memPath === mem.id ? 'bg-[#eef2fc] text-blue-700 font-medium' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-800'}`}>
+                          <button onClick={() => { if (typeof mem.id === 'string' && mem.id.endsWith('.md')) setMemPath(mem.id) }} className="flex-1 text-left truncate mr-2" title={mem.content}>
+                            {(mem.content || '').replace(/^\w+:\s*/, '') || mem.content}
+                          </button>
+                          <button onClick={(e) => { e.stopPropagation(); deleteMemory(mem.id) }} className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-rose-500 p-0.5 rounded transition-all">
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  ))
+                })()}
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="px-4 mt-auto space-y-2">
@@ -753,51 +784,29 @@ export default function App() {
           >
             <Menu className="w-5 h-5" />
           </button>
-          <div className="flex-shrink-0 relative">
-            <button
-              onClick={() => setMobileTabOpen(!mobileTabOpen)}
-              className="lg:hidden flex items-center gap-2 text-sm font-semibold uppercase tracking-wider bg-slate-100/80 border border-slate-200/40 rounded-xl px-4 py-2.5 shadow-inner cursor-pointer text-slate-700"
-            >
-              {t(`tabs.${activeTab}`)}
-              <ChevronDown className={`w-4 h-4 transition-transform ${mobileTabOpen ? 'rotate-180' : ''}`} />
-            </button>
-            {mobileTabOpen && (
-              <>
-                <div className="fixed inset-0 z-40" onClick={() => setMobileTabOpen(false)} />
-                <div className="absolute top-full left-0 mt-1 z-50 bg-white border border-slate-200 rounded-xl shadow-lg overflow-hidden min-w-[140px]">
-                  {visibleTabs.map(tab => (
-                    <button
-                      key={tab}
-                      onClick={() => { setActiveTab(tab); setMobileTabOpen(false) }}
-                      className={`w-full text-left px-4 py-3 text-sm font-semibold uppercase tracking-wider transition-colors ${activeTab === tab
-                        ? 'bg-slate-100 text-slate-900'
-                        : 'text-slate-500 hover:bg-slate-50 hover:text-slate-800'
-                        }`}
-                    >
-                      {t(`tabs.${tab}`)}
-                    </button>
-                  ))}
-                </div>
-              </>
-            )}
-            <div className="hidden lg:flex overflow-x-auto gap-1 bg-slate-100/80 p-1 rounded-xl border border-slate-200/40 shadow-inner">
-              {visibleTabs.map(tab => (
+          {mode === 'chat' ? (
+            <div className="flex-shrink-0 text-sm font-semibold uppercase tracking-wider text-slate-700">
+              {t('tabs.chat')}
+            </div>
+          ) : (
+            <div className="flex overflow-x-auto gap-1 bg-slate-100/80 p-1 rounded-xl border border-slate-200/40 shadow-inner">
+              {WORK_VIEWS.map(v => (
                 <button
-                  key={tab}
-                  onClick={() => startTransition(() => setActiveTab(tab))}
-                  className={`text-xs font-semibold px-4 py-1.5 rounded-lg transition-colors uppercase tracking-wider text-[10px] whitespace-nowrap ${activeTab === tab
+                  key={v}
+                  onClick={() => { setWorkView(v); setMemPath(null) }}
+                  className={`text-xs font-semibold px-4 py-1.5 rounded-lg transition-colors uppercase tracking-wider text-[10px] whitespace-nowrap ${workView === v && !memPath
                     ? 'bg-slate-900 text-white shadow-md'
                     : 'text-slate-500 hover:text-slate-800 hover:bg-slate-200/50'
                     }`}
                 >
-                  {t(`tabs.${tab}`)}
+                  {t(`tabs.${v}`)}
                 </button>
               ))}
             </div>
-          </div>
+          )}
 
           <div className="flex items-center gap-2 flex-wrap ml-auto">
-            {activeTab === 'chat' && (
+            {mode === 'chat' && (
               <>
                 <button
                   onClick={() => setSpeakText(!speakText)}
@@ -822,11 +831,13 @@ export default function App() {
         </div>
 
         {/* Chat Tab - original styling preserved */}
-        {activeTab === 'chat' && (
+        {mode === 'chat' && (
         <div className="flex-1 overflow-y-auto px-3 md:px-8 py-9" ref={scrollRef}>
           <div className="flex flex-col gap-4 sm:gap-5 max-w-3xl mx-auto w-full">
             {messages.map((m, i) => (
-              m.role === 'tip' ? (
+              m.role === 'tool' ? (
+                <ToolCallCard key={m.toolCallId || i} content={m.content} />
+              ) : m.role === 'tip' ? (
                 <div key={i} className="bg-gradient-to-br from-amber-50/80 to-yellow-50/80 border border-amber-200/60 rounded-2xl p-5 shadow-sm">
                   <div className="flex items-center gap-2 mb-2">
                     <Lightbulb className="w-4 h-4 text-amber-600" />
@@ -862,58 +873,66 @@ export default function App() {
         </div>
         )}
 
-        {/* Observers Tab (screen + camera) */}
-        {activeTab === 'observers' && <ObserversTab />}
+        {/* Memory page detail (main view + editing) */}
+        {mode === 'work' && memPath && (
+          <MemoryDetailView path={memPath} onClose={() => setMemPath(null)} />
+        )}
 
-        {/* Calendar Tab */}
-        {activeTab === 'calendar' && <CalendarTab />}
+        {/* Work views (hidden while a memory page is open) */}
+        {mode === 'work' && !memPath && workView === 'observers' && <ObserversTab />}
+        {mode === 'work' && !memPath && workView === 'calendar' && <CalendarTab />}
+        {mode === 'work' && !memPath && workView === 'plans' && <PlansTab />}
+        {mode === 'work' && !memPath && workView === 'work' && <WorkTab />}
+        {mode === 'work' && !memPath && workView === 'artifacts' && <ArtifactsTab />}
 
-        {/* Plans Tab */}
-        {activeTab === 'plans' && <PlansTab />}
-
-        {/* Work Tab */}
-        {activeTab === 'work' && <WorkTab />}
-
-        {/* Artifacts Tab */}
-        {activeTab === 'artifacts' && <ArtifactsTab />}
-
-        {/* Memories Tab */}
-        {activeTab === 'memories' && (
-        <div className="overflow-y-auto flex-1 min-h-0 bg-slate-50/40">
-          {/* Title — scrolls away */}
-          <div className="max-w-3xl mx-auto px-3 sm:px-6 md:px-10 pt-4 sm:pt-6">
-            <div className="flex flex-wrap justify-between items-center gap-3 mb-3">
-              <div>
-                <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider">{t('memories.title')}</h3>
-                <p className="text-[10px] text-slate-400 mt-0.5">
-                  {memoriesTotal > 0 ? `${t('memories.total')}: ${memoriesTotal}` : t('memories.desc')}
-                </p>
+        {/* Search Popup (⌘K) — conversations in chat mode, memory pages in work mode */}
+        {searchOpen && (
+          <div className="fixed inset-0 z-50 flex items-start justify-center pt-[12vh] px-4 bg-slate-900/10 backdrop-blur-sm animate-in fade-in" onClick={() => setSearchOpen(false)}>
+            <div className="w-full max-w-lg bg-white rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-slate-100 overflow-hidden animate-in zoom-in-95" onClick={e => e.stopPropagation()}>
+              <div className="flex items-center gap-2.5 px-4 border-b border-slate-100">
+                <Search className="w-4 h-4 text-slate-400 flex-shrink-0" />
+                <input
+                  autoFocus
+                  value={mode === 'chat' ? convSearch : memoriesSearch}
+                  onChange={e => (mode === 'chat' ? setConvSearch(e.target.value) : setMemoriesSearch(e.target.value))}
+                  onKeyDown={e => {
+                    if (e.key === 'Escape') setSearchOpen(false)
+                    if (e.key === 'Enter' && mode === 'work') fetchMemories(memoriesSearch)
+                  }}
+                  placeholder={mode === 'chat' ? t('app.search') : t('memories.searchPlaceholder')}
+                  className="flex-1 py-3.5 text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none bg-transparent"
+                />
+                <kbd className="text-[10px] text-slate-400 border border-slate-200 rounded px-1.5 py-0.5 flex-shrink-0">ESC</kbd>
               </div>
-              <select
-                value={memoriesTypeFilter}
-                onChange={e => setMemoriesTypeFilter(e.target.value)}
-                className="text-[11px] bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-slate-600 cursor-pointer focus:outline-none focus:ring-2 focus:ring-slate-300/50"
-              >
-                <option value="">{t('memories.allTypes')}</option>
-                {MEMORY_TYPES.map(t => (
-                  <option key={t.value} value={t.value}>{t.label}</option>
-                ))}
-              </select>
+              <div className="max-h-[50vh] overflow-y-auto py-1.5">
+                {mode === 'chat' ? (
+                  (() => {
+                    const items = conversations.filter(c => !convSearch.trim() || (c.title || '').toLowerCase().includes(convSearch.toLowerCase()))
+                    return items.length === 0 ? (
+                      <p className="px-4 py-6 text-center text-xs text-slate-400">{t('app.conversations')}: 0</p>
+                    ) : items.map(conv => (
+                      <button key={conv.id} onClick={() => { loadConversation(conv.id); setSearchOpen(false); setMobileMenuOpen(false) }}
+                        className={`w-full text-left px-4 py-2 text-sm truncate transition-colors ${activeConversationId === conv.id ? 'bg-[#eef2fc] text-blue-700 font-medium' : 'text-slate-700 hover:bg-slate-50'}`}>
+                        {conv.title}
+                      </button>
+                    ))
+                  })()
+                ) : (
+                  memories.length === 0 ? (
+                    <p className="px-4 py-6 text-center text-xs text-slate-400">{t('memories.empty')}</p>
+                  ) : memories.map(mem => (
+                    <button key={mem.id} onClick={() => { if (typeof mem.id === 'string' && mem.id.endsWith('.md')) { setMemPath(mem.id); setSearchOpen(false); setMobileMenuOpen(false) } }}
+                      className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 truncate transition-colors" title={mem.content}>
+                      {(mem.content || '').replace(/^\w+:\s*/, '') || mem.content}
+                    </button>
+                  ))
+                )}
+              </div>
             </div>
           </div>
+        )}
 
-          {/* Add Memory button */}
-          <div className="max-w-3xl mx-auto px-3 sm:px-6 md:px-10 pb-2">
-            <button
-              onClick={() => setShowAddMemory(true)}
-              className="flex items-center gap-1.5 text-[10px] font-semibold text-slate-500 hover:text-slate-800 bg-white border border-slate-200 px-3 py-1.5 rounded-full shadow-sm hover:shadow transition-all"
-            >
-              <PenSquare className="w-3 h-3" />
-              {t('memories.addMemory')}
-            </button>
-          </div>
-
-          {/* Add Memory Modal */}
+        {/* Add Memory Modal */}
           {showAddMemory && (
             <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/10 backdrop-blur-sm animate-in fade-in" onClick={() => { setShowAddMemory(false); setNewMemoryText(''); }}>
               <div className="w-full max-w-md bg-white rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-slate-100 overflow-hidden animate-in zoom-in-95" onClick={e => e.stopPropagation()}>
@@ -1004,108 +1023,8 @@ export default function App() {
             </div>
           )}
 
-          {/* Search bar — sticky, full width */}
-          <div className="sticky top-0 z-10 px-3 sm:px-6 md:px-10 pb-3 pt-2 bg-slate-50/40 backdrop-blur-sm">
-            <div className="max-w-3xl mx-auto">
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
-                <input
-                  type="text"
-                  value={memoriesSearch}
-                  onChange={e => setMemoriesSearch(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter') fetchMemories(memoriesSearch) }}
-                  placeholder={t('memories.searchPlaceholder')}
-                  className="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-300/50 focus:border-slate-300 transition-all"
-                />
-                {memoriesSearch && (
-                  <button
-                    onClick={() => { setMemoriesSearch(""); fetchMemories() }}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full bg-slate-200/60 flex items-center justify-center hover:bg-slate-300/60 transition"
-                  >
-                    <X className="w-3 h-3 text-slate-500" />
-                  </button>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {/* Scrollable memory cards */}
-          <div className="max-w-3xl mx-auto px-3 sm:px-6 md:px-10 pb-8 pt-4 sm:pt-6 animate-in fade-in duration-300">
-            {(memoriesLoading && memories.length === 0) ? (
-              <div className="flex items-center justify-center py-12">
-                <RefreshCw className="w-5 h-5 text-slate-400 animate-spin" />
-              </div>
-            ) : memories.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-16 text-slate-400">
-                <PenSquare className="w-8 h-8 mb-3 text-slate-300" />
-                <p className="text-sm font-medium">{t('memories.empty')}</p>
-                <p className="text-[11px] mt-1">{t('memories.emptyHint')}</p>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {memories.map(mem => {
-                  const color = CATEGORY_COLORS[mem.type] || CATEGORY_COLORS.other
-                  return (
-                    <div key={mem.id} className="group bg-white rounded-xl border border-slate-100 p-4 shadow-sm hover:shadow-md transition-shadow duration-200">
-                      <div className="flex items-start gap-3">
-                        <span className={`text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-md border shrink-0 mt-0.5 ${color}`}>
-                          {mem.type}
-                        </span>
-                        <div className="min-w-0 flex-1">
-                          <p
-                            onClick={() => typeof mem.id === 'string' && mem.id.endsWith('.md') && setMemPath(mem.id)}
-                            className="text-sm text-slate-800 leading-relaxed cursor-pointer hover:text-slate-950"
-                            title={t('memories.viewDetail')}
-                          >
-                            {mem.content?.replace(/^\w+:\s*/, '') || mem.content}
-                          </p>
-                          <div className="flex items-center gap-3 mt-2 flex-wrap">
-                            {mem.timestamp && (
-                              <span className="text-[10px] text-slate-400 flex items-center gap-1">
-                                <Clock className="w-3 h-3" /> {new Date(mem.timestamp).toLocaleDateString()}
-                              </span>
-                            )}
-                            {mem.confidence != null && (
-                              <span className="text-[10px] text-slate-400">
-                                {t('memories.confidence')}: {mem.confidence}/10
-                              </span>
-                            )}
-                            {mem.lifespan != null && (
-                              <span className="text-[10px] text-slate-400">
-                                {t('memories.lifespan')}: {mem.lifespan}/10
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                        <button
-                          onClick={() => deleteMemory(mem.id)}
-                          className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-rose-500 p-1 rounded transition-all shrink-0"
-                          title="Delete memory"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </div>
-                  )
-                })}
-                <div ref={memoriesSentinelRef} className="h-1" />
-                {memoriesLoadingMore && (
-                  <div className="flex items-center justify-center py-4">
-                    <RefreshCw className="w-4 h-4 text-slate-400 animate-spin" />
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        </div>
-        )}
-
-        {memPath && (
-          <MemoryDetailModal path={memPath} onClose={() => setMemPath(null)} onOpenPath={setMemPath} />
-        )}
-
         {/* Input Area */}
-        {activeTab === 'chat' && (
+        {mode === 'chat' && (
         <div className="p-3 sm:p-4 lg:p-6 bg-gradient-to-t from-white via-white to-transparent flex-shrink-0 border-t border-slate-50">
           <div className="max-w-2xl mx-auto flex items-end gap-2 sm:gap-2 bg-[#f9f9f9] border border-slate-200 rounded-2xl px-3 sm:px-4 py-2.5 shadow-sm focus-within:ring-1 focus-within:ring-slate-350 transition-all">
             <div className="text-slate-400 flex items-center justify-center h-10">

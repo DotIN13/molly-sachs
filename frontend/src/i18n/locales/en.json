@@ -24,6 +24,26 @@
     "storingMemory": "Remembering...",
     "thinking": "Thinking..."
   },
+  "nav": {
+    "workDisabled": "Connect a hypogum backend in Settings to enable Memory",
+    "memoryMode": "memory"
+  },
+  "memoryGroups": {
+    "goals": "Goals",
+    "entities": "Entities",
+    "traits": "Traits",
+    "struggles": "Struggles"
+  },
+  "toolCalls": {
+    "args": "Input",
+    "result": "Result",
+    "search_memory": "Searched memory",
+    "add_memory": "Saved to memory",
+    "read_memory_page": "Read memory page",
+    "fetch_calendar": "Checked calendar",
+    "list_artifacts": "Listed artifacts",
+    "run_task": "Delegated a task"
+  },
   "tabs": {
     "chat": "chat",
     "observers": "observers",
@@ -85,7 +105,13 @@
     "planned": "planned",
     "suggested": "suggested",
     "accept": "Accept",
-    "dismiss": "Dismiss"
+    "dismiss": "Dismiss",
+    "linkedTasks": "Agent tasks",
+    "noLinkedTasks": "No tasks linked to this event.",
+    "runTask": "Run",
+    "runAgent": "Run an agent on this event",
+    "runQueued": "Queued — the agent will run it shortly. See Work tab for progress.",
+    "runError": "Couldn't reach the agent backend."
   },
   "screen": {
     "title": "Desktop Capture History",
@@ -157,6 +183,21 @@
     "placeholderGemini": "AIzaSy...",
     "placeholderCartesia": "sk-...",
     "placeholderSoniox": "soniox-...",
+    "llmSection": "Chat Model (LLM)",
+    "llmProvider": "Provider",
+    "llmModel": "Model",
+    "llmModelHint": "Leave blank to use the provider's default model.",
+    "llmGoogle": "Google Gemini",
+    "llmOpenai": "OpenAI",
+    "llmAnthropic": "Anthropic Claude",
+    "llmDeepseek": "DeepSeek",
+    "openaiApiKey": "OpenAI API Key",
+    "anthropicApiKey": "Anthropic API Key",
+    "deepseekApiKey": "DeepSeek API Key",
+    "placeholderOpenai": "sk-...",
+    "placeholderAnthropic": "sk-ant-...",
+    "placeholderDeepseek": "sk-...",
+    "speechKeys": "Speech Services",
     "placeholderCustomVoice": "6eb8965c-e295-...",
     "ttsSection": "Speech Output (TTS)",
     "voice": "Voice",
@@ -272,7 +313,11 @@
     "addPlaceholder": "Enter a fact about yourself...",
     "save": "Save",
     "cancel": "Cancel",
-    "adding": "Saving..."
+    "adding": "Saving...",
+    "edit": "Edit",
+    "saving": "Saving...",
+    "back": "Back",
+    "saveError": "Couldn't save this page."
   },
   "voiceLang": {
     "cn": "Chinese, Mandarin",

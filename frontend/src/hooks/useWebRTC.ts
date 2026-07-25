@@ -5,7 +5,7 @@ import { API_URL, getStoredToken, refreshAccessToken } from '../config'
 interface UseWebRTCOptions {
   backendStatus: string
   activeConversationId: string
-  setMessages: React.Dispatch<React.SetStateAction<{ role: string; content: string }[]>>
+  setMessages: React.Dispatch<React.SetStateAction<{ role: string; content: string; toolCallId?: string }[]>>
   refreshConversationsRef: React.MutableRefObject<() => void>
   onThinking?: (action: string, detail: string) => void
   onThinkingDone?: () => void
@@ -76,6 +76,23 @@ export default function useWebRTC(opts: UseWebRTCOptions): UseWebRTCReturn {
         optsRef.current.onThinking?.(data.action, data.detail)
       } else if (data.type === 'thinking_done') {
         optsRef.current.onThinkingDone?.()
+      } else if (data.type === 'tool_start') {
+        setMessages(prev => [...prev, {
+          role: 'tool',
+          toolCallId: data.tool_call_id,
+          content: JSON.stringify({ name: data.name, args: data.args, status: 'running' }),
+        }])
+      } else if (data.type === 'tool_result') {
+        setMessages(prev => {
+          const next = [...prev]
+          const payload = JSON.stringify({
+            name: data.name, args: data.args, result: data.result, status: 'done',
+          })
+          const idx = next.findIndex(m => m.role === 'tool' && m.toolCallId === data.tool_call_id)
+          if (idx >= 0) next[idx] = { ...next[idx], content: payload }
+          else next.push({ role: 'tool', toolCallId: data.tool_call_id, content: payload })
+          return next
+        })
       }
     } catch {
       if (typeof event.data === 'string' && event.data === 'ping') {

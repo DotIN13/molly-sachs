@@ -24,6 +24,26 @@
     "storingMemory": "正在记忆...",
     "thinking": "思考中..."
   },
+  "nav": {
+    "workDisabled": "在设置中连接 hypogum 后端以启用记忆",
+    "memoryMode": "记忆"
+  },
+  "memoryGroups": {
+    "goals": "目标",
+    "entities": "实体",
+    "traits": "特质",
+    "struggles": "困扰"
+  },
+  "toolCalls": {
+    "args": "输入",
+    "result": "结果",
+    "search_memory": "检索了记忆",
+    "add_memory": "存入了记忆",
+    "read_memory_page": "读取了记忆页",
+    "fetch_calendar": "查看了日程",
+    "list_artifacts": "列出了成果",
+    "run_task": "委派了任务"
+  },
   "tabs": {
     "chat": "聊天",
     "observers": "观察",
@@ -85,7 +105,13 @@
     "planned": "已计划",
     "suggested": "建议",
     "accept": "接受",
-    "dismiss": "忽略"
+    "dismiss": "忽略",
+    "linkedTasks": "Agent 任务",
+    "noLinkedTasks": "此事件没有关联的任务。",
+    "runTask": "运行",
+    "runAgent": "让 agent 处理此事件",
+    "runQueued": "已入队——agent 稍后会执行。可在「工作」标签查看进度。",
+    "runError": "无法连接到 agent 后端。"
   },
   "screen": {
     "title": "桌面捕获历史",
@@ -155,6 +181,21 @@
     "placeholderGemini": "AIzaSy...",
     "placeholderCartesia": "sk-...",
     "placeholderSoniox": "soniox-...",
+    "llmSection": "对话模型 (LLM)",
+    "llmProvider": "提供商",
+    "llmModel": "模型",
+    "llmModelHint": "留空则使用该提供商的默认模型。",
+    "llmGoogle": "Google Gemini",
+    "llmOpenai": "OpenAI",
+    "llmAnthropic": "Anthropic Claude",
+    "llmDeepseek": "DeepSeek",
+    "openaiApiKey": "OpenAI API 密钥",
+    "anthropicApiKey": "Anthropic API 密钥",
+    "deepseekApiKey": "DeepSeek API 密钥",
+    "placeholderOpenai": "sk-...",
+    "placeholderAnthropic": "sk-ant-...",
+    "placeholderDeepseek": "sk-...",
+    "speechKeys": "语音服务",
     "placeholderCustomVoice": "6eb8965c-e295-...",
     "ttsSection": "语音输出 (TTS)",
     "voice": "声音",
@@ -270,7 +311,11 @@
     "addPlaceholder": "添加关于你的记忆...",
     "save": "保存",
     "cancel": "取消",
-    "adding": "保存中..."
+    "adding": "保存中...",
+    "edit": "编辑",
+    "saving": "保存中...",
+    "back": "返回",
+    "saveError": "无法保存此页面。"
   },
   "voiceLang": {
     "cn": "中文, 普通话",

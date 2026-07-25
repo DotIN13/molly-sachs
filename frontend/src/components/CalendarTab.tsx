@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { RefreshCw, Clock, ChevronLeft, ChevronRight } from 'lucide-react'
 import EmptyState from './EmptyState'
+import CalendarEventDetail from './CalendarEventDetail'
 import { fetchHypogumCalendar, acceptCalendarBlock, dismissCalendarBlock } from '../hypogum'
 
 const bucketBadge = (bucket: string) =>
@@ -71,8 +72,9 @@ export default function CalendarTab() {
   const { t, i18n } = useTranslation()
   const [entries, setEntries] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
-  const [view, setView] = useState<'day' | 'week'>('day')
+  const [view, setView] = useState<'day' | 'week'>('week')
   const [weekOffset, setWeekOffset] = useState(0)
+  const [selected, setSelected] = useState<any | null>(null)
 
   const load = async () => {
     setLoading(true)
@@ -104,8 +106,8 @@ export default function CalendarTab() {
 
   const ActionBtns = ({ e }: { e: any }) => (e.bucket === 'suggested' && e.path) ? (
     <div className="flex gap-1 flex-shrink-0">
-      <button onClick={() => act('accept', e.path)} className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-100 px-2 py-1 rounded-lg hover:bg-emerald-100">{t('calendar.accept')}</button>
-      <button onClick={() => act('dismiss', e.path)} className="text-[10px] font-semibold text-slate-500 bg-slate-50 border border-slate-200 px-2 py-1 rounded-lg hover:bg-slate-100">{t('calendar.dismiss')}</button>
+      <button onClick={(ev) => { ev.stopPropagation(); act('accept', e.path) }} className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-100 px-2 py-1 rounded-lg hover:bg-emerald-100">{t('calendar.accept')}</button>
+      <button onClick={(ev) => { ev.stopPropagation(); act('dismiss', e.path) }} className="text-[10px] font-semibold text-slate-500 bg-slate-50 border border-slate-200 px-2 py-1 rounded-lg hover:bg-slate-100">{t('calendar.dismiss')}</button>
     </div>
   ) : null
 
@@ -116,7 +118,7 @@ export default function CalendarTab() {
           <div className="flex items-center gap-2">
             {/* Day / Week toggle */}
             <div className="flex bg-slate-100 rounded-lg p-0.5 border border-slate-200/60">
-              {(['day', 'week'] as const).map(v => (
+              {(['week', 'day'] as const).map(v => (
                 <button key={v} onClick={() => setView(v)} className={`text-[10px] font-semibold uppercase tracking-wider px-3 py-1 rounded-md transition-colors ${view === v ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}>
                   {t(`calendar.${v}`)}
                 </button>
@@ -148,7 +150,7 @@ export default function CalendarTab() {
                 <h4 className="text-xs font-bold text-slate-700 mb-2">{day}</h4>
                 <div className="space-y-2">
                   {(list as any[]).slice().sort(sortByStart).map((e: any, i: number) => (
-                    <div key={i} className="bg-white rounded-xl border border-slate-100 p-3 shadow-sm flex items-start justify-between gap-3">
+                    <div key={i} onClick={() => setSelected(e)} className="bg-white rounded-xl border border-slate-100 p-3 shadow-sm flex items-start justify-between gap-3 cursor-pointer hover:shadow-md hover:border-slate-200 transition-all">
                       <div className="min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
                           <span className={`text-[9px] uppercase tracking-wider px-2 py-0.5 rounded-full font-bold border ${bucketBadge(e.bucket || 'observed')}`}>{t(`calendar.${e.bucket || 'observed'}`)}</span>
@@ -233,6 +235,7 @@ export default function CalendarTab() {
                         {laid.map(({ e, s, en, lane, lanes }, i) => (
                           <div
                             key={i}
+                            onClick={() => setSelected(e)}
                             title={`${hhmm(e.start)}${hhmm(e.end) ? `–${hhmm(e.end)}` : ''}  ${e.title}`}
                             style={{
                               top: (s / 60) * HOUR_H + 1,
@@ -240,14 +243,14 @@ export default function CalendarTab() {
                               left: `calc(${(lane / lanes) * 100}% + 1px)`,
                               width: `calc(${100 / lanes}% - 2px)`,
                             }}
-                            className={`absolute overflow-hidden rounded-md border px-1 py-0.5 shadow-sm ${bucketBlock(e.bucket || 'observed')}`}
+                            className={`absolute overflow-hidden rounded-md border px-1 py-0.5 shadow-sm cursor-pointer hover:brightness-95 ${bucketBlock(e.bucket || 'observed')}`}
                           >
                             <div className="text-[9px] font-medium leading-tight truncate">{e.title}</div>
                             {((en - s) >= 45) && <div className="text-[8px] opacity-70 leading-tight">{hhmm(e.start)}</div>}
                             {e.bucket === 'suggested' && e.path && (
                               <div className="flex gap-1.5 mt-0.5">
-                                <button onClick={() => act('accept', e.path)} className="text-[9px] font-bold hover:underline">✓</button>
-                                <button onClick={() => act('dismiss', e.path)} className="text-[9px] font-bold opacity-60 hover:underline">✕</button>
+                                <button onClick={(ev) => { ev.stopPropagation(); act('accept', e.path) }} className="text-[9px] font-bold hover:underline">✓</button>
+                                <button onClick={(ev) => { ev.stopPropagation(); act('dismiss', e.path) }} className="text-[9px] font-bold opacity-60 hover:underline">✕</button>
                               </div>
                             )}
                           </div>
@@ -262,6 +265,10 @@ export default function CalendarTab() {
         )}
         {loading && <p className="text-center text-[10px] text-slate-400 mt-4">…</p>}
       </div>
+
+      {selected && (
+        <CalendarEventDetail event={selected} onClose={() => setSelected(null)} onChanged={load} />
+      )}
     </div>
   )
 }
