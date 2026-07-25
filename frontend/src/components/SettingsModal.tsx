@@ -1,28 +1,7 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Input } from '@/components/ui/input'
-import { triggerObservationsCapture } from '../observers'
-import { API_URL, isElectron, getStoredToken, getStoredRefresh, refreshAccessToken } from '../config'
-
-async function doFetch(url: string, options: RequestInit): Promise<Response> {
-  const token = getStoredToken()
-  const makeHeaders = (t: string | null) => {
-    const h = new Headers(options.headers)
-    if (t) h.set('Authorization', `Bearer ${t}`)
-    return h
-  }
-  let res = await fetch(url, { ...options, headers: makeHeaders(token) })
-  if (res.status === 401) {
-    const rToken = getStoredRefresh()
-    if (rToken) {
-      const newToken = await refreshAccessToken()
-      if (newToken) {
-        res = await fetch(url, { ...options, headers: makeHeaders(newToken) })
-      }
-    }
-  }
-  return res
-}
+import { fetchHypogumSettings, patchHypogumSettings, hypogumHealthy, setHypogumUrl } from '../hypogum'
 
 const TIMEZONES: { value: string; label: string }[] = (() => {
   const tzs: string[] = (() => {
@@ -82,6 +61,7 @@ export interface SettingsData {
   settingsTab: string
   debugMode: boolean
   timezone: string
+  hypogumBaseUrl: string
 }
 
 interface Props {
@@ -90,12 +70,57 @@ interface Props {
   onSave: () => Promise<void>
   settings: SettingsData
   onChange: (key: keyof SettingsData, value: any) => void
-  fetchObservations: (tab: string, force?: boolean) => void
 }
 
-export default function SettingsModal({ isOpen, onClose, onSave, settings, onChange, fetchObservations }: Props) {
+export default function SettingsModal({ isOpen, onClose, onSave, settings, onChange }: Props) {
   const { t, i18n } = useTranslation()
   const [customVoiceId, setCustomVoiceId] = useState('')
+
+  // Hypogum persisted settings (the memory/autonomy brain). Loaded lazily when
+  // the Hypogum section is opened; saved back to hypogum, not Molly. Empty
+  // values fall back to hypogum's .env defaults.
+  const [hg, setHg] = useState<Record<string, string>>({})
+  const [hgLoaded, setHgLoaded] = useState(false)
+  const [hgStatus, setHgStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+  const [hgUrlStatus, setHgUrlStatus] = useState<'idle' | 'checking' | 'ok' | 'bad'>('idle')
+
+  // Health-check the URL and, only if reachable, apply it + load hypogum's
+  // settings. The knobs render only when connected (hgUrlStatus === 'ok').
+  const refreshHypogum = async (url: string) => {
+    setHgUrlStatus('checking')
+    const ok = await hypogumHealthy(url)
+    setHgUrlStatus(ok ? 'ok' : 'bad')
+    if (!ok) return
+    setHypogumUrl(url)
+    try {
+      const s = await fetchHypogumSettings()
+      const str: Record<string, string> = {}
+      for (const k of Object.keys(s)) str[k] = s[k] == null ? '' : String(s[k])
+      setHg(str)
+    } catch { /* ignore */ }
+  }
+
+  useEffect(() => {
+    if (isOpen && settings.settingsTab === 'hypogum' && !hgLoaded) {
+      setHgLoaded(true)
+      refreshHypogum(settings.hypogumBaseUrl || 'http://localhost:8056')
+    }
+    if (!isOpen) { setHgLoaded(false); setHgUrlStatus('idle') }
+    // refreshHypogum reads the URL directly; safe to omit from deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, settings.settingsTab, hgLoaded])
+
+  const hgSet = (k: string, v: string) => setHg(prev => ({ ...prev, [k]: v }))
+  const saveHg = async () => {
+    setHgStatus('saving')
+    try {
+      await patchHypogumSettings(hg)
+      setHgStatus('saved')
+      setTimeout(() => setHgStatus('idle'), 2000)
+    } catch {
+      setHgStatus('error')
+    }
+  }
 
   if (!isOpen) return null
 
@@ -111,10 +136,8 @@ export default function SettingsModal({ isOpen, onClose, onSave, settings, onCha
           <div className="flex-shrink-0 bg-slate-50 border-b border-slate-100 lg:border-b-0 lg:border-r lg:w-48 px-3 py-2 lg:py-8 flex flex-row lg:flex-col gap-1 overflow-x-auto lg:overflow-y-auto">
             <button onClick={() => onChange('settingsTab', 'general')} className={`text-left px-3 py-2 rounded-md text-xs font-medium transition-colors whitespace-nowrap ${settings.settingsTab === 'general' ? 'bg-white text-slate-900 shadow-sm border border-slate-200' : 'text-slate-600 hover:bg-slate-100'}`}>{t('settings.general')}</button>
             <button onClick={() => onChange('settingsTab', 'speech')} className={`text-left px-3 py-2 rounded-md text-xs font-medium transition-colors whitespace-nowrap ${settings.settingsTab === 'speech' ? 'bg-white text-slate-900 shadow-sm border border-slate-200' : 'text-slate-600 hover:bg-slate-100'}`}>{t('settings.speech')}</button>
-            {isElectron && (
-              <button onClick={() => onChange('settingsTab', 'observers')} className={`text-left px-3 py-2 rounded-md text-xs font-medium transition-colors whitespace-nowrap ${settings.settingsTab === 'observers' ? 'bg-white text-slate-900 shadow-sm border border-slate-200' : 'text-slate-600 hover:bg-slate-100'}`}>{t('settings.observers')}</button>
-            )}
             <button onClick={() => onChange('settingsTab', 'api')} className={`text-left px-3 py-2 rounded-md text-xs font-medium transition-colors whitespace-nowrap ${settings.settingsTab === 'api' ? 'bg-white text-slate-900 shadow-sm border border-slate-200' : 'text-slate-600 hover:bg-slate-100'}`}>{t('settings.apiConfig')}</button>
+            <button onClick={() => onChange('settingsTab', 'hypogum')} className={`text-left px-3 py-2 rounded-md text-xs font-medium transition-colors whitespace-nowrap ${settings.settingsTab === 'hypogum' ? 'bg-white text-slate-900 shadow-sm border border-slate-200' : 'text-slate-600 hover:bg-slate-100'}`}>{t('settings.hypogum')}</button>
           </div>
 
           <div className="flex-1 px-4 sm:px-6 py-4 sm:py-10 overflow-y-auto">
@@ -264,109 +287,123 @@ export default function SettingsModal({ isOpen, onClose, onSave, settings, onCha
               </div>
             )}
 
-            {settings.settingsTab === 'observers' && (
-              <div className="flex flex-col gap-4 animate-in fade-in duration-200">
-                <div className="flex items-center justify-between p-3.5 bg-slate-50 border border-slate-200/60 rounded-xl">
-                  <div className="flex flex-col">
-                    <span className="text-xs font-bold text-slate-800">{t('settings.screenObserver')}</span>
-                    <span className="text-[10px] text-slate-400 mt-0.5 font-medium">{t('settings.screenObserverDesc')}</span>
-                  </div>
-                  <input
-                    type="checkbox"
-                    checked={settings.observerScreenActive}
-                    onChange={e => onChange('observerScreenActive', e.target.checked)}
-                    className="w-4.5 h-4.5 accent-slate-900 cursor-pointer rounded"
-                  />
-                </div>
-
-                <div className="flex items-center justify-between p-3.5 bg-slate-50 border border-slate-200/60 rounded-xl">
-                  <div className="flex flex-col">
-                    <span className="text-xs font-bold text-slate-800">{t('settings.cameraObserver')}</span>
-                    <span className="text-[10px] text-slate-400 mt-0.5 font-medium">{t('settings.cameraObserverDesc')}</span>
-                  </div>
-                  <input
-                    type="checkbox"
-                    checked={settings.observerCameraActive}
-                    onChange={e => onChange('observerCameraActive', e.target.checked)}
-                    className="w-4.5 h-4.5 accent-slate-900 cursor-pointer rounded"
-                  />
-                </div>
-
-                <div className="flex flex-col gap-1.5 pt-2">
-                  <label className="text-xs font-semibold text-slate-700 flex justify-between">
-                    {t('settings.screenInterval')} <span>{settings.observerScreenInterval}s</span>
-                  </label>
-                  <select
-                    value={settings.observerScreenInterval}
-                    onChange={e => onChange('observerScreenInterval', parseInt(e.target.value))}
-                    className="bg-[#f9f9f9] border border-slate-200 text-sm focus-visible:ring-slate-350 rounded-lg h-9.5 px-3 outline-none"
-                  >
-                    <option value={15}>{t('settings.seconds15')}</option>
-                    <option value={30}>{t('settings.seconds30')}</option>
-                    <option value={60}>{t('settings.minute1')}</option>
-                    <option value={120}>{t('settings.minutes2')}</option>
-                    <option value={300}>{t('settings.minutes5')}</option>
-                  </select>
-                </div>
-
-                <div className="flex flex-col gap-1.5 pt-2">
-                  <label className="text-xs font-semibold text-slate-700 flex justify-between">
-                    {t('settings.cameraInterval')} <span>{settings.observerCameraInterval}s</span>
-                  </label>
-                  <select
-                    value={settings.observerCameraInterval}
-                    onChange={e => onChange('observerCameraInterval', parseInt(e.target.value))}
-                    className="bg-[#f9f9f9] border border-slate-200 text-sm focus-visible:ring-slate-350 rounded-lg h-9.5 px-3 outline-none"
-                  >
-                    <option value={30}>{t('settings.seconds30')}</option>
-                    <option value={60}>{t('settings.minute1Short')}</option>
-                    <option value={120}>{t('settings.minutes2Default')}</option>
-                    <option value={300}>{t('settings.minutes5')}</option>
-                    <option value={600}>{t('settings.minutes10')}</option>
-                  </select>
-                </div>
-
+            {settings.settingsTab === 'hypogum' && (
+              <div className="flex flex-col gap-4">
+                {/* Pick which hypogum backend Molly connects to */}
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-semibold text-slate-700 flex justify-between">
-                    {t('settings.processInterval')} <span>{settings.observerProcessInterval / 60}m</span>
-                  </label>
-                  <select
-                    value={settings.observerProcessInterval}
-                    onChange={e => onChange('observerProcessInterval', parseInt(e.target.value))}
-                    className="bg-[#f9f9f9] border border-slate-200 text-sm focus-visible:ring-slate-350 rounded-lg h-9.5 px-3 outline-none"
-                  >
-                    <option value={120}>{t('settings.minutes2')}</option>
-                    <option value={300}>{t('settings.minutes5Default')}</option>
-                    <option value={600}>{t('settings.minutes10')}</option>
-                    <option value={900}>{t('settings.minutes15')}</option>
-                  </select>
+                  <label className="text-xs font-medium text-slate-700">{t('settings.hgBackendUrl')}</label>
+                  <div className="flex items-center gap-2">
+                    <div className="relative flex-1">
+                      <Input
+                        value={settings.hypogumBaseUrl ?? ''}
+                        placeholder="http://localhost:8056"
+                        onChange={e => { onChange('hypogumBaseUrl', e.target.value); setHgUrlStatus('idle') }}
+                        className="bg-[#f9f9f9] border-slate-200 text-sm focus-visible:ring-slate-300 pr-24"
+                      />
+                      {hgUrlStatus === 'checking' && (
+                        <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-bold text-slate-400 bg-slate-50 px-2 py-0.5 rounded-full border border-slate-200 pointer-events-none">…</span>
+                      )}
+                      {hgUrlStatus === 'ok' && (
+                        <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100 pointer-events-none">{t('settings.hgReachable')}</span>
+                      )}
+                      {hgUrlStatus === 'bad' && (
+                        <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-bold text-red-600 bg-red-50 px-2 py-0.5 rounded-full border border-red-100 pointer-events-none">{t('settings.hgUnreachable')}</span>
+                      )}
+                    </div>
+                    <button
+                      onClick={() => refreshHypogum(settings.hypogumBaseUrl || 'http://localhost:8056')}
+                      className="shrink-0 text-xs font-semibold text-slate-700 bg-slate-100 border border-slate-200 px-3 py-2 rounded-lg hover:bg-slate-200"
+                    >
+                      {t('settings.hgTest')}
+                    </button>
+                    <button
+                      onClick={() => { onChange('hypogumBaseUrl', 'http://localhost:8056'); refreshHypogum('http://localhost:8056') }}
+                      className="shrink-0 text-xs font-semibold text-slate-500 hover:text-slate-800 px-2 py-2"
+                      title={t('settings.hgDetect')}
+                    >
+                      {t('settings.hgDetect')}
+                    </button>
+                  </div>
                 </div>
 
-                {settings.debugMode && (
-                  <div className="flex flex-col gap-2 pt-4 border-t border-amber-200 mt-2">
-                    <span className="text-[10px] font-bold text-amber-600 uppercase tracking-wider flex items-center gap-1.5">
-                      <span className="w-1.5 h-1.5 bg-amber-500 rounded-full" /> {t('settings.debugActions')}
-                    </span>
-                    <div className="flex gap-2">
-                      <button
-                        onClick={async () => { await triggerObservationsCapture(); fetchObservations('screen', true) }}
-                        className="text-[10px] font-semibold text-amber-700 hover:text-amber-900 bg-amber-50 border border-amber-200 px-3 py-1.5 rounded-lg transition-all"
-                      >
-                        {t('settings.captureNow')}
-                      </button>
-                      <button
-                        onClick={async () => {
-                          try {
-                            await doFetch(`${API_URL}/api/processor/trigger`, { method: 'POST' })
-                            fetchObservations('insights', true)
-                          } catch (e) { console.error('Processor trigger failed:', e) }
-                        }}
-                        className="text-[10px] font-semibold text-amber-700 hover:text-amber-900 bg-amber-50 border border-amber-200 px-3 py-1.5 rounded-lg transition-all"
-                      >
-                        {t('settings.processNow')}
-                      </button>
-                </div>
-              </div>
+                {hgUrlStatus === 'ok' && (
+                  <>
+                    <div className="flex items-center justify-between p-3.5 bg-slate-50 border border-slate-200/60 rounded-xl">
+                      <div className="flex flex-col">
+                        <span className="text-xs font-bold text-slate-800">{t('settings.screenObserver')}</span>
+                        <span className="text-[10px] text-slate-400 mt-0.5 font-medium">{t('settings.screenObserverDesc')}</span>
+                      </div>
+                      <input type="checkbox" checked={hg.observe_screen_enabled === 'true'} onChange={e => hgSet('observe_screen_enabled', e.target.checked ? 'true' : 'false')} className="w-4.5 h-4.5 accent-slate-900 cursor-pointer rounded" />
+                    </div>
+
+                    <div className="flex items-center justify-between p-3.5 bg-slate-50 border border-slate-200/60 rounded-xl">
+                      <div className="flex flex-col">
+                        <span className="text-xs font-bold text-slate-800">{t('settings.cameraObserver')}</span>
+                        <span className="text-[10px] text-slate-400 mt-0.5 font-medium">{t('settings.cameraObserverDesc')}</span>
+                      </div>
+                      <input type="checkbox" checked={hg.observe_camera_enabled === 'true'} onChange={e => hgSet('observe_camera_enabled', e.target.checked ? 'true' : 'false')} className="w-4.5 h-4.5 accent-slate-900 cursor-pointer rounded" />
+                    </div>
+
+                    <div className="flex items-center justify-between p-3.5 bg-slate-50 border border-slate-200/60 rounded-xl">
+                      <span className="text-xs font-bold text-slate-800">{t('settings.hgPauseWhenLocked')}</span>
+                      <input type="checkbox" checked={hg.pause_when_locked !== 'false'} onChange={e => hgSet('pause_when_locked', e.target.checked ? 'true' : 'false')} className="w-4.5 h-4.5 accent-slate-900 cursor-pointer rounded" />
+                    </div>
+
+                    <div className="flex items-center justify-between p-3.5 bg-slate-50 border border-slate-200/60 rounded-xl">
+                      <span className="text-xs font-bold text-slate-800">{t('settings.hgAutoRunTasks')}</span>
+                      <input type="checkbox" checked={hg.auto_run_tasks === 'true'} onChange={e => hgSet('auto_run_tasks', e.target.checked ? 'true' : 'false')} className="w-4.5 h-4.5 accent-slate-900 cursor-pointer rounded" />
+                    </div>
+
+                    <div className="flex flex-col gap-1.5 pt-2">
+                      <label className="text-xs font-semibold text-slate-700 flex justify-between">
+                        {t('settings.screenInterval')} <span>{hg.observe_screen_interval || 60}s</span>
+                      </label>
+                      <select value={hg.observe_screen_interval || '60'} onChange={e => hgSet('observe_screen_interval', e.target.value)} className="bg-[#f9f9f9] border border-slate-200 text-sm focus-visible:ring-slate-350 rounded-lg h-9.5 px-3 outline-none">
+                        <option value="15">{t('settings.seconds15')}</option>
+                        <option value="30">{t('settings.seconds30')}</option>
+                        <option value="60">{t('settings.minute1')}</option>
+                        <option value="120">{t('settings.minutes2')}</option>
+                        <option value="300">{t('settings.minutes5')}</option>
+                      </select>
+                    </div>
+
+                    <div className="flex flex-col gap-1.5">
+                      <label className="text-xs font-semibold text-slate-700 flex justify-between">
+                        {t('settings.cameraInterval')} <span>{hg.observe_camera_interval || 120}s</span>
+                      </label>
+                      <select value={hg.observe_camera_interval || '120'} onChange={e => hgSet('observe_camera_interval', e.target.value)} className="bg-[#f9f9f9] border border-slate-200 text-sm focus-visible:ring-slate-350 rounded-lg h-9.5 px-3 outline-none">
+                        <option value="30">{t('settings.seconds30')}</option>
+                        <option value="60">{t('settings.minute1Short')}</option>
+                        <option value="120">{t('settings.minutes2Default')}</option>
+                        <option value="300">{t('settings.minutes5')}</option>
+                        <option value="600">{t('settings.minutes10')}</option>
+                      </select>
+                    </div>
+
+                    <div className="flex flex-col gap-1.5">
+                      <label className="text-xs font-semibold text-slate-700 flex justify-between">
+                        {t('settings.processInterval')} <span>{Number(hg.process_interval || 600) / 60}m</span>
+                      </label>
+                      <select value={hg.process_interval || '600'} onChange={e => hgSet('process_interval', e.target.value)} className="bg-[#f9f9f9] border border-slate-200 text-sm focus-visible:ring-slate-350 rounded-lg h-9.5 px-3 outline-none">
+                        <option value="120">{t('settings.minutes2')}</option>
+                        <option value="300">{t('settings.minutes5Default')}</option>
+                        <option value="600">{t('settings.minutes10')}</option>
+                        <option value="900">{t('settings.minutes15')}</option>
+                      </select>
+                    </div>
+
+                    <div className="flex flex-col gap-1.5">
+                      <label className="text-xs font-semibold text-slate-700">{t('settings.hgWorkerModel')}</label>
+                      <Input value={hg.agent_worker_model ?? ''} placeholder="deepseek/deepseek-v4-pro" onChange={e => hgSet('agent_worker_model', e.target.value)} />
+                    </div>
+
+                    <div className="flex items-center gap-2 mt-2">
+                      <button onClick={saveHg} disabled={hgStatus === 'saving'} className="text-xs font-semibold text-white bg-slate-900 px-4 py-2 rounded-lg hover:bg-slate-700 disabled:opacity-50">{t('settings.hgSave')}</button>
+                      {hgStatus === 'saved' && <span className="text-[11px] text-emerald-600">{t('settings.hgSaved')}</span>}
+                      {hgStatus === 'error' && <span className="text-[11px] text-red-600">{t('settings.hgError')}</span>}
+                    </div>
+                    <p className="text-[10px] text-slate-400 mt-1">{t('settings.hgRestartNote')}</p>
+                  </>
                 )}
               </div>
             )}

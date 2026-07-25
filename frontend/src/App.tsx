@@ -1,14 +1,19 @@
 import { useState, useEffect, useRef, useCallback, startTransition } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Settings, PenSquare, Search, FileText, Clock, Bird, Mic, Volume2, VolumeX, RefreshCw, LogOut, Menu, X, ChevronDown, ArrowUp, Lightbulb, MessageCircle, Trash2 } from 'lucide-react'
+import { Settings, PenSquare, Search, FileText, Clock, Mic, Volume2, VolumeX, RefreshCw, LogOut, Menu, X, ChevronDown, ArrowUp, Lightbulb, Trash2 } from 'lucide-react'
 import { updateObserverConfig, stopObservers } from './observers'
+import { setHypogumUrl, hypogumHealthy, fetchHypogumMemories, addHypogumMemory, deleteHypogumMemory } from './hypogum'
 import { API_URL, isElectron } from './config'
 import useAudioVisualizer from './hooks/useAudioVisualizer'
 import useWebRTC from './hooks/useWebRTC'
 import SettingsModal from './components/SettingsModal'
 import Markdown from './components/Markdown'
-import EmptyState from './components/EmptyState'
-import ObservationCard from './components/ObservationCard'
+import ObserversTab from './components/ObserversTab'
+import WorkTab from './components/WorkTab'
+import ArtifactsTab from './components/ArtifactsTab'
+import PlansTab from './components/PlansTab'
+import MemoryDetailModal from './components/MemoryDetailModal'
+import CalendarTab from './components/CalendarTab'
 
 import { useAuth } from './contexts/AuthContext'
 import Login from './pages/Login'
@@ -84,46 +89,26 @@ export default function App() {
   const [timezone, setTimezone] = useState('')
 
   // Dashboard & Navigation States
-  const [activeTab, setActiveTab] = useState<'chat' | 'screen' | 'camera' | 'insights' | 'memories' | 'tips'>('chat')
-  const [screenCaptures, setScreenCaptures] = useState<any[]>([])
-  const [cameraSnapshots, setCameraSnapshots] = useState<any[]>([])
-  const [geminiInsights, setGeminiInsights] = useState<any[]>([])
+  const [activeTab, setActiveTab] = useState<'chat' | 'observers' | 'calendar' | 'plans' | 'work' | 'artifacts' | 'memories'>('chat')
+  const [memPath, setMemPath] = useState<string | null>(null)
+  const [hypogumBaseUrl, setHypogumBaseUrl] = useState('')
+  const [hypogumConnected, setHypogumConnected] = useState(false)
   const [memories, setMemories] = useState<any[]>([])
   const [memoriesTotal, setMemoriesTotal] = useState(0)
   const [memoriesSearch, setMemoriesSearch] = useState("")
   const [memoriesTypeFilter, setMemoriesTypeFilter] = useState("")
   const [memoriesLoading, setMemoriesLoading] = useState(false)
-  const [memoriesOffset, setMemoriesOffset] = useState(0)
+  const [, setMemoriesOffset] = useState(0)
   const memoriesOffsetRef = useRef(0)
   const [hasMoreMemories, setHasMoreMemories] = useState(true)
   const [memoriesLoadingMore, setMemoriesLoadingMore] = useState(false)
 
-  const screenOffsetRef = useRef(0)
-  const [hasMoreScreens, setHasMoreScreens] = useState(true)
-  const [screensLoadingMore, setScreensLoadingMore] = useState(false)
-
-  const cameraOffsetRef = useRef(0)
-  const [hasMoreCameras, setHasMoreCameras] = useState(true)
-  const [camerasLoadingMore, setCamerasLoadingMore] = useState(false)
-
-  const insightsOffsetRef = useRef(0)
-  const [hasMoreInsights, setHasMoreInsights] = useState(true)
-  const [insightsLoadingMore, setInsightsLoadingMore] = useState(false)
-
-  const tipsOffsetRef = useRef(0)
-  const [hasMoreTips, setHasMoreTips] = useState(true)
-  const [tipsLoadingMore, setTipsLoadingMore] = useState(false)
-
-  const [lastRefresh, setLastRefresh] = useState(0)
   const [newMemoryText, setNewMemoryText] = useState('')
   const [newMemoryType, setNewMemoryType] = useState('other')
   const [newMemoryConfidence, setNewMemoryConfidence] = useState(10)
   const [newMemoryLifespan, setNewMemoryLifespan] = useState(10)
   const [showAddMemory, setShowAddMemory] = useState(false)
   const [addingMemory, setAddingMemory] = useState(false)
-  const [proactiveTips, setProactiveTips] = useState<any[]>([])
-  const [tipsLoading, setTipsLoading] = useState(false)
-  const lastTipIdRef = useRef<number>(0)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [mobileTabOpen, setMobileTabOpen] = useState(false)
 
@@ -131,10 +116,6 @@ export default function App() {
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const memoriesSentinelRef = useRef<HTMLDivElement>(null)
-  const screenSentinelRef = useRef<HTMLDivElement>(null)
-  const cameraSentinelRef = useRef<HTMLDivElement>(null)
-  const insightsSentinelRef = useRef<HTMLDivElement>(null)
-  const tipsSentinelRef = useRef<HTMLDivElement>(null)
   const refreshConversationsRef = useRef<() => void>(() => { })
   const appliedSettingsRef = useRef<Record<string, any>>({})
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -243,6 +224,9 @@ export default function App() {
         setObserverProcessInterval(procInt);
         setDebugMode(data.debug ?? false);
         setTimezone(data.timezone || '');
+        // Point the frontend at the user's hypogum instance (memory brain).
+        setHypogumBaseUrl(data.hypogum_base_url || '');
+        setHypogumUrl(data.hypogum_base_url);
 
         if (!data.timezone) {
           const detected = Intl.DateTimeFormat().resolvedOptions().timeZone
@@ -313,28 +297,6 @@ export default function App() {
     }
   }, [isSystemIdle]);
 
-  // Processor scheduling — frontend triggers the backend processor on interval
-  useEffect(() => {
-    if (!isElectron) return;
-    if (backendStatus !== 'connected' || !auth.isAuthenticated) return;
-    if (!observerScreenActive && !observerCameraActive) return;
-    if (isSystemIdle) return;
-
-    const intervalMs = observerProcessInterval * 1000;
-    const triggerProcessor = () => {
-      auth.authFetch(`${API_URL}/api/processor/trigger`, { method: 'POST' })
-        .catch(() => { });
-    };
-    const checkNewTips = () => {
-      fetchTips(true);
-    };
-
-    triggerProcessor();
-    setTimeout(checkNewTips, 15000);
-    const timer = setInterval(triggerProcessor, intervalMs);
-    const tipTimer = setInterval(checkNewTips, intervalMs);
-    return () => { clearInterval(timer); clearInterval(tipTimer); };
-  }, [backendStatus, auth.isAuthenticated, observerProcessInterval, observerScreenActive, observerCameraActive, isSystemIdle]);
 
   useEffect(() => {
     if (backendStatus !== 'connected' || !auth.isAuthenticated) return;
@@ -476,11 +438,14 @@ export default function App() {
         observer_screen_interval: observerScreenInterval,
         observer_camera_interval: observerCameraInterval,
         observer_capture_interval: observerCaptureInterval,
-        observer_process_interval: observerProcessInterval
+        observer_process_interval: observerProcessInterval,
+        hypogum_base_url: hypogumBaseUrl,
       }
       if (timezone !== undefined && timezone !== null) {
         body.timezone = timezone
       }
+      // Apply the chosen hypogum backend immediately (empty → default).
+      setHypogumUrl(hypogumBaseUrl)
       if (geminiKey && geminiKey !== appliedSettingsRef.current?.geminiKey) {
         body.gemini_api_key = geminiKey
       }
@@ -526,167 +491,9 @@ export default function App() {
     }
   }
 
-  const fetchObservations = useCallback(async (tab: string, forceRefresh = false, append = false) => {
-    try {
-      const now = Date.now();
-      const limit = 15;
-      if (tab === 'screen') {
-        const offset = append ? screenOffsetRef.current : 0;
-        if (!append) { screenOffsetRef.current = 0; setHasMoreScreens(true); }
-        if (append) setScreensLoadingMore(true);
-        const res = await auth.authFetch(`${API_URL}/api/observations?type=screen&limit=${limit}&offset=${offset}&_=${now}`);
-        if (res.ok) {
-          const data = await res.json();
-          const items = data.items || [];
-          if (append) {
-            setScreenCaptures(prev => [...prev, ...items]);
-          } else {
-            setScreenCaptures(items);
-          }
-          const nextOffset = offset + items.length;
-          screenOffsetRef.current = nextOffset;
-          setHasMoreScreens(nextOffset < (data.total || 0));
-          if (forceRefresh) setLastRefresh(now);
-        }
-      } else if (tab === 'camera') {
-        const offset = append ? cameraOffsetRef.current : 0;
-        if (!append) { cameraOffsetRef.current = 0; setHasMoreCameras(true); }
-        if (append) setCamerasLoadingMore(true);
-        const res = await auth.authFetch(`${API_URL}/api/observations?type=camera&limit=${limit}&offset=${offset}&_=${now}`);
-        if (res.ok) {
-          const data = await res.json();
-          const items = data.items || [];
-          if (append) {
-            setCameraSnapshots(prev => [...prev, ...items]);
-          } else {
-            setCameraSnapshots(items);
-          }
-          const nextOffset = offset + items.length;
-          cameraOffsetRef.current = nextOffset;
-          setHasMoreCameras(nextOffset < (data.total || 0));
-          if (forceRefresh) setLastRefresh(now);
-        }
-      } else if (tab === 'insights') {
-        const offset = append ? insightsOffsetRef.current : 0;
-        if (!append) { insightsOffsetRef.current = 0; setHasMoreInsights(true); }
-        if (append) setInsightsLoadingMore(true);
-        const res = await auth.authFetch(`${API_URL}/api/insights?limit=${limit}&offset=${offset}&_=${now}`);
-        if (res.ok) {
-          const data = await res.json();
-          const items = data.items || [];
-          if (append) {
-            setGeminiInsights(prev => [...prev, ...items]);
-          } else {
-            setGeminiInsights(items);
-          }
-          const nextOffset = offset + items.length;
-          insightsOffsetRef.current = nextOffset;
-          setHasMoreInsights(nextOffset < (data.total || 0));
-          if (forceRefresh) setLastRefresh(now);
-        }
-      }
-    } catch (err) {
-      console.error("Failed to fetch observations or insights:", err);
-    } finally {
-      setScreensLoadingMore(false);
-      setCamerasLoadingMore(false);
-      setInsightsLoadingMore(false);
-    }
-  }, [auth.isAuthenticated, auth.accessToken, auth.authFetch]);
 
-  const fetchTips = useCallback(async (checkNotifications = false, append = false) => {
-    const offset = append ? tipsOffsetRef.current : 0;
-    if (!append) {
-      setTipsLoading(true);
-      tipsOffsetRef.current = 0;
-      setHasMoreTips(true);
-    } else {
-      setTipsLoadingMore(true);
-    }
-    try {
-      const res = await auth.authFetch(`${API_URL}/api/proactive/tips?limit=50&offset=${offset}`);
-      if (res.ok) {
-        const data = await res.json();
-        const tips = data.items || [];
-        if (append) {
-          setProactiveTips(prev => [...prev, ...tips]);
-        } else {
-          setProactiveTips(tips);
-        }
-        const nextOffset = offset + tips.length;
-        tipsOffsetRef.current = nextOffset;
-        setHasMoreTips(nextOffset < (data.total || 0));
-
-        if (checkNotifications && tips.length > 0) {
-          const latest = tips[0];
-          if (latest.id > lastTipIdRef.current && lastTipIdRef.current > 0) {
-            let tipData: any = null;
-            try { tipData = JSON.parse(latest.proactive_tip || ''); } catch {}
-            const tipsArr = tipData?.tips;
-            const body = (tipsArr && tipsArr.length > 0 && tipsArr[0].tip_summary) || '';
-            if (typeof window !== 'undefined' && (window as any).electronAPI?.showNotification) {
-              (window as any).electronAPI.showNotification({ title: 'Molly\'s Tip', body });
-            }
-          }
-          lastTipIdRef.current = Math.max(lastTipIdRef.current, ...tips.map((t: any) => t.id));
-        } else if (tips.length > 0) {
-          lastTipIdRef.current = Math.max(lastTipIdRef.current, ...tips.map((t: any) => t.id));
-        }
-      }
-    } catch (err) {
-      console.error("Failed to fetch tips:", err);
-    } finally {
-      setTipsLoading(false);
-      setTipsLoadingMore(false);
-    }
-  }, [auth.isAuthenticated, auth.accessToken, auth.authFetch]);
-
-  const handleChatWithTip = useCallback(async (tipItem: { goal?: string; tip_summary?: string; tip_content?: string }) => {
-    try {
-      const tipContent = [
-        tipItem.goal,
-        tipItem.tip_summary ? `**${tipItem.tip_summary}**` : '',
-        tipItem.tip_content,
-      ].filter(Boolean).join('\n\n');
-      const userQuestion = 'What do you think? How can I act on this?';
-      const title = (tipItem.tip_summary || tipItem.goal || '').replace(/[#*`_~>\[\]()]/g, '').trim().slice(0, 40);
-
-      const createRes = await auth.authFetch(`${API_URL}/api/conversations`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title }),
-      });
-      if (!createRes.ok) return;
-      const conv = await createRes.json();
-
-      await auth.authFetch(`${API_URL}/api/conversations/${conv.id}/messages`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ role: 'tip', content: tipContent }),
-      });
-
-      setMessages([
-        { role: 'tip', content: tipContent },
-        { role: 'user', content: userQuestion },
-      ]);
-
-      if (dcRef.current && dcRef.current.readyState === 'open') {
-        setActiveConversationId(conv.id);
-        dcRef.current.send(JSON.stringify({ type: 'switch_conversation', conversation_id: conv.id }));
-        setTimeout(() => sendChatMessage(userQuestion), 200);
-      } else {
-        setActiveConversationId(conv.id);
-      }
-
-      refreshConversations();
-      setActiveTab('chat');
-    } catch (err) {
-      console.error("Failed to chat about tip:", err);
-    }
-  }, [auth.authFetch, dcRef, sendChatMessage, refreshConversations]);
 
   const fetchMemories = useCallback(async (search?: string, append = false) => {
-    const offset = append ? memoriesOffsetRef.current : 0
     if (!append) {
       setMemoriesLoading(true)
       setMemoriesOffset(0)
@@ -695,83 +502,72 @@ export default function App() {
       setMemoriesLoadingMore(true)
     }
     try {
-      const params = new URLSearchParams({ limit: "50" })
-      params.set("offset", String(offset))
-      if (search) params.set("q", search)
-      if (memoriesTypeFilter) params.set("type", memoriesTypeFilter)
-      const res = await auth.authFetch(`${API_URL}/api/memories?${params}`)
-      if (res.ok) {
-        const data = await res.json()
-        if (append) {
-          setMemories(prev => [...prev, ...(data.items || [])])
-        } else {
-          setMemories(data.items || [])
-        }
-        setMemoriesTotal(data.total || 0)
-        const nextOffset = offset + (data.items?.length || 0)
-        setMemoriesOffset(nextOffset)
-        memoriesOffsetRef.current = nextOffset
-        setHasMoreMemories(nextOffset < (data.total || 0))
-      }
+      // Phase 3: memories come from hypogum (semantic search when querying,
+      // otherwise the full page tree). No server-side pagination.
+      const data = await fetchHypogumMemories(search, memoriesTypeFilter)
+      if (!append) setMemories(data.items)
+      setMemoriesTotal(data.total)
+      setMemoriesOffset(data.items.length)
+      memoriesOffsetRef.current = data.items.length
+      setHasMoreMemories(false)
     } catch (err) {
       console.error("Failed to fetch memories:", err)
     } finally {
       setMemoriesLoading(false)
       setMemoriesLoadingMore(false)
     }
-  }, [auth.authFetch, memoriesTypeFilter])
+  }, [memoriesTypeFilter])
 
   const addMemory = useCallback(async () => {
     if (!newMemoryText.trim()) return
     setAddingMemory(true)
     try {
-      const res = await auth.authFetch(`${API_URL}/api/memories`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          fact: newMemoryText.trim(),
-          category: newMemoryType,
-          confidence: newMemoryConfidence,
-          lifespan: newMemoryLifespan,
-        }),
-      })
-      if (res.ok) {
-        setNewMemoryText('')
-        setShowAddMemory(false)
-        fetchMemories()
-      }
+      await addHypogumMemory(
+        newMemoryText.trim(), newMemoryType, newMemoryConfidence, newMemoryLifespan,
+      )
+      setNewMemoryText('')
+      setShowAddMemory(false)
+      fetchMemories()
     } catch (err) {
       console.error("Failed to add memory:", err)
     } finally {
       setAddingMemory(false)
     }
-  }, [auth.authFetch, newMemoryText, newMemoryType, newMemoryConfidence, newMemoryLifespan, fetchMemories])
+  }, [newMemoryText, newMemoryType, newMemoryConfidence, newMemoryLifespan, fetchMemories])
 
   const deleteMemory = useCallback(async (memoryId: string) => {
     try {
-      const res = await auth.authFetch(`${API_URL}/api/memories/${memoryId}`, {
-        method: 'DELETE',
-      })
-      if (res.ok) {
-        setMemories(prev => prev.filter(m => m.id !== memoryId))
-        setMemoriesTotal(prev => Math.max(0, prev - 1))
-      }
+      await deleteHypogumMemory(memoryId)
+      setMemories(prev => prev.filter(m => m.id !== memoryId))
+      setMemoriesTotal(prev => Math.max(0, prev - 1))
     } catch (err) {
       console.error("Failed to delete memory:", err)
     }
-  }, [auth.authFetch])
+  }, [])
 
   useEffect(() => {
-    if (backendStatus === 'connected' && activeTab !== 'chat') {
-      if (activeTab === 'memories') {
-        fetchMemories()
-      } else if (activeTab === 'tips') {
-        fetchTips()
-      } else {
-        fetchObservations(activeTab)
-      }
+    if (backendStatus === 'connected' && activeTab === 'memories') {
+      fetchMemories()
     }
-  }, [activeTab, backendStatus, fetchObservations, fetchMemories, fetchTips]);
+  }, [activeTab, backendStatus, fetchMemories]);
+
+  // Memory tabs exist only while hypogum is reachable. Poll its health from the
+  // configured URL; when it's unreachable, only Chat is shown (and we snap back).
+  useEffect(() => {
+    let stop = false
+    const check = async () => {
+      const url = (hypogumBaseUrl || '').trim()
+      const ok = url ? await hypogumHealthy(url) : false
+      if (!stop) setHypogumConnected(ok)
+    }
+    check()
+    const timer = setInterval(check, 15000)
+    return () => { stop = true; clearInterval(timer) }
+  }, [hypogumBaseUrl])
+
+  useEffect(() => {
+    if (!hypogumConnected && activeTab !== 'chat') setActiveTab('chat')
+  }, [hypogumConnected, activeTab])
 
   useEffect(() => {
     if (activeTab === 'memories' && backendStatus === 'connected') {
@@ -793,77 +589,6 @@ export default function App() {
     observer.observe(sentinel)
     return () => observer.disconnect()
   }, [hasMoreMemories, memoriesLoadingMore, activeTab, fetchMemories])
-
-  useEffect(() => {
-    const sentinel = screenSentinelRef.current
-    if (!sentinel || !hasMoreScreens || screensLoadingMore || activeTab !== 'screen') return
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        if (entry.isIntersecting) {
-          fetchObservations('screen', false, true)
-        }
-      },
-      { rootMargin: "200px" }
-    )
-    observer.observe(sentinel)
-    return () => observer.disconnect()
-  }, [hasMoreScreens, screensLoadingMore, activeTab, fetchObservations])
-
-  useEffect(() => {
-    const sentinel = cameraSentinelRef.current
-    if (!sentinel || !hasMoreCameras || camerasLoadingMore || activeTab !== 'camera') return
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        if (entry.isIntersecting) {
-          fetchObservations('camera', false, true)
-        }
-      },
-      { rootMargin: "200px" }
-    )
-    observer.observe(sentinel)
-    return () => observer.disconnect()
-  }, [hasMoreCameras, camerasLoadingMore, activeTab, fetchObservations])
-
-  useEffect(() => {
-    const sentinel = insightsSentinelRef.current
-    if (!sentinel || !hasMoreInsights || insightsLoadingMore || activeTab !== 'insights') return
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        if (entry.isIntersecting) {
-          fetchObservations('insights', false, true)
-        }
-      },
-      { rootMargin: "200px" }
-    )
-    observer.observe(sentinel)
-    return () => observer.disconnect()
-  }, [hasMoreInsights, insightsLoadingMore, activeTab, fetchObservations])
-
-  useEffect(() => {
-    const sentinel = tipsSentinelRef.current
-    if (!sentinel || !hasMoreTips || tipsLoadingMore || activeTab !== 'tips') return
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        if (entry.isIntersecting) {
-          fetchTips(false, true)
-        }
-      },
-      { rootMargin: "200px" }
-    )
-    observer.observe(sentinel)
-    return () => observer.disconnect()
-  }, [hasMoreTips, tipsLoadingMore, activeTab, fetchTips])
-
-  // Listen for notification click → navigate to tips tab
-  useEffect(() => {
-    if (typeof window === 'undefined') return
-    const api = (window as any).electronAPI
-    if (!api?.onNavigateTips) return
-    const unsubscribe = api.onNavigateTips(() => {
-      setActiveTab('tips')
-    })
-    return unsubscribe
-  }, [])
 
   const handleSettingsChange = (key: keyof typeof settingsData, value: any) => {
     const setters: Record<keyof typeof settingsData, any> = {
@@ -889,6 +614,7 @@ export default function App() {
       settingsTab: setSettingsTab,
       debugMode: setDebugMode,
       timezone: setTimezone,
+      hypogumBaseUrl: setHypogumBaseUrl,
     }
     setters[key]?.(value)
   }
@@ -900,8 +626,14 @@ export default function App() {
     sttLanguage, sttProvider, ttsLanguage,
     observerScreenActive, observerCameraActive, observerScreenInterval,
     observerCameraInterval, observerCaptureInterval, observerProcessInterval,
-    settingsTab, debugMode, timezone,
+    settingsTab, debugMode, timezone, hypogumBaseUrl,
   }
+
+  // Memory features (all tabs except Chat, and the chat memory/run tools) light
+  // up only once the user has configured a hypogum backend. Without one, Molly
+  // is a plain voice/text chat client.
+  const ALL_TABS = ['chat', 'observers', 'calendar', 'plans', 'work', 'artifacts', 'memories'] as const
+  const visibleTabs = hypogumConnected ? ALL_TABS : (['chat'] as const)
 
   const sendMessage = () => {
     if (!input.trim()) return
@@ -1033,7 +765,7 @@ export default function App() {
               <>
                 <div className="fixed inset-0 z-40" onClick={() => setMobileTabOpen(false)} />
                 <div className="absolute top-full left-0 mt-1 z-50 bg-white border border-slate-200 rounded-xl shadow-lg overflow-hidden min-w-[140px]">
-                  {(['chat', 'screen', 'camera', 'insights', 'tips', 'memories'] as const).map(tab => (
+                  {visibleTabs.map(tab => (
                     <button
                       key={tab}
                       onClick={() => { setActiveTab(tab); setMobileTabOpen(false) }}
@@ -1049,7 +781,7 @@ export default function App() {
               </>
             )}
             <div className="hidden lg:flex overflow-x-auto gap-1 bg-slate-100/80 p-1 rounded-xl border border-slate-200/40 shadow-inner">
-              {(['chat', 'screen', 'camera', 'insights', 'tips', 'memories'] as const).map(tab => (
+              {visibleTabs.map(tab => (
                 <button
                   key={tab}
                   onClick={() => startTransition(() => setActiveTab(tab))}
@@ -1130,320 +862,20 @@ export default function App() {
         </div>
         )}
 
-        {/* Screen Tab */}
-        {activeTab === 'screen' && (
-        <div className="overflow-y-auto flex-1 min-h-0 px-3 sm:px-6 md:px-10 py-4 sm:py-6 bg-slate-50/40">
-          <div className="max-w-6xl mx-auto w-full animate-in fade-in duration-300">
-            <div className="flex justify-between items-center mb-6">
-              <div>
-                <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider">{t('screen.title')}</h3>
-                <p className="text-[10px] text-slate-400 mt-0.5">{t('screen.desc')}</p>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => fetchObservations('screen', true)}
-                  className="text-[10px] font-semibold text-slate-500 hover:text-slate-800 bg-white border border-slate-200 px-3 py-1.5 rounded-full shadow-sm hover:shadow transition-all flex items-center gap-1.5"
-                >
-                  <RefreshCw className="w-3 h-3" /> {t('app.refresh')}
-                </button>
-              </div>
-            </div>
+        {/* Observers Tab (screen + camera) */}
+        {activeTab === 'observers' && <ObserversTab />}
 
-            {screenCaptures.length === 0 ? (
-              <EmptyState
-                icon={<Clock className="w-6 h-6 text-slate-400" />}
-                title={t('screen.empty')}
-                hint={t('screen.emptyHint')}
-              />
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
-                {screenCaptures.map(cap => (
-                  <ObservationCard
-                    key={cap.id}
-                    id={cap.id}
-                    imagePath={cap.image_path}
-                    timestamp={cap.timestamp}
-                    processed={cap.processed}
-                    sourceLabel={t('screen.source')}
-                    altText={t('screen.alt')}
-                    accessToken={auth.accessToken}
-                    lastRefresh={lastRefresh}
-                  />
-                ))}
-              <div ref={screenSentinelRef} className="h-1" />
-              </div>
-            )}
-          </div>
-        </div>
-        )}
+        {/* Calendar Tab */}
+        {activeTab === 'calendar' && <CalendarTab />}
 
-        {/* Camera Tab */}
-        {activeTab === 'camera' && (
-        <div className="overflow-y-auto flex-1 min-h-0 px-3 sm:px-6 md:px-10 py-4 sm:py-6 bg-slate-50/40">
-          <div className="max-w-6xl mx-auto w-full animate-in fade-in duration-300">
-            <div className="flex justify-between items-center mb-6">
-              <div>
-                <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider">{t('camera.title')}</h3>
-                <p className="text-[10px] text-slate-400 mt-0.5">{t('camera.desc')}</p>
-              </div>
-              <button
-                onClick={() => fetchObservations('camera', true)}
-                className="text-[10px] font-semibold text-slate-500 hover:text-slate-800 bg-white border border-slate-200 px-3 py-1.5 rounded-full shadow-sm hover:shadow transition-all flex items-center gap-1.5"
-              >
-                <RefreshCw className="w-3 h-3" /> {t('app.refresh')}
-              </button>
-            </div>
+        {/* Plans Tab */}
+        {activeTab === 'plans' && <PlansTab />}
 
-            {cameraSnapshots.length === 0 ? (
-              <EmptyState
-                icon={<Clock className="w-6 h-6 text-slate-400" />}
-                title={t('camera.empty')}
-                hint={t('camera.emptyHint')}
-              />
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
-                {cameraSnapshots.map(cap => (
-                  <ObservationCard
-                    key={cap.id}
-                    id={cap.id}
-                    imagePath={cap.image_path}
-                    timestamp={cap.timestamp}
-                    processed={cap.processed}
-                    sourceLabel={t('camera.label')}
-                    altText={t('camera.alt')}
-                    accessToken={auth.accessToken}
-                    lastRefresh={lastRefresh}
-                  />
-                ))}
-              <div ref={cameraSentinelRef} className="h-1" />
-              </div>
-            )}
-          </div>
-        </div>
-        )}
+        {/* Work Tab */}
+        {activeTab === 'work' && <WorkTab />}
 
-        {/* Insights Tab */}
-        {activeTab === 'insights' && (
-        <div className="overflow-y-auto flex-1 min-h-0 px-3 sm:px-6 md:px-10 py-4 sm:py-6 bg-slate-50/40">
-          <div className="max-w-3xl mx-auto w-full animate-in fade-in duration-300">
-            <div className="flex justify-between items-center mb-8">
-              <div>
-                <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider">{t('insights.title')}</h3>
-                <p className="text-[10px] text-slate-400 mt-0.5">{t('insights.desc')}</p>
-              </div>
-              <button
-                onClick={() => fetchObservations('insights', true)}
-                className="text-[10px] font-semibold text-slate-500 hover:text-slate-800 bg-white border border-slate-200 px-3 py-1.5 rounded-full shadow-sm hover:shadow transition-all flex items-center gap-1.5"
-              >
-                <RefreshCw className="w-3 h-3" /> {t('app.refresh')}
-              </button>
-            </div>
-
-            {geminiInsights.length === 0 ? (
-              <EmptyState
-                icon={<Bird className="w-6 h-6 text-slate-400" />}
-                title={t('insights.empty')}
-                hint={t('insights.emptyHint')}
-              />
-            ) : (
-              <div className="relative border-l-2 border-slate-200/80 ml-2 sm:ml-4 pl-4 sm:pl-8 space-y-6 sm:space-y-8 py-2">
-                {geminiInsights.map(ins => (
-                  <div key={ins.id} className="relative bg-white rounded-2xl border border-slate-100 p-6 shadow-sm hover:shadow-md transition-all duration-300">
-                    <div className="absolute w-3.5 h-3.5 sm:w-4 sm:h-4 bg-slate-900 rounded-full -left-[26px] sm:-left-[41px] top-4 sm:top-6 border-2 sm:border-4 border-slate-50 flex items-center justify-center shadow-sm" />
-
-                    <div className="flex flex-wrap justify-between items-center gap-2 pb-3 border-b border-slate-50">
-                      <span className="text-[10px] font-extrabold uppercase tracking-wider bg-slate-900 text-white px-2.5 py-0.5 rounded-md">
-                        {t('insights.reportBadge', { id: ins.id })}
-                      </span>
-                      <span className="text-[10px] font-mono text-slate-400 flex items-center gap-1">
-                        <Clock className="w-3 h-3 text-slate-400" />
-                        {new Date(ins.timestamp).toLocaleString()}
-                      </span>
-                    </div>
-
-                    {/* Long-Form Summary */}
-                    <div className="mt-4">
-                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{t('insights.activitySummary')}</span>
-                      <p className="text-xs text-slate-700 leading-relaxed mt-1.5 font-medium whitespace-pre-line">
-                        {ins.activity_summary}
-                      </p>
-                    </div>
-
-                    {/* Parsed analysis categories */}
-                    {(() => {
-                      let analysis: Record<string, any[]> | null = null
-                      try { if (ins.context) analysis = JSON.parse(ins.context) } catch { }
-                      if (!analysis) return null
-
-                      const catConfig: Record<string, { label: string; color: string; bg: string; border: string }> = {
-                        events: { label: t('insights.events'), color: 'text-amber-700', bg: 'bg-amber-50/60', border: 'border-amber-100' },
-                        personalities: { label: t('insights.personalities'), color: 'text-rose-700', bg: 'bg-rose-50/60', border: 'border-rose-100' },
-                        skills: { label: t('insights.skills'), color: 'text-emerald-700', bg: 'bg-emerald-50/60', border: 'border-emerald-100' },
-                        interests: { label: t('insights.interests'), color: 'text-purple-700', bg: 'bg-purple-50/60', border: 'border-purple-100' },
-                        preferences: { label: t('insights.preferences'), color: 'text-blue-700', bg: 'bg-blue-50/60', border: 'border-blue-100' },
-                        ownerships: { label: t('insights.ownerships'), color: 'text-slate-700', bg: 'bg-slate-50/60', border: 'border-slate-100' },
-                        relationships: { label: t('insights.relationships'), color: 'text-teal-700', bg: 'bg-teal-50/60', border: 'border-teal-100' },
-                        weaknesses: { label: t('insights.weaknesses'), color: 'text-red-700', bg: 'bg-red-50/60', border: 'border-red-100' },
-                        goals: { label: t('insights.goals'), color: 'text-indigo-700', bg: 'bg-indigo-50/60', border: 'border-indigo-100' },
-                      }
-
-                      return (
-                        <div className="mt-5 space-y-4">
-                          {Object.entries(catConfig).map(([cat, cfg]) => {
-                            const items = analysis?.[cat]
-                            if (!items || items.length === 0) return null
-                            return (
-                              <div key={cat} className={`rounded-xl border ${cfg.border} ${cfg.bg} p-4`}>
-                                <span className={`text-[10px] font-extrabold uppercase tracking-wider ${cfg.color}`}>
-                                  {cfg.label} ({items.length})
-                                </span>
-                                <div className="mt-2 space-y-2">
-                                  {items.map((item: any, i: number) => (
-                                    <div key={i} className="flex items-start gap-2.5">
-                                      <span className="flex-shrink-0 w-5 h-5 rounded-full bg-white border border-slate-200 text-[8px] font-bold text-slate-500 flex items-center justify-center mt-0.5">
-                                        {item.confidence ?? '?'}
-                                      </span>
-                                      <div className="min-w-0">
-                                        <p className="text-[11px] text-slate-800 font-semibold leading-snug">
-                                          {item[Object.keys(item).find(k => k !== 'confidence' && k !== 'evidence' && k !== 'lifespan') || 0]}
-                                        </p>
-                                        {(() => {
-                                          if (!item.evidence) return null
-                                          let displayText = ''
-                                          let evidenceCount = 0
-                                          try {
-                                            const evidenceList = JSON.parse(item.evidence)
-                                            if (Array.isArray(evidenceList) && evidenceList.length > 0) {
-                                              evidenceCount = evidenceList.length
-                                              displayText = evidenceList[evidenceList.length - 1].text || ''
-                                            }
-                                          } catch {
-                                            displayText = item.evidence
-                                          }
-                                          if (!displayText) return null
-                                          return (
-                                            <p className="text-[10px] text-slate-400 italic mt-0.5 leading-snug">
-                                              {evidenceCount > 1
-                                                ? t('insights.evidenceCount', { count: evidenceCount }) + ': '
-                                                : t('insights.evidence') + ': '
-                                              }
-                                              {displayText}
-                                            </p>
-                                          )
-                                        })()}
-                                      </div>
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-                            )
-                          })}
-                        </div>
-                      )
-                    })()}
-                  </div>
-                ))}
-              <div ref={insightsSentinelRef} className="h-1" />
-              </div>
-            )}
-          </div>
-        </div>
-        )}
-
-        {/* Tips Tab */}
-        {activeTab === 'tips' && (
-        <div className="overflow-y-auto flex-1 min-h-0 px-3 sm:px-6 md:px-10 py-4 sm:py-6 bg-slate-50/40">
-          <div className="max-w-3xl mx-auto w-full animate-in fade-in duration-300">
-            <div className="flex justify-between items-center mb-8">
-              <div>
-                <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider">{t('tips.title')}</h3>
-                <p className="text-[10px] text-slate-400 mt-0.5">{t('tips.desc')}</p>
-              </div>
-              <button
-                onClick={() => fetchTips()}
-                className="text-[10px] font-semibold text-slate-500 hover:text-slate-800 bg-white border border-slate-200 px-3 py-1.5 rounded-full shadow-sm hover:shadow transition-all flex items-center gap-1.5"
-              >
-                <RefreshCw className="w-3 h-3" /> {t('app.refresh')}
-              </button>
-            </div>
-
-            {(tipsLoading && proactiveTips.length === 0) ? (
-              <div className="flex items-center justify-center py-16">
-                <span className="flex gap-1.5">
-                  <span className="w-2 h-2 bg-amber-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                  <span className="w-2 h-2 bg-amber-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                  <span className="w-2 h-2 bg-amber-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
-                </span>
-              </div>
-            ) : proactiveTips.length === 0 ? (
-              <EmptyState
-                icon={<Lightbulb className="w-6 h-6 text-slate-400" />}
-                title={t('tips.empty')}
-                hint={t('tips.emptyHint')}
-              />
-            ) : (
-              <div className="relative border-l-2 border-slate-200/80 ml-2 sm:ml-4 pl-4 sm:pl-8 space-y-6 sm:space-y-8 py-2">
-                {proactiveTips.flatMap(tip => {
-                  let tipData: any = null
-                  try { tipData = JSON.parse(tip.proactive_tip || ''); } catch {}
-                  if (!tipData) return []
-                  const tipsArr: any[] = Array.isArray(tipData.tips) ? tipData.tips : (tipData.tip_summary ? [tipData] : [])
-                  if (tipsArr.length === 0) return []
-                  return tipsArr.map(item => ({ item, timestamp: tip.timestamp }))
-                }).map(({ item, timestamp }: { item: any; timestamp: string }, i: number) => {
-                  if (typeof item.goal !== 'string' || typeof item.tip_summary !== 'string' || typeof item.tip_content !== 'string') return null
-                  return (
-                    <div key={i} className="relative bg-white rounded-2xl border border-slate-100 p-6 shadow-sm hover:shadow-md transition-all duration-300">
-                      <div className="absolute w-3.5 h-3.5 sm:w-4 sm:h-4 bg-amber-500 rounded-full -left-[26px] sm:-left-[41px] top-4 sm:top-6 border-2 sm:border-4 border-slate-50 flex items-center justify-center shadow-sm" />
-
-                      <div className="flex flex-wrap justify-between items-center gap-2 pb-3 border-b border-slate-50">
-                        <div className="flex items-center gap-2">
-                          <span className="text-[10px] font-extrabold uppercase tracking-wider bg-amber-700 text-white px-2.5 py-0.5 rounded-md">
-                            {t('insights.suggestion')}
-                          </span>
-                        </div>
-                        <span className="text-[10px] font-mono text-slate-400 flex items-center gap-1">
-                          <Clock className="w-3 h-3 text-slate-400" />
-                          {new Date(timestamp).toLocaleString()}
-                        </span>
-                      </div>
-
-                      <div className="mt-3">
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mr-2">{t('tips.goal')}</span>
-                        <p className="text-xs text-slate-900 leading-relaxed font-medium mt-0.5">{item.goal}</p>
-                      </div>
-
-                      <div className="mt-2">
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mr-2">{t('tips.nextSteps')}</span>
-                        <p className="text-xs text-slate-800 leading-relaxed mt-0.5">{item.tip_summary}</p>
-                      </div>
-
-                      <div className="mt-3 bg-gradient-to-br from-amber-50/60 to-yellow-50/60 rounded-xl p-4 border border-amber-100/60">
-                        <div className="flex items-center gap-1.5 mb-2">
-                          <Lightbulb className="w-3.5 h-3.5 text-amber-500" />
-                          <span className="text-[10px] font-bold uppercase tracking-wider text-amber-700">{t('tips.tip')}</span>
-                        </div>
-                        <Markdown content={item.tip_content} />
-                      </div>
-
-                      <div className="mt-4 pt-3 border-t border-slate-100 flex justify-end">
-                        <button
-                          onClick={() => handleChatWithTip(item)}
-                          className="flex items-center gap-1.5 text-[10px] font-semibold text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 px-3 py-1.5 rounded-full transition-all"
-                        >
-                          <MessageCircle className="w-3 h-3" />
-                          {t('tips.chatWithTip')}
-                        </button>
-                      </div>
-                    </div>
-                  )
-                })}
-              <div ref={tipsSentinelRef} className="h-1" />
-              </div>
-            )}
-          </div>
-        </div>
-        )}
+        {/* Artifacts Tab */}
+        {activeTab === 'artifacts' && <ArtifactsTab />}
 
         {/* Memories Tab */}
         {activeTab === 'memories' && (
@@ -1620,7 +1052,11 @@ export default function App() {
                           {mem.type}
                         </span>
                         <div className="min-w-0 flex-1">
-                          <p className="text-sm text-slate-800 leading-relaxed">
+                          <p
+                            onClick={() => typeof mem.id === 'string' && mem.id.endsWith('.md') && setMemPath(mem.id)}
+                            className="text-sm text-slate-800 leading-relaxed cursor-pointer hover:text-slate-950"
+                            title={t('memories.viewDetail')}
+                          >
                             {mem.content?.replace(/^\w+:\s*/, '') || mem.content}
                           </p>
                           <div className="flex items-center gap-3 mt-2 flex-wrap">
@@ -1662,6 +1098,10 @@ export default function App() {
             )}
           </div>
         </div>
+        )}
+
+        {memPath && (
+          <MemoryDetailModal path={memPath} onClose={() => setMemPath(null)} onOpenPath={setMemPath} />
         )}
 
         {/* Input Area */}
@@ -1747,7 +1187,6 @@ export default function App() {
         onSave={saveSettings}
         settings={settingsData}
         onChange={handleSettingsChange}
-        fetchObservations={fetchObservations}
       />
     </div>
   )

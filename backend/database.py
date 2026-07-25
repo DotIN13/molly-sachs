@@ -2,16 +2,13 @@ import asyncio
 import json
 import os
 import datetime
-from dataclasses import dataclass
 from datetime import timezone as tz
 import secrets
 
 import aiosqlite
-import chromadb
-from chromadb import ClientAPI, Collection
 from loguru import logger
 
-from config import SQLITE_PATH, CHROMA_PATH
+from config import SQLITE_PATH
 
 # ──────────────────────────────────────────────
 #  AppDB — SQLite data store
@@ -431,221 +428,15 @@ class AppDB:
 
 
 # ──────────────────────────────────────────────
-#  VectorDB — ChromaDB persistent client
-# ──────────────────────────────────────────────
-
-class VectorDB:
-    """ChromaDB vector store backed by a persistent on-disk database."""
-
-    def __init__(self, path: str = CHROMA_PATH):
-        self._path = path
-        self._client: ClientAPI | None = None
-        self._collection: Collection | None = None
-        self._write_lock = asyncio.Lock()
-
-    async def init(self) -> None:
-        if self._client is not None:
-            return
-
-        logger.info("VectorDB: connecting persistent {}", self._path)
-        self._client = chromadb.PersistentClient(path=self._path)
-
-        try:
-            self._collection = self._client.get_collection("events")
-        except Exception:
-            self._collection = self._client.create_collection("events")
-
-        logger.info("VectorDB: ready ({} items)", self._collection.count())
-
-    async def add(self, data: list) -> None:
-        await self.init()
-
-        ids = [str(item["id"]) for item in data]
-        embeddings = [item["vector"] for item in data]
-        metadatas = []
-        for item in data:
-            if "metadata" in item:
-                metadatas.append(item["metadata"])
-            else:
-                metadatas.append({
-                    "timestamp": item.get("timestamp", ""),
-                    "summary": item.get("summary", ""),
-                    "user_id": item.get("user_id", ""),
-                })
-
-        async with self._write_lock:
-            self._collection.add(ids=ids, embeddings=embeddings, metadatas=metadatas)
-        logger.info("VectorDB: added {} items", len(data))
-
-    async def search(self, query: list, limit: int = 5,
-                     user_id: str | None = None,
-                     item_type: str | None = None,
-                     exclude_type: str | None = None) -> list:
-        await self.init()
-
-        if not user_id:
-            return []
-
-        conditions: list[dict] = [{"user_id": user_id}]
-        if item_type:
-            conditions.append({"type": item_type})
-        if exclude_type:
-            conditions.append({"type": {"$ne": exclude_type}})
-
-        where: dict = conditions[0] if len(conditions) == 1 else {"$and": conditions}
-
-        results = self._collection.query(
-            query_embeddings=[query],
-            n_results=limit,
-            where=where,
-            include=["metadatas", "documents"],
-        )
-
-        metadatas = results.get("metadatas", [[]])[0]
-        ids = results.get("ids", [[]])[0]
-        out = []
-        for i, m in enumerate(metadatas):
-            d = dict(m) if m else {}
-            if i < len(ids):
-                d["id"] = ids[i]
-            out.append(d)
-        return out
-
-    async def find_similar(self, embedding: list, item_type: str,
-                           user_id: str, threshold: float = 0.85,
-                           limit: int = 5
-                           ) -> tuple[dict | None, float, list[tuple[dict, float]]]:
-        """Finds existing items of the same type+user semantically close to
-        the given embedding.
-
-        Returns (best_metadata, best_similarity, all_candidates)
-        where best_* is the top match above threshold (or None, 0.0)
-        and all_candidates is a list of (metadata_dict, similarity) sorted by
-        similarity descending (up to limit, all above 0)."""
-        await self.init()
-
-        results = self._collection.query(
-            query_embeddings=[embedding],
-            n_results=limit,
-            where={"$and": [{"user_id": user_id}, {"type": item_type}]},
-            include=["metadatas", "distances"],
-        )
-
-        ids = results.get("ids", [[]])[0]
-        metadatas = results.get("metadatas", [[]])[0]
-        distances = results.get("distances", [[]])[0]
-
-        candidates: list[tuple[dict, float]] = []
-        best_meta: dict | None = None
-        best_sim = 0.0
-
-        for i in range(min(len(ids), len(metadatas), len(distances))):
-            sim = 1.0 - distances[i]
-            meta = dict(metadatas[i]) if metadatas[i] else {}
-            meta["id"] = ids[i]
-            meta["similarity"] = round(sim, 4)
-            candidates.append((meta, sim))
-            if sim >= threshold and sim > best_sim:
-                best_meta = meta
-                best_sim = sim
-
-        return best_meta, best_sim, candidates
-
-    async def update_metadata(self, item_id: str, metadata: dict) -> None:
-        """Updates the metadata of an existing item in-place without re-embedding."""
-        await self.init()
-
-        async with self._write_lock:
-            self._collection.update(ids=[item_id], metadatas=[metadata])
-        logger.debug("VectorDB: updated metadata for {}", item_id)
-
-
-    async def delete_by_type(self, item_type: str) -> int:
-        """Deletes all items of a given type. Returns the count removed."""
-        await self.init()
-
-        try:
-            results = self._collection.get(
-                where={"type": item_type},
-                include=[],
-            )
-            ids = results.get("ids", [])
-            if ids:
-                self._collection.delete(ids=ids)
-                logger.info("VectorDB: deleted {} items of type '{}'", len(ids), item_type)
-            return len(ids)
-        except Exception as e:
-            logger.warning("VectorDB: delete_by_type '{}' failed: {}", item_type, e)
-            return 0
-
-    async def delete_memory(self, memory_id: str, user_id: str) -> bool:
-        """Delete a single memory entry by ID, verified against user_id.
-        Returns True if deleted, False if not found or not owned."""
-        await self.init()
-        try:
-            results = self._collection.get(
-                ids=[memory_id],
-                include=["metadatas"],
-            )
-            ids = results.get("ids", [])
-            if not ids:
-                return False
-            meta = (results.get("metadatas") or [[]])[0]
-            if not meta or meta.get("user_id") != user_id:
-                return False
-            self._collection.delete(ids=[memory_id])
-            logger.info("VectorDB: deleted memory {}", memory_id)
-            return True
-        except Exception as e:
-            logger.warning("VectorDB: delete_memory '{}' failed: {}", memory_id, e)
-            return False
-
-    async def get_all(self, user_id: str, item_type: str | None = None,
-                      limit: int = 50, offset: int = 0) -> tuple[list[dict], int]:
-        """List all items for a user, optionally filtered by type.
-        Returns (items, total_count)."""
-        await self.init()
-
-        conditions: list[dict] = [{"user_id": user_id}]
-        if item_type:
-            conditions.append({"type": item_type})
-        where: dict = conditions[0] if len(conditions) == 1 else {"$and": conditions}
-
-        try:
-            raw = self._collection.get(
-                where=where,
-                include=["metadatas"],
-            )
-        except Exception:
-            return [], 0
-
-        ids = raw.get("ids", [])
-        metas = raw.get("metadatas", [])
-        items: list[dict] = []
-        for i, m in enumerate(metas):
-            d = dict(m) if m else {}
-            if i < len(ids):
-                d["id"] = ids[i]
-            items.append(d)
-
-        total = len(items)
-        items.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
-        page = items[offset:offset + limit]
-        return page, total
-
-
-# ──────────────────────────────────────────────
 #  Module-level singletons
 # ──────────────────────────────────────────────
 
 app = AppDB()
-vector = VectorDB()
 
 
 async def init():
     """Async initialisation (call once at startup)."""
     await app.init()
-    await vector.init()
 
 
 def default_conversation_title() -> str:

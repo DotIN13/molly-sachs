@@ -31,6 +31,9 @@ _DEFAULTS: dict[str, str] = {
     "debug": "false",
     "timezone": "",
     "speak_text": "true",
+    # Base URL of this user's hypogum instance (memory brain). Empty → fall
+    # back to config.hypogum_base_url() (env HYPOGUM_BASE_URL or localhost).
+    "hypogum_base_url": "",
 }
 
 DEFAULT_TTL = 5.0

@@ -18,7 +18,6 @@ else:
     )
 
 SQLITE_PATH = os.path.join(DATA_DIR, "app.db")
-CHROMA_PATH = os.path.join(DATA_DIR, "chroma.db")
 OBSERVATIONS_DIR = os.path.join(DATA_DIR, "observations")
 
 
@@ -49,6 +48,18 @@ def cors_origins() -> list:
 
 def fernet_key() -> str:
     return os.environ.get("FERNET_KEY", "").strip()
+
+
+_DEFAULT_HYPOGUM_URL = "http://127.0.0.1:8056"
+
+
+def hypogum_base_url() -> str:
+    """Default base URL of the local hypogum instance (the memory brain).
+
+    Per-user overrides live in Settings (`hypogum_base_url`); this is the
+    fallback when a user hasn't configured one.
+    """
+    return os.environ.get("HYPOGUM_BASE_URL", "").strip() or _DEFAULT_HYPOGUM_URL
 
 
 def ice_servers() -> list:

@@ -1,16 +1,13 @@
 import os
 import sys
 import asyncio
-import base64
-import json
-import time
 import uuid
 import secrets
 import logging
 import datetime
 from datetime import timedelta, timezone
 from loguru import logger
-from fastapi import FastAPI, BackgroundTasks, HTTPException, Depends, Query, Request
+from fastapi import FastAPI, BackgroundTasks, HTTPException, Depends, Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, field_validator
 from fastapi.middleware.cors import CORSMiddleware
@@ -22,9 +19,7 @@ from pipecat.transports.smallwebrtc.request_handler import (
     SmallWebRTCPatchRequest
 )
 
-from bot import start_pipecat_session, SessionState, PipelineRestartRequested, _embed_query
-from processor import process_pending_observations
-from proactive import generate_proactive_tip
+from bot import start_pipecat_session, SessionState, PipelineRestartRequested
 import database
 import config
 from db.settings import Settings
@@ -109,6 +104,7 @@ class SettingsReq(BaseModel):
     observer_process_interval: int | None = None
     timezone: str | None = None
     speak_text: bool | None = None
+    hypogum_base_url: str | None = None
 
 class RegisterReq(BaseModel):
     email: str
@@ -310,6 +306,8 @@ async def save_settings(req: SettingsReq,
         data["timezone"] = req.timezone
     if req.speak_text is not None:
         data["speak_text"] = "true" if req.speak_text else "false"
+    if req.hypogum_base_url is not None:
+        data["hypogum_base_url"] = req.hypogum_base_url
 
     await Settings(current_user["id"]).save(data)
     return {"status": "ok"}
@@ -338,6 +336,7 @@ async def get_settings(current_user: dict = Depends(auth.get_current_user)):
         "debug": s.get("debug", "false").lower() == "true",
         "timezone": s.get("timezone", ""),
         "speak_text": s.get("speak_text", "true").lower() == "true",
+        "hypogum_base_url": s.get("hypogum_base_url", ""),
     }
 
 # ── Health ──────────────────────────────────
@@ -347,69 +346,12 @@ async def health_check():
     return {"status": "healthy"}
 
 # ── Observations ────────────────────────────
-
-@app.post("/api/observations", summary="Receive observer base64 capture and save entry + artefact")
-async def upload_observation(req: ObservationUploadReq,
-                             current_user: dict = Depends(auth.get_current_user)):
-    try:
-        data_str = req.image_base64
-        if "," in data_str:
-            data_str = data_str.split(",")[1]
-        image_bytes = base64.b64decode(data_str)
-
-        timestamp_str = req.timestamp or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-        date_str = timestamp_str[:10]
-        safe_ts = timestamp_str.replace(":", "-").replace("Z", "").replace("T", "_")
-        stem = f"{req.type}_{safe_ts}_{uuid.uuid4().hex[:6]}"
-
-        entries_dir = config.observation_entries_dir(date_str)
-        artefacts_dir = config.observation_artefacts_dir(date_str)
-        os.makedirs(entries_dir, exist_ok=True)
-        os.makedirs(artefacts_dir, exist_ok=True)
-
-        artefact_filename = f"{stem}.jpg"
-        artefact_path = os.path.join(artefacts_dir, artefact_filename)
-        with open(artefact_path, "wb") as f:
-            f.write(image_bytes)
-
-        windows = req.window_titles or []
-        prompt_text = ""
-        if req.type == "screen" and windows:
-            win_list = "\n  ".join(windows)
-            prompt_text = f"[Screenshot {date_str}] Open windows:\n  {win_list}"
-        elif req.type == "screen":
-            prompt_text = f"[Screenshot {date_str}]"
-        else:
-            prompt_text = f"[Camera {date_str}]"
-
-        entry = {
-            "type": req.type,
-            "observer": req.type,
-            "timestamp": timestamp_str,
-            "windows": windows,
-            "prompt_text": prompt_text,
-            "artefact_path": f"../artefacts/{artefact_filename}",
-        }
-        entry_filename = f"{stem}.json"
-        entry_path = os.path.join(entries_dir, entry_filename)
-        with open(entry_path, "w", encoding="utf-8") as f:
-            json.dump(entry, f, ensure_ascii=False, indent=2)
-
-        db_image_path = f"observations/{date_str}/artefacts/{artefact_filename}"
-        await database.app.save_observation(
-            req.type, db_image_path, timestamp_str, current_user["id"]
-        )
-
-        return {
-            "status": "ok",
-            "filename": artefact_filename,
-            "db_path": db_image_path,
-            "entry_path": f"observations/{date_str}/entries/{entry_filename}",
-        }
-    except Exception as e:
-        logger.error(f"Failed to upload observation: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
+# NOTE (Phase 2): Molly no longer captures or processes observations — hypogum
+# owns all capture/ingest/planning. The upload sink (POST /api/observations)
+# and the processor trigger have been removed. The frontend reads observations
+# and insights directly from the user's hypogum instance. The GET endpoints
+# below remain only to serve any pre-migration local data and are otherwise
+# dead; they are removed in the Phase 3 tab cleanup.
 
 @app.get("/api/observations", summary="Retrieve past observations list")
 async def get_observations(type: str | None = None, limit: int = 15, offset: int = 0,
@@ -456,224 +398,10 @@ async def get_insights(limit: int = 15, offset: int = 0,
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/memories", summary="List or search vector memories")
-async def get_memories(q: str | None = None,
-                       type: str | None = None,
-                       limit: int = 50,
-                       offset: int = 0,
-                       current_user: dict = Depends(auth.get_current_user)):
-    try:
-        if q:
-            settings = await Settings(current_user["id"]).load()
-            api_key = settings.get("gemini_api_key", "")
-            if not api_key:
-                raise HTTPException(status_code=400, detail="Gemini API key not configured")
-            embedding = await _embed_query(q, api_key)
-            results = await database.vector.search(
-                embedding, limit=20, user_id=current_user["id"],
-                item_type=type or None)
-            return {"items": results, "total": len(results)}
-        page, total = await database.vector.get_all(
-            current_user["id"], item_type=type, limit=limit, offset=offset)
-        return {"items": page, "total": total}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to retrieve memories: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-class MemoryAddReq(BaseModel):
-    fact: str
-    category: str
-    confidence: int = 5
-    lifespan: int = 5
-
-
-@app.post("/api/memories", summary="Manually add a memory entry")
-async def add_memory_entry(req: MemoryAddReq,
-                            current_user: dict = Depends(auth.get_current_user)):
-    try:
-        valid_categories = [
-            "trait", "preference", "interest", "skill", "goal",
-            "relationship", "ownership", "weakness", "event", "other",
-        ]
-        if req.category not in valid_categories:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid category '{req.category}'. Must be: {', '.join(valid_categories)}"
-            )
-
-        settings = await Settings(current_user["id"]).load()
-        api_key = settings.get("gemini_api_key", "")
-        if not api_key:
-            raise HTTPException(status_code=400, detail="Gemini API key not configured")
-
-        confidence = max(1, min(10, int(req.confidence)))
-        lifespan = max(1, min(10, int(req.lifespan)))
-        ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-
-        content = f"{req.category}: {req.fact}"
-        embedding = await _embed_query(content, api_key)
-
-        new_evidence = json.dumps(
-            [{"text": "manually added by user", "timestamp": ts}],
-            ensure_ascii=False,
-        )
-
-        merge_threshold = float(os.environ.get("MOLLY_MERGE_THRESHOLD", "0.85"))
-        max_evidence = 10
-
-        if req.category == "event":
-            existing = None
-        else:
-            existing, _, _ = await database.vector.find_similar(
-                embedding, req.category, current_user["id"], merge_threshold
-            )
-
-        if existing:
-            existing_evidence = existing.get("evidence", "")
-            try:
-                evidence_list = json.loads(existing_evidence) if isinstance(existing_evidence, str) else []
-                if not isinstance(evidence_list, list):
-                    evidence_list = [{"text": str(existing_evidence), "timestamp": ""}]
-            except (json.JSONDecodeError, TypeError):
-                evidence_list = [{"text": str(existing_evidence), "timestamp": ""}]
-
-            new_entries = json.loads(new_evidence)
-            evidence_list = evidence_list + new_entries
-            if len(evidence_list) > max_evidence:
-                evidence_list = evidence_list[-max_evidence:]
-
-            merged = {
-                "type": req.category,
-                "content": content,
-                "timestamp": existing.get("timestamp", ts),
-                "user_id": current_user["id"],
-                "user_event_id": existing.get("user_event_id", "0"),
-                "confidence": max(confidence, existing.get("confidence", 0)),
-                "evidence": json.dumps(evidence_list, ensure_ascii=False),
-                "lifespan": max(lifespan, existing.get("lifespan", 0)),
-            }
-            await database.vector.update_metadata(existing["id"], merged)
-            logger.info("Memory merged [{}]: {}", req.category, req.fact[:80])
-            return {"status": "ok", "merged": True, "id": existing["id"]}
-        else:
-            mem_id = f"mem_{uuid.uuid4().hex[:12]}"
-            await database.vector.add([{
-                "id": mem_id,
-                "vector": embedding,
-                "metadata": {
-                    "type": req.category,
-                    "content": content,
-                    "timestamp": ts,
-                    "user_id": current_user["id"],
-                    "user_event_id": "0",
-                    "confidence": confidence,
-                    "evidence": new_evidence,
-                    "lifespan": lifespan,
-                },
-            }])
-            logger.info("Memory added [{}]: {}", req.category, req.fact[:80])
-            return {"status": "ok", "merged": False, "id": mem_id}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to add memory: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.delete("/api/memories/{memory_id}", summary="Delete a memory entry")
-async def delete_memory(memory_id: str,
-                         current_user: dict = Depends(auth.get_current_user)):
-    try:
-        deleted = await database.vector.delete_memory(memory_id, current_user["id"])
-        if not deleted:
-            raise HTTPException(status_code=404, detail="Memory not found")
-        return {"status": "ok"}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to delete memory: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/api/processor/trigger", summary="Trigger Gemini processor to run immediately")
-async def trigger_processor(
-    current_user: dict = Depends(auth.get_current_user)
-):
-    try:
-        prefs = await Settings(current_user["id"]).load()
-        result = await process_pending_observations(current_user["id"], prefs)
-        if result:
-            event_id = await database.app.save_event(
-                current_user["id"],
-                result["timestamp"],
-                result["summary"],
-                result["raw_transcripts"],
-                result["analysis_data"],
-            )
-
-            items = result.get("items", [])
-            if items:
-                for item in items:
-                    item["metadata"]["user_event_id"] = str(event_id)
-                await database.vector.add(items)
-                logger.info("Indexed {} analysis items into vector DB", len(items))
-
-            try:
-                analysis = json.loads(result.get("analysis_data", "{}"))
-                current_events = analysis.get("events", [])
-                current_summary = analysis.get("summary", "")
-                tip_data = await generate_proactive_tip(
-                    current_user["id"], prefs,
-                    current_events=current_events,
-                    current_timestamp=result.get("timestamp"),
-                    current_summary=current_summary,
-                    latest_observation=result.get("latest_screen_observation"),
-                    latest_screen_image_path=result.get("latest_screen_image_path"),
-                )
-                if tip_data:
-                    await database.app.update_event_proactive_tip(
-                        event_id, json.dumps(tip_data, ensure_ascii=False)
-                    )
-                    logger.info("Stored proactive tip for event {}", event_id)
-            except Exception as e:
-                logger.error("Failed to generate proactive tip: {}", e)
-
-            logger.info("Saved event: {}", result["summary"][:100] + "...")
-            return {"status": "ok", "summary": result["summary"][:100] + "..."}
-        return {"status": "ok", "summary": "no new observations to process"}
-    except Exception as e:
-        logger.error(f"Failed to trigger processor: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-# ── Proactive Tips ─────────────────────────
-
-@app.get("/api/proactive/tips", summary="List all proactive tips with pagination")
-async def get_tips(limit: int = 50, offset: int = 0,
-                   current_user: dict = Depends(auth.get_current_user)):
-    try:
-        items, total = await database.app.get_proactive_tips(
-            current_user["id"], limit, offset
-        )
-        return {"items": items, "total": total}
-    except Exception as e:
-        logger.error(f"Failed to retrieve proactive tips: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/api/proactive/tip", summary="Generate a proactive tip matching goals to recent events")
-async def generate_tip(current_user: dict = Depends(auth.get_current_user)):
-    try:
-        prefs = await Settings(current_user["id"]).load()
-        tip_data = await generate_proactive_tip(current_user["id"], prefs)
-        if tip_data:
-            return {"status": "ok", "tip": tip_data}
-        return {"status": "ok", "tip": None, "message": "No goals found to generate tip from."}
-    except Exception as e:
-        logger.error(f"Failed to generate proactive tip: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+# NOTE (Phase 3): Molly's memory + proactive-tip endpoints have been removed.
+# Memory (list/search/add/delete) and tips now live in hypogum; the frontend
+# talks to the user's hypogum instance directly (see frontend/src/hypogum.ts).
+# The processor trigger + observation upload were removed in Phase 2.
 
 # ── Conversations ───────────────────────────
 

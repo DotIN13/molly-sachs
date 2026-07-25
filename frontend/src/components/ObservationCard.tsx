@@ -1,40 +1,38 @@
 import { Clock } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import { API_URL } from '../config'
 
 interface ObservationCardProps {
-  id: number
-  imagePath: string
+  id: string | number
+  imageUrl: string
   timestamp: string
   processed: boolean
   sourceLabel: string
   altText: string
-  accessToken: string | null
   lastRefresh: number
 }
 
 export default function ObservationCard({
   id,
-  imagePath,
+  imageUrl,
   timestamp,
   processed,
   sourceLabel,
   altText,
-  accessToken,
   lastRefresh,
 }: ObservationCardProps) {
   const { t } = useTranslation()
+  const shortId = typeof id === 'string' ? id.split('/').pop() : id
   return (
     <div className="border border-slate-100 rounded-2xl overflow-hidden shadow-sm bg-white hover:shadow-md transition-all hover:scale-[1.01] duration-300 group">
       <div className="relative aspect-video w-full bg-slate-950 overflow-hidden">
         <img
-          src={`${API_URL}/api/observations/file?path=${encodeURIComponent(imagePath)}&token=${encodeURIComponent(accessToken ?? '')}&t=${lastRefresh}`}
+          src={`${imageUrl}&t=${lastRefresh}`}
           alt={altText}
           loading="lazy"
           className="w-full h-full object-cover transition-transform group-hover:scale-105 duration-500"
         />
         <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-3">
-          <span className="text-[10px] font-mono text-white/90">ID: #{id}</span>
+          <span className="text-[10px] font-mono text-white/90 truncate">{shortId}</span>
         </div>
       </div>
       <div className="p-4 bg-white">

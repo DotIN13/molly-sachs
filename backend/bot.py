@@ -1,8 +1,5 @@
 import asyncio
-import json
-import os
 import time
-import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -32,6 +29,7 @@ from pipecat.turns.user_turn_strategies import UserTurnStrategies
 from pipecat.turns.user_start.vad_user_turn_start_strategy import VADUserTurnStartStrategy
 from pipecat.frames.frames import (
     TextFrame,
+    TTSSpeakFrame,
     AudioRawFrame,
     Frame,
     TranscriptionFrame,
@@ -46,20 +44,28 @@ from pipecat.frames.frames import (
     BotStoppedSpeakingFrame
 )
 
-from google import genai
 import database
-from db.settings import Settings
+import hypogum_client
 
-SYSTEM_PROMPT = (
+# Base persona + style — always active (Molly works as a plain chat client).
+SYSTEM_PROMPT_BASE = (
     '你是Molly，和用户是好朋友，用微信聊天的语气回复。'
     '不要用markdown格式，除非用户明确要求或者确实需要markdown来解释代码、表格、数学证明等，否则不要用bullet points或者列表。'
     '回复要简短自然，像好朋友间发微信一样。适当使用口语化表达，不要频繁使用emoji。不要总是追问用户细节，不要过度延伸。'
+)
+
+# Memory/autonomy addendum — only added when a hypogum backend is configured
+# (i.e. the search_memory / add_memory / run_task tools are available).
+SYSTEM_PROMPT_MEMORY = (
     '你可以使用search_memory工具查找用户过去的活动和记忆。聊到过去的事情、回忆、习惯或需要context时，可以先调用search_memory查询后再回复。'
     '你可以使用add_memory工具来记住用户透露的关于自己的任何信息。每当用户说了关于自己的新事实，可以使用add_memory来记录。'
     '比如用户说"我最近在学Python"→ category="skill"；用户说"我喜欢用VSCode"→ category="preference"；'
     '用户说"我对机器学习很感兴趣"→ category="interest"；用户说"我想学炒股"、"我想减肥"、"我打算考驾照"→ category="goal"；'
     '用户说"我是社恐"→ category="trait"；用户说"我在腾讯工作"→ category="relationship"；'
     '用户说"我有一个GitHub项目叫xxx"→ category="ownership"；用户说"我总是拖延"→ category="weakness"。'
+    '当用户让你帮他做一件需要动手的准备工作时（比如"帮我起草那封邮件"、"帮我查一下xxx"、'
+    '"帮我整理一下资料"、"帮我准备xxx"），使用run_task工具把任务交给后台agent去做。'
+    'run_task会立刻返回，你先告诉用户已经开始处理；等任务完成后你会自动收到结果并念给用户听。'
 )
 
 # Settings that require tearing down and rebuilding the pipeline
@@ -67,6 +73,9 @@ _RESTART_KEYS = {
     "gemini_api_key", "cartesia_api_key", "soniox_api_key",
     "stt_provider", "stt_language",
     "tts_provider", "tts_voice", "tts_volume", "tts_speed", "tts_emotion", "tts_language",
+    # Toggling the hypogum backend adds/removes the memory + run tools and
+    # swaps the system prompt, so the pipeline must rebuild.
+    "hypogum_base_url",
 }
 
 
@@ -96,7 +105,8 @@ class PipelineRestartRequested(Exception):
         self.changes = changes
 
 
-def _build_messages(past_messages: list, timezone: str | None = None) -> list:
+def _build_messages(past_messages: list, timezone: str | None = None,
+                    memory_enabled: bool = True) -> list:
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S %A")
     if timezone:
         try:
@@ -104,7 +114,8 @@ def _build_messages(past_messages: list, timezone: str | None = None) -> list:
             now_str = datetime.now(tz).strftime("%Y-%m-%d %H:%M:%S %A")
         except Exception:
             pass
-    system_with_time = f"{SYSTEM_PROMPT}现在用户那边的设备时间是{now_str}，回复的时候注意事情时间关系。"
+    prompt = SYSTEM_PROMPT_BASE + (SYSTEM_PROMPT_MEMORY if memory_enabled else "")
+    system_with_time = f"{prompt}现在用户那边的设备时间是{now_str}，回复的时候注意事情时间关系。"
     result = [{"role": "system", "content": system_with_time}]
     for msg in past_messages:
         role = "assistant" if msg["role"] == "tip" else msg["role"]
@@ -112,21 +123,10 @@ def _build_messages(past_messages: list, timezone: str | None = None) -> list:
     return result
 
 
-async def _embed_query(query: str, api_key: str) -> list:
-    client = genai.Client(api_key=api_key) if api_key else genai.Client()
-    embed_result = await asyncio.wait_for(
-        client.aio.models.embed_content(
-            model='gemini-embedding-2',
-            contents=query,
-        ), timeout=30
-    )
-    return embed_result.embeddings[0].values
-
-
-def make_search_memory(user_id: str, api_key: str, send_fn=None):
-    """Factory returning a search_memory callable that captures user_id + api_key
-    (and optional send_fn for tool-activity notifications) in its closure,
-    avoiding race conditions between concurrent sessions."""
+def make_search_memory(user_id: str, hypogum_url: str | None, send_fn=None):
+    """Factory returning a search_memory callable that queries the user's
+    hypogum instance (the memory brain) via semantic search. Captures the
+    per-user hypogum base URL (and optional send_fn) in its closure."""
 
     async def search_memory(params: FunctionCallParams, query: str):
         """Search the user's long-term memory for relevant information.
@@ -146,38 +146,21 @@ def make_search_memory(user_id: str, api_key: str, send_fn=None):
         try:
             if send_fn:
                 await send_fn({"type": "thinking", "action": "searching_memory", "detail": query[:80]})
-            logger.info("Embedding query: {}", query)
-            query_embedding = await _embed_query(query, api_key)
+            results = await hypogum_client.search_memory(query, limit=8, base_url=hypogum_url)
 
-            event_results, persona_results = await asyncio.gather(
-                database.vector.search(query_embedding, 3, user_id=user_id, item_type="event"),
-                database.vector.search(query_embedding, 5, user_id=user_id, exclude_type="event"),
-            )
-
-            all_results = event_results + persona_results
-            seen = set()
-            unique = []
-            for r in all_results:
-                rid = r.get("id", "")
-                if rid and rid not in seen:
-                    seen.add(rid)
-                    unique.append(r)
-
-            unique.sort(key=lambda r: 0 if r.get("type") == "event" else 1)
-
-            search_lines = [f"search-memory \"{query[:100]}\" → {len(unique)} results"]
-            for r in unique:
-                search_lines.append(
-                    f"  [{r.get('type','?')}] \"{r.get('content','')[:70]}\""
-                )
+            search_lines = [f"search-memory \"{query[:100]}\" → {len(results)} results"]
+            for r in results:
+                label = r.get("category") or r.get("type") or "?"
+                search_lines.append(f"  [{label}] \"{(r.get('title') or r.get('snippet',''))[:70]}\"")
             logger.info("\n".join(search_lines))
 
             context_str = "\n".join(
-                [f"[{r.get('type', 'summary')} | {r.get('timestamp', '')}] {r.get('content', r.get('summary', ''))}"
-                 for r in unique]
-            )
-            if not context_str.strip():
-                context_str = "No recent context available yet."
+                f"[{r.get('category') or r.get('type') or 'memory'}] "
+                f"{(r.get('title') or '').strip()}: {(r.get('snippet') or '').strip()}"
+                for r in results
+            ).strip()
+            if not context_str:
+                context_str = "No relevant memories found yet."
 
             await params.result_callback(context_str)
         except Exception as e:
@@ -193,12 +176,12 @@ _VALID_MEMORY_CATEGORIES = [
     "trait", "preference", "interest", "skill", "goal",
     "relationship", "ownership", "weakness", "event", "other",
 ]
-_MERGE_THRESHOLD = float(os.environ.get("MOLLY_MERGE_THRESHOLD", "0.85"))
-_MAX_EVIDENCE_ENTRIES = 10
 
 
-def make_add_memory(user_id: str, api_key: str, send_fn=None):
-    """Factory returning an add_memory callable that embeds and stores facts about the user."""
+def make_add_memory(user_id: str, hypogum_url: str | None, send_fn=None):
+    """Factory returning an add_memory callable that writes facts about the user
+    to their hypogum instance (the memory brain). Deduplication and evidence
+    merging are handled by hypogum; Molly just forwards the fact."""
 
     async def add_memory(params: FunctionCallParams, fact: str, category: str,
                          confidence: int = 5, lifespan: int = 5):
@@ -234,82 +217,18 @@ def make_add_memory(user_id: str, api_key: str, send_fn=None):
 
             confidence = max(1, min(10, int(confidence)))
             lifespan = max(1, min(10, int(lifespan)))
-            ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
-            embedding = await _embed_query(f"{category}: {fact}", api_key)
-
-            new_evidence = json.dumps(
-                [{"text": "inferred from conversation", "timestamp": ts}],
-                ensure_ascii=False,
+            result = await hypogum_client.add_memory(
+                fact, category,
+                evidence="inferred from conversation",
+                confidence=confidence, lifespan=lifespan,
+                base_url=hypogum_url,
             )
-
-            if category == "event":
-                existing = None
-                sim = 0.0
-                candidates = []
-            else:
-                existing, sim, candidates = await database.vector.find_similar(
-                    embedding, category, user_id, _MERGE_THRESHOLD
-                )
-
-            target = f"{category}: {fact}"
-            lines = [f"[{category}] \"{target[:80]}\""]
-            if candidates:
-                lines.append(f"  threshold={_MERGE_THRESHOLD}")
-                for c, s in candidates:
-                    mark = "  ✓" if (existing and c.get("id") == existing.get("id")) else "   "
-                    lines.append(f"  {s:.2f}{mark} \"{c.get('content','')[:70]}\"")
-            if existing:
-                lines.append(f"  → merged into \"{existing.get('content','')[:70]}\"")
-            else:
-                lines.append(f"  → no match (best={sim:.2f})")
-            logger.info("\n".join(lines))
-
-            if existing:
-                existing_evidence = existing.get("evidence", "")
-                try:
-                    evidence_list = json.loads(existing_evidence) if isinstance(existing_evidence, str) else []
-                    if not isinstance(evidence_list, list):
-                        evidence_list = [{"text": str(existing_evidence), "timestamp": ""}]
-                except (json.JSONDecodeError, TypeError):
-                    evidence_list = [{"text": str(existing_evidence), "timestamp": ""}]
-
-                new_entries = json.loads(new_evidence)
-                evidence_list = evidence_list + new_entries
-                if len(evidence_list) > _MAX_EVIDENCE_ENTRIES:
-                    evidence_list = evidence_list[-_MAX_EVIDENCE_ENTRIES:]
-
-                merged = {
-                    "type": category,
-                    "content": f"{category}: {fact}",
-                    "timestamp": existing.get("timestamp", ts),
-                    "user_id": user_id,
-                    "user_event_id": existing.get("user_event_id", "0"),
-                    "confidence": max(confidence, existing.get("confidence", 0)),
-                    "evidence": json.dumps(evidence_list, ensure_ascii=False),
-                    "lifespan": max(lifespan, existing.get("lifespan", 0)),
-                }
-                await database.vector.update_metadata(existing["id"], merged)
-                logger.info("Memory merged [{} c:{} sim:{:.2f}]: {}", category, confidence, sim, fact[:100])
-                await params.result_callback(f"Merged with existing [{category}]: {fact}")
-            else:
-                mem_id = f"mem_{uuid.uuid4().hex[:12]}"
-                await database.vector.add([{
-                    "id": mem_id,
-                    "vector": embedding,
-                    "metadata": {
-                        "type": category,
-                        "content": f"{category}: {fact}",
-                        "timestamp": ts,
-                        "user_id": user_id,
-                        "user_event_id": "0",
-                        "confidence": confidence,
-                        "evidence": new_evidence,
-                        "lifespan": lifespan,
-                    },
-                }])
-                logger.info("Memory added [{} c:{}]: {}", category, confidence, fact[:100])
-                await params.result_callback(f"Remembered: [{category}] {fact}")
+            created = result.get("created", True)
+            logger.info("Memory {} [{}]: {} [{}]",
+                        "added" if created else "updated", category, fact[:100],
+                        result.get("path", ""))
+            await params.result_callback(f"Remembered: [{category}] {fact}")
         except Exception as e:
             logger.error("Error adding memory: {}", e)
             await params.result_callback(f"Failed to store memory: {str(e)}")
@@ -318,6 +237,106 @@ def make_add_memory(user_id: str, api_key: str, send_fn=None):
                 await send_fn({"type": "thinking_done"})
 
     return add_memory
+
+
+_RUN_TERMINAL = {"done", "error", "timeout", "aborted"}
+
+
+def make_run_task(hypogum_url: str | None, *, session, task_holder: dict, send_fn=None):
+    """Factory for the `run_task` tool — voice-driven autonomy.
+
+    Enqueues a freeform run on the user's hypogum agent, returns immediately,
+    then narrates the outcome by voice + UI when the run completes.
+
+    `task_holder` is a mutable dict whose "task" key is set to the PipelineTask
+    after the pipeline is built (so narration can speak via TTS). `session`
+    supplies the current conversation/user at completion time.
+    """
+
+    async def _poll_and_narrate(run_id: str, task_desc: str):
+        status = "queued"
+        deadline = time.time() + 1900  # ~31 min ceiling
+        try:
+            while time.time() < deadline:
+                await asyncio.sleep(5)
+                run = await hypogum_client.get_run(run_id, base_url=hypogum_url)
+                if not run:
+                    continue
+                status = run.get("status", "queued")
+                if status in _RUN_TERMINAL:
+                    break
+            else:
+                run = None
+
+            if status == "done":
+                summary = (run or {}).get("summary")
+                if summary:
+                    line = f"「{task_desc}」完成啦。{summary}"
+                else:
+                    try:
+                        arts = await hypogum_client.list_artifacts(limit=5, base_url=hypogum_url)
+                    except Exception:
+                        arts = []
+                    if arts:
+                        titles = "、".join(a.get("title") or a.get("id", "") for a in arts[:3])
+                        line = f"「{task_desc}」搞定了，产出了{len(arts)}个结果：{titles}。要看看吗？"
+                    else:
+                        line = f"「{task_desc}」完成啦，要我说说结果吗？"
+            else:
+                line = f"「{task_desc}」这次没能完成（{status}），要不要我再试一次？"
+
+            conv_id = session.conversation_id
+            user_id = session.user_id
+            try:
+                await database.app.add_message(conv_id, "assistant", line, user_id)
+            except Exception as e:
+                logger.warning("run narrate persist failed: {}", e)
+            if send_fn:
+                await send_fn({"type": "run_done", "run_id": run_id,
+                               "status": status, "text": line})
+            task = task_holder.get("task")
+            if task is not None:
+                try:
+                    await task.queue_frames([TTSSpeakFrame(line)])
+                except Exception as e:
+                    logger.warning("run narrate speak failed: {}", e)
+            logger.info("run {} narrated ({}): {}", run_id, status, task_desc[:60])
+        except Exception as e:
+            logger.error("run narrate failed for {}: {}", run_id, e)
+
+    async def run_task(params: FunctionCallParams, task_description: str):
+        """Delegate a preparatory task to the user's hypogum agent, which runs it
+        in the background and produces artifacts (drafts, research, files, etc.).
+
+        Use this when the user asks you to *do* something that takes real work —
+        draft an email, research a topic, gather/organize material, prepare a
+        document. It returns immediately; the result is narrated when ready.
+
+        Args:
+            task_description: A clear, self-contained instruction for the agent.
+        """
+        try:
+            if send_fn:
+                await send_fn({"type": "thinking", "action": "starting_task",
+                               "detail": task_description[:80]})
+            run = await hypogum_client.submit_run(task_description, base_url=hypogum_url)
+            run_id = run.get("id")
+            if not run_id:
+                await params.result_callback("Failed to start the task (no run id).")
+                return
+            asyncio.create_task(_poll_and_narrate(run_id, task_description))
+            logger.info("run_task queued {}: {}", run_id, task_description[:80])
+            await params.result_callback(
+                f"好的，我已经让后台开始处理「{task_description}」了，完成后我告诉你。"
+            )
+        except Exception as e:
+            logger.error("run_task failed: {}", e)
+            await params.result_callback(f"启动任务失败：{str(e)}")
+        finally:
+            if send_fn:
+                await send_fn({"type": "thinking_done"})
+
+    return run_task
 
 
 class MicFilterProcessor(FrameProcessor):
@@ -475,21 +494,24 @@ async def start_pipecat_session(
                     session.prefs["speak_text"] = "true" if changes["speak_text"] else "false"
 
         gemini_key = prefs.get("gemini_api_key", "")
+        hypogum_url = prefs.get("hypogum_base_url") or None
         llm = GoogleLLMService(
             api_key=gemini_key,
             settings=GoogleLLMService.Settings(model="gemini-3.1-flash-lite")
         )
-        memory_tool = make_search_memory(
-            user_id, gemini_key,
-            send_fn=lambda msg: transport._client.send_message(
-                OutputTransportMessageFrame(message=msg)
-            )
-        )
-        add_memory_tool = make_add_memory(user_id, gemini_key,
-            send_fn=lambda msg: transport._client.send_message(
-                OutputTransportMessageFrame(message=msg)
-            )
-        )
+        # Memory + autonomy tools activate only when a hypogum backend is set.
+        # Without one, Molly is a plain chat client (no tools, base prompt).
+        memory_enabled = bool(hypogum_url)
+        task_holder: dict = {}  # lets the run_task narrator reach the PipelineTask
+        tools = []
+        if memory_enabled:
+            _send = lambda msg: transport._client.send_message(
+                OutputTransportMessageFrame(message=msg))
+            tools = [
+                make_search_memory(user_id, hypogum_url, send_fn=_send),
+                make_add_memory(user_id, hypogum_url, send_fn=_send),
+                make_run_task(hypogum_url, session=session, task_holder=task_holder, send_fn=_send),
+            ]
         stt_provider = prefs.get("stt_provider", "soniox")
         stt_language = prefs.get("stt_language", "zh")
         if stt_provider == "cartesia":
@@ -531,9 +553,9 @@ async def start_pipecat_session(
             )
 
         past_messages = await database.app.get_messages(conv_id, user_id)
-        formatted_messages = _build_messages(past_messages, prefs.get("timezone"))
+        formatted_messages = _build_messages(past_messages, prefs.get("timezone"), memory_enabled)
 
-        context = LLMContext(messages=formatted_messages, tools=[memory_tool, add_memory_tool])
+        context = LLMContext(messages=formatted_messages, tools=tools)
         vad_params = VADParams(
             start_secs=0.2, stop_secs=0.8, confidence=0.75, min_volume=0.1,
         )
@@ -576,6 +598,8 @@ async def start_pipecat_session(
                 enable_usage_metrics=True,
             )
         )
+        # Let the run_task narrator speak completion updates through this task.
+        task_holder["task"] = task
 
         @transport.event_handler("on_client_connected")
         async def on_client_connected(transport, client):
@@ -612,7 +636,7 @@ async def start_pipecat_session(
                     user_broadcaster.set_conversation_id(new_id)
                     assistant_broadcaster.set_conversation_id(new_id)
                     msgs = await database.app.get_messages(new_id, user_id)
-                    formatted = _build_messages(msgs, session.prefs.get("timezone"))
+                    formatted = _build_messages(msgs, session.prefs.get("timezone"), memory_enabled)
                     await task.queue_frames([
                         InterruptionFrame(),
                         LLMMessagesUpdateFrame(messages=formatted, run_llm=False),
@@ -636,7 +660,7 @@ async def start_pipecat_session(
                 if "timezone" in changes:
                     session.prefs["timezone"] = str(changes["timezone"])
                     msgs = await database.app.get_messages(conv_id, user_id)
-                    formatted = _build_messages(msgs, session.prefs.get("timezone"))
+                    formatted = _build_messages(msgs, session.prefs.get("timezone"), memory_enabled)
                     await task.queue_frames([
                         LLMMessagesUpdateFrame(messages=formatted, run_llm=False),
                     ])
