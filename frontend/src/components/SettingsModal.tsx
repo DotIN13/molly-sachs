@@ -38,6 +38,15 @@ const TTS_LANGUAGES = [
   { code: 'pt', key: 'languages.pt' }, { code: 'it', key: 'languages.it' },
 ]
 
+// v3.5 is Beijing-only and carries no system voices — the voice must be a
+// cloned or designed id. v3 keeps system voices such as longanyang.
+const COSYVOICE_MODELS = [
+  'cosyvoice-v3.5-flash', 'cosyvoice-v3.5-plus',
+  'cosyvoice-v3-flash', 'cosyvoice-v3-plus', 'cosyvoice-v2',
+]
+const COSYVOICE_BEIJING_WS = 'wss://dashscope.aliyuncs.com/api-ws/v1/inference'
+const needsClonedVoice = (m: string) => m.startsWith('cosyvoice-v3.5')
+
 const EMOTIONS = ['calm', 'happy', 'excited', 'enthusiastic', 'curious', 'content', 'peaceful', 'serene', 'grateful', 'affectionate', 'flirtatious', 'sarcastic', 'sad', 'wistful', 'apologetic', 'confident', 'neutral']
 
 export interface SettingsData {
@@ -62,6 +71,12 @@ export interface SettingsData {
   sttLanguage: string
   sttProvider: string
   ttsLanguage: string
+  ttsProvider: string
+  dashscopeKey: string
+  dashscopeKeyConfigured: boolean
+  cosyvoiceModel: string
+  cosyvoiceVoice: string
+  cosyvoiceBaseUrl: string
   observerScreenActive: boolean
   observerCameraActive: boolean
   observerScreenInterval: number
@@ -277,6 +292,64 @@ export default function SettingsModal({ isOpen, onClose, onSave, settings, onCha
                   <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{t('settings.ttsSection')}</span>
                 </div>
                 <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-medium text-slate-700">{t('settings.ttsProvider')}</label>
+                  <select
+                    value={settings.ttsProvider}
+                    onChange={e => onChange('ttsProvider', e.target.value)}
+                    className="bg-[#f9f9f9] border border-slate-200 text-sm focus-visible:ring-slate-300 rounded-md h-9 px-3 outline-none"
+                  >
+                    <option value="cartesia">{t('settings.ttsCartesia')}</option>
+                    <option value="cosyvoice">{t('settings.ttsCosyvoice')}</option>
+                  </select>
+                </div>
+                {settings.ttsProvider === 'cosyvoice' && (
+                  <>
+                    <div className="flex flex-col gap-1.5">
+                      <label className="text-xs font-medium text-slate-700">{t('settings.cosyvoiceModel')}</label>
+                      <select
+                        value={COSYVOICE_MODELS.includes(settings.cosyvoiceModel) ? settings.cosyvoiceModel : '__custom__'}
+                        onChange={e => onChange('cosyvoiceModel', e.target.value === '__custom__' ? '' : e.target.value)}
+                        className="bg-[#f9f9f9] border border-slate-200 text-sm focus-visible:ring-slate-300 rounded-md h-9 px-3 outline-none"
+                      >
+                        {COSYVOICE_MODELS.map(m => <option key={m} value={m}>{m}</option>)}
+                        <option value="__custom__">{t('settings.customModelId')}</option>
+                      </select>
+                      {!COSYVOICE_MODELS.includes(settings.cosyvoiceModel) && (
+                        <Input value={settings.cosyvoiceModel} onChange={e => onChange('cosyvoiceModel', e.target.value)} className="bg-[#f9f9f9] border-slate-200 text-sm" placeholder="cosyvoice-..." />
+                      )}
+                    </div>
+                    <div className="flex flex-col gap-1.5">
+                      <label className="text-xs font-medium text-slate-700">{t('settings.cosyvoiceVoice')}</label>
+                      <Input
+                        value={settings.cosyvoiceVoice}
+                        onChange={e => onChange('cosyvoiceVoice', e.target.value)}
+                        className="bg-[#f9f9f9] border-slate-200 text-sm focus-visible:ring-slate-300"
+                        placeholder={needsClonedVoice(settings.cosyvoiceModel) ? 'cosyvoice-v3.5-xxxx-...' : 'longanyang'}
+                      />
+                      <span className="text-[10px] text-slate-400">
+                        {needsClonedVoice(settings.cosyvoiceModel)
+                          ? t('settings.cosyvoiceVoiceHintCloned')
+                          : t('settings.cosyvoiceVoiceHintSystem')}
+                      </span>
+                    </div>
+                    <div className="flex flex-col gap-1.5">
+                      <label className="text-xs font-medium text-slate-700">{t('settings.dashscopeApiKey')}</label>
+                      <div className="relative">
+                        <Input type="password" value={settings.dashscopeKey} onChange={e => onChange('dashscopeKey', e.target.value)} className="bg-[#f9f9f9] border-slate-200 text-sm focus-visible:ring-slate-300" placeholder="sk-..." />
+                        {settings.dashscopeKeyConfigured && (
+                          <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100 pointer-events-none">{t('settings.configured')}</span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex flex-col gap-1.5">
+                      <label className="text-xs font-medium text-slate-700">{t('settings.cosyvoiceBaseUrl')}</label>
+                      <Input value={settings.cosyvoiceBaseUrl} onChange={e => onChange('cosyvoiceBaseUrl', e.target.value)} className="bg-[#f9f9f9] border-slate-200 text-sm focus-visible:ring-slate-300" placeholder={COSYVOICE_BEIJING_WS} />
+                      <span className="text-[10px] text-slate-400">{t('settings.cosyvoiceBaseUrlHint')}</span>
+                    </div>
+                  </>
+                )}
+                {settings.ttsProvider === 'cartesia' && (
+                <div className="flex flex-col gap-1.5">
                   <label className="text-xs font-medium text-slate-700">{t('settings.voice')}</label>
                   <select
                     value={VOICE_PRESETS.some(v => v.id === settings.ttsVoice) ? settings.ttsVoice : '__custom__'}
@@ -309,6 +382,7 @@ export default function SettingsModal({ isOpen, onClose, onSave, settings, onCha
                     </div>
                   )}
                 </div>
+                )}
                 <div className="flex items-center gap-4">
                   <div className="flex-1 flex flex-col gap-1.5">
                     <label className="text-xs font-medium text-slate-700 flex justify-between">{t('settings.volume')} <span>{settings.ttsVolume}</span></label>
@@ -319,6 +393,7 @@ export default function SettingsModal({ isOpen, onClose, onSave, settings, onCha
                     <input type="range" min="0.6" max="1.5" step="0.1" value={settings.ttsSpeed} onChange={e => onChange('ttsSpeed', parseFloat(e.target.value))} className="w-full accent-slate-900" />
                   </div>
                 </div>
+                {settings.ttsProvider === 'cartesia' && (
                 <div className="flex flex-col gap-1.5">
                   <label className="text-xs font-medium text-slate-700">{t('settings.emotion')}</label>
                   <select value={settings.ttsEmotion} onChange={e => onChange('ttsEmotion', e.target.value)} className="bg-[#f9f9f9] border border-slate-200 text-sm focus-visible:ring-slate-300 rounded-md h-9 px-3 outline-none">
@@ -327,6 +402,8 @@ export default function SettingsModal({ isOpen, onClose, onSave, settings, onCha
                     ))}
                   </select>
                 </div>
+                )}
+                {settings.ttsProvider === 'cartesia' && (
                 <div className="flex flex-col gap-1.5">
                   <label className="text-xs font-medium text-slate-700">{t('settings.ttsLanguage')}</label>
                   <select value={settings.ttsLanguage} onChange={e => onChange('ttsLanguage', e.target.value)} className="bg-[#f9f9f9] border border-slate-200 text-sm focus-visible:ring-slate-300 rounded-md h-9 px-3 outline-none">
@@ -336,6 +413,7 @@ export default function SettingsModal({ isOpen, onClose, onSave, settings, onCha
                   </select>
                 </div>
 
+                )}
                 <div className="pt-4 pb-2 border-b border-slate-100">
                   <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{t('settings.sttSection')}</span>
                 </div>

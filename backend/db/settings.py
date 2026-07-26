@@ -12,6 +12,7 @@ import config
 SECRET_KEYS = {
     "gemini_api_key", "cartesia_api_key", "soniox_api_key",
     "openai_api_key", "anthropic_api_key", "deepseek_api_key",
+    "dashscope_api_key",
 }
 
 _DEFAULTS: dict[str, str] = {
@@ -32,6 +33,13 @@ _DEFAULTS: dict[str, str] = {
     "stt_provider": "soniox",
     "tts_language": "en",
     "tts_provider": "cartesia",
+    # CosyVoice (Aliyun Model Studio). The v3.5 models are Beijing-only and have
+    # no system voices, so cosyvoice_voice must be a cloned/designed voice id.
+    # A blank base URL uses the SDK default, which is the Beijing endpoint.
+    "dashscope_api_key": "",
+    "cosyvoice_model": "cosyvoice-v3.5-flash",
+    "cosyvoice_voice": "",
+    "cosyvoice_base_url": "",
     "observer_screen_active": "false",
     "observer_camera_active": "false",
     "observer_screen_interval": "60",

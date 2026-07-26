@@ -104,6 +104,11 @@ class SettingsReq(BaseModel):
     stt_language: str | None = None
     stt_provider: str | None = None
     tts_language: str | None = None
+    tts_provider: str | None = None
+    dashscope_api_key: str | None = None
+    cosyvoice_model: str | None = None
+    cosyvoice_voice: str | None = None
+    cosyvoice_base_url: str | None = None
     observer_screen_active: bool | None = None
     observer_camera_active: bool | None = None
     observer_screen_interval: int | None = None
@@ -309,6 +314,16 @@ async def save_settings(req: SettingsReq,
         data["stt_provider"] = req.stt_provider
     if req.tts_language is not None:
         data["tts_language"] = req.tts_language
+    if req.tts_provider is not None:
+        data["tts_provider"] = req.tts_provider
+    if req.dashscope_api_key is not None and req.dashscope_api_key != "":
+        data["dashscope_api_key"] = req.dashscope_api_key
+    if req.cosyvoice_model is not None:
+        data["cosyvoice_model"] = req.cosyvoice_model
+    if req.cosyvoice_voice is not None:
+        data["cosyvoice_voice"] = req.cosyvoice_voice
+    if req.cosyvoice_base_url is not None:
+        data["cosyvoice_base_url"] = req.cosyvoice_base_url
     if req.observer_screen_active is not None:
         data["observer_screen_active"] = "true" if req.observer_screen_active else "false"
     if req.observer_camera_active is not None:
@@ -349,6 +364,11 @@ async def get_settings(current_user: dict = Depends(auth.get_current_user)):
         "stt_language": s.get("stt_language"),
         "stt_provider": s.get("stt_provider"),
         "tts_language": s.get("tts_language"),
+        "tts_provider": s.get("tts_provider", "cartesia"),
+        "dashscope_key_configured": bool(s.get("dashscope_api_key", "")),
+        "cosyvoice_model": s.get("cosyvoice_model", ""),
+        "cosyvoice_voice": s.get("cosyvoice_voice", ""),
+        "cosyvoice_base_url": s.get("cosyvoice_base_url", ""),
         "observer_screen_active": s.get("observer_screen_active", "false").lower() == "true",
         "observer_camera_active": s.get("observer_camera_active", "false").lower() == "true",
         "observer_capture_interval": int(s.get("observer_capture_interval", "60")),

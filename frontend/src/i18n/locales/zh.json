@@ -256,7 +256,18 @@
     "language": "界面语言",
     "configured": "已配置",
     "backendUrl": "后端地址",
-    "backendUrlHint": "修改 API 服务器地址。应用将自动重新连接。"
+    "backendUrlHint": "修改 API 服务器地址。应用将自动重新连接。",
+    "ttsProvider": "语音合成提供商",
+    "ttsCartesia": "Cartesia",
+    "ttsCosyvoice": "CosyVoice(阿里云)",
+    "cosyvoiceModel": "CosyVoice 模型",
+    "customModelId": "自定义模型 ID…",
+    "cosyvoiceVoice": "音色",
+    "cosyvoiceVoiceHintCloned": "v3.5 没有系统音色——请填入声音复刻或声音设计生成的音色 ID。",
+    "cosyvoiceVoiceHintSystem": "系统音色名(如 longanyang),或复刻音色 ID。",
+    "dashscopeApiKey": "DashScope API 密钥",
+    "cosyvoiceBaseUrl": "WebSocket 接入点",
+    "cosyvoiceBaseUrlHint": "留空使用北京(默认)。v3.5 仅北京地域提供;其他地域需改用 v3 模型。"
   },
   "login": {
     "title": "Molly Sachs",

@@ -258,7 +258,18 @@
     "language": "Language",
     "configured": "Configured",
     "backendUrl": "Backend URL",
-    "backendUrlHint": "Change the API server address. The app will reconnect automatically."
+    "backendUrlHint": "Change the API server address. The app will reconnect automatically.",
+    "ttsProvider": "TTS provider",
+    "ttsCartesia": "Cartesia",
+    "ttsCosyvoice": "CosyVoice (Aliyun)",
+    "cosyvoiceModel": "CosyVoice model",
+    "customModelId": "Custom model id…",
+    "cosyvoiceVoice": "Voice",
+    "cosyvoiceVoiceHintCloned": "v3.5 has no system voices — paste a voice id from voice cloning or voice design.",
+    "cosyvoiceVoiceHintSystem": "A system voice name, e.g. longanyang, or a cloned voice id.",
+    "dashscopeApiKey": "DashScope API Key",
+    "cosyvoiceBaseUrl": "WebSocket endpoint",
+    "cosyvoiceBaseUrlHint": "Leave blank for Beijing (the default). v3.5 is Beijing-only; other regions need a v3 model."
   },
   "login": {
     "title": "Molly Sachs",

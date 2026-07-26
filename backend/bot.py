@@ -723,6 +723,21 @@ async def start_pipecat_session(
                     generation_config=generation_config
                 )
             )
+        elif tts_provider == "cosyvoice":
+            from cosyvoice_tts import DEFAULT_MODEL, CosyVoiceTTSService
+            # Cartesia takes speed as a multiplier and volume as a gain; CosyVoice
+            # uses the same 0.5–2.0 multiplier for rate but a 0–100 scale for
+            # volume, so the shared tts_volume setting is mapped onto it.
+            tts = CosyVoiceTTSService(
+                api_key=prefs.get("dashscope_api_key", ""),
+                model=prefs.get("cosyvoice_model") or DEFAULT_MODEL,
+                voice=prefs.get("cosyvoice_voice", ""),
+                speech_rate=float(prefs.get("tts_speed", "1.0")),
+                volume=max(0, min(100, round(float(prefs.get("tts_volume", "1.0")) * 50))),
+                base_url=prefs.get("cosyvoice_base_url") or None,
+            )
+        else:
+            raise ValueError(f"Unknown tts_provider: {tts_provider!r}")
 
         past_messages = await database.app.get_messages(conv_id, user_id)
         formatted_messages = _build_messages(past_messages, prefs.get("timezone"), memory_enabled)

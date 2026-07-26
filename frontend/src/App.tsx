@@ -59,6 +59,12 @@ export default function App() {
   // Whether the backend can still decrypt the stored API keys ("ok" |
   // "unreadable" | "no_cipher"); surfaced as a warning in Settings → API.
   const [secretsStatus, setSecretsStatus] = useState('ok')
+  const [ttsProvider, setTtsProvider] = useState('cartesia')
+  const [dashscopeKey, setDashscopeKey] = useState('')
+  const [dashscopeKeyConfigured, setDashscopeKeyConfigured] = useState(false)
+  const [cosyvoiceModel, setCosyvoiceModel] = useState('cosyvoice-v3.5-flash')
+  const [cosyvoiceVoice, setCosyvoiceVoice] = useState('')
+  const [cosyvoiceBaseUrl, setCosyvoiceBaseUrl] = useState('')
   const [openaiKey, setOpenaiKey] = useState('')
   const [anthropicKey, setAnthropicKey] = useState('')
   const [deepseekKey, setDeepseekKey] = useState('')
@@ -193,6 +199,12 @@ export default function App() {
         setSttLanguage(data.stt_language || 'en')
         setSttProvider(data.stt_provider || 'soniox')
         setTtsLanguage(data.tts_language || 'en')
+        setTtsProvider(data.tts_provider || 'cartesia')
+        setDashscopeKey('')
+        setDashscopeKeyConfigured(data.dashscope_key_configured || false)
+        setCosyvoiceModel(data.cosyvoice_model || 'cosyvoice-v3.5-flash')
+        setCosyvoiceVoice(data.cosyvoice_voice || '')
+        setCosyvoiceBaseUrl(data.cosyvoice_base_url || '')
 
         appliedSettingsRef.current = {
           geminiKey: data.gemini_api_key || '',
@@ -207,6 +219,10 @@ export default function App() {
           sttLanguage: data.stt_language || 'en',
           llmProvider: data.llm_provider || 'google',
           llmModel: data.llm_model || '',
+          ttsProvider: data.tts_provider || 'cartesia',
+          cosyvoiceModel: data.cosyvoice_model || 'cosyvoice-v3.5-flash',
+          cosyvoiceVoice: data.cosyvoice_voice || '',
+          cosyvoiceBaseUrl: data.cosyvoice_base_url || '',
         }
 
         // Load Observers settings
@@ -402,6 +418,11 @@ export default function App() {
       if (sonioxKey && sonioxKey !== appliedSettingsRef.current?.sonioxKey) {
         body.soniox_api_key = sonioxKey
       }
+      body.tts_provider = ttsProvider
+      body.cosyvoice_model = cosyvoiceModel
+      body.cosyvoice_voice = cosyvoiceVoice
+      body.cosyvoice_base_url = cosyvoiceBaseUrl
+      if (dashscopeKey) body.dashscope_api_key = dashscopeKey
       if (openaiKey) body.openai_api_key = openaiKey
       if (anthropicKey) body.anthropic_api_key = anthropicKey
       if (deepseekKey) body.deepseek_api_key = deepseekKey
@@ -425,6 +446,7 @@ export default function App() {
         sttProvider, sttLanguage,
         llmProvider, llmModel,
         openaiKey, anthropicKey, deepseekKey,
+        ttsProvider, cosyvoiceModel, cosyvoiceVoice, cosyvoiceBaseUrl, dashscopeKey,
       }
       const pipelineChanged = hasPipelineChanged(curr)
       if (pipelineChanged) {
@@ -554,6 +576,12 @@ export default function App() {
       debugMode: setDebugMode,
       timezone: setTimezone,
       hypogumBaseUrl: setHypogumBaseUrl,
+      ttsProvider: setTtsProvider,
+      dashscopeKey: setDashscopeKey,
+      dashscopeKeyConfigured: setDashscopeKeyConfigured,
+      cosyvoiceModel: setCosyvoiceModel,
+      cosyvoiceVoice: setCosyvoiceVoice,
+      cosyvoiceBaseUrl: setCosyvoiceBaseUrl,
       secretsStatus: setSecretsStatus,
     }
     setters[key]?.(value)
@@ -570,6 +598,8 @@ export default function App() {
     observerScreenActive, observerCameraActive, observerScreenInterval,
     observerCameraInterval, observerCaptureInterval, observerProcessInterval,
     settingsTab, debugMode, timezone, hypogumBaseUrl, secretsStatus,
+    ttsProvider, dashscopeKey, dashscopeKeyConfigured,
+    cosyvoiceModel, cosyvoiceVoice, cosyvoiceBaseUrl,
   }
 
   // Memory features (all tabs except Chat, and the chat memory/run tools) light
