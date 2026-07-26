@@ -62,7 +62,13 @@ SYSTEM_PROMPT_BASE = (
 # Memory/autonomy addendum — only added when a hypogum backend is configured
 # (i.e. the search_memory / add_memory / run_task tools are available).
 SYSTEM_PROMPT_MEMORY = (
-    '你可以使用search_memory工具查找用户过去的活动和记忆。聊到过去的事情、回忆、习惯或需要context时，可以先调用search_memory查询后再回复。'
+    '【回答前先查记忆】这是你的默认动作，不是可选项。只要问题可能和用户本人沾边——他的经历、习惯、偏好、'
+    '在做的事、认识的人、之前跟你说过的话、正在推进的项目——先调用search_memory，拿到结果再组织回答。'
+    '拿不准有没有相关记忆时就去查，不要凭印象猜。查一次的代价很小，答错或答得空泛的代价大得多。'
+    '不要问用户"要我查一下吗"，也不要说"让我查查"，直接查。'
+    '只有三种情况可以跳过：纯打招呼闲聊、和用户完全无关的通用知识问题、以及你刚刚为同一件事查过。'
+    '查不到就当作没有这段记忆正常回答，不用告诉用户"我没找到相关记忆"；查到了就自然地把内容用进回答里，'
+    '不要复述你调用了什么工具、也不要念路径。'
     '如果search_memory返回了某个记忆页的路径而你需要它的完整内容，用read_memory_page(path)读取详情。'
     '你可以使用add_memory工具来记住用户透露的关于自己的任何信息——每当用户说了关于自己的新事实（爱好、偏好、计划、工作、生活等），就用add_memory把这句话原样记下来。'
     '注意：你不需要自己判断分类，只要清楚、如实地把事实用一句话概括传给add_memory即可；后台的记忆整理agent会自动分类并整合进长期记忆。'
@@ -180,16 +186,26 @@ def make_search_memory(user_id: str, hypogum_url: str | None, send_fn=None):
     per-user hypogum base URL (and optional send_fn) in its closure."""
 
     async def search_memory(params: FunctionCallParams, query: str):
-        """Search the user's long-term memory for relevant information.
+        """Search the user's long-term memory. Call this BEFORE answering.
+
+        Searching first is the default, not something to do only when the user
+        asks you to remember. Call it whenever the reply could touch the user
+        themselves: their past activity, habits, preferences, tools, projects,
+        goals, the people they work with, or anything they have told you in an
+        earlier conversation. Call it before giving advice or an opinion about
+        their work, so the answer is grounded in their actual situation.
+
+        Skip it only for a pure greeting, a general-knowledge question with no
+        connection to the user, or an immediate follow-up to a search you just
+        ran. When unsure, search: an empty result costs one quick call, while
+        answering without context that existed is the failure this tool exists
+        to prevent.
 
         The memory stores categorized facts about the user: traits (personality),
         preferences (tools, workflows, habits), interests (topics they care about),
         skills (technical abilities), goals (learning or achievement targets),
         relationships (workplaces, teams, people), ownerships (projects, assets),
         weaknesses (areas for improvement), and events (past activities).
-
-        Use this when the user asks about their past, mentions something you should
-        recall context for, or when you need background before giving advice.
 
         Args:
             query: A natural-language search string to find semantically similar memories.
