@@ -155,6 +155,18 @@ def _build_messages(past_messages: list, timezone: str | None = None,
     return result
 
 
+def _one_line(value: str | None) -> str:
+    """Collapse a memory field to a single line of single-spaced text."""
+    return " ".join((value or "").split())
+
+
+def _title_cell(value: str | None) -> str:
+    """A title safe to place before the ``": "`` that separates it from the
+    snippet. A title of its own containing ``": "`` would otherwise make the
+    transcript card end the title early and fold the rest into the snippet."""
+    return _one_line(value).replace(": ", " - ")
+
+
 def make_search_memory(user_id: str, hypogum_url: str | None, send_fn=None):
     """Factory returning a search_memory callable that queries the user's
     hypogum instance (the memory brain) via semantic search. Captures the
@@ -194,9 +206,13 @@ def make_search_memory(user_id: str, hypogum_url: str | None, send_fn=None):
                 search_lines.append(f"  [{label}] \"{(r.get('title') or r.get('snippet',''))[:70]}\"")
             logger.info("\n".join(search_lines))
 
+            # One memory per line, with internal whitespace collapsed. The same
+            # string is what the transcript's tool card renders, and it splits
+            # on newlines to show each hit as its own item — a snippet
+            # containing a newline would run two memories together there.
             context_str = "\n".join(
                 f"[{r.get('category') or r.get('type') or 'memory'}] "
-                f"{(r.get('title') or '').strip()}: {(r.get('snippet') or '').strip()}"
+                f"{_title_cell(r.get('title'))}: {_one_line(r.get('snippet'))}"
                 for r in results
             ).strip()
             if not context_str:
