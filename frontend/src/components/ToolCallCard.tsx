@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import {
   ChevronRight, Search, PenSquare, FileText, Calendar, Package, Cpu, Loader2,
 } from 'lucide-react'
+import Markdown from './Markdown'
 
 interface ToolPayload {
   name: string
@@ -33,6 +34,26 @@ function argSummary(p: ToolPayload): string {
   const a = p.args || {}
   const first = a.query ?? a.fact ?? a.path ?? a.task_description ?? a.from_date ?? ''
   return typeof first === 'string' ? first : ''
+}
+
+// Markdown inside a tool card, scaled down and de-spaced: the shared component
+// is sized for the chat transcript, which is far roomier than this panel.
+function CardMarkdown({ content }: { content: string }) {
+  return (
+    <div
+      className="text-[11px] leading-relaxed text-slate-600 bg-white border border-slate-200/70
+                 rounded-lg px-2 py-1.5 overflow-x-auto
+                 [&_p]:my-1 [&_ul]:my-1 [&_ol]:my-1 [&_ul]:pl-4 [&_ol]:pl-4
+                 [&_h1]:text-xs [&_h2]:text-xs [&_h3]:text-[11px]
+                 [&_h1]:font-semibold [&_h2]:font-semibold [&_h3]:font-semibold
+                 [&_h1]:mt-2 [&_h2]:mt-2 [&_h3]:mt-2 [&_h1]:mb-0.5 [&_h2]:mb-0.5 [&_h3]:mb-0.5
+                 [&_pre]:my-1.5 [&_pre]:p-2.5 [&_pre]:pt-6 [&_pre]:rounded-lg [&_pre]:text-[10px]
+                 [&_code]:text-[10px] [&_table]:my-1.5 [&_hr]:my-2
+                 [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
+    >
+      <Markdown content={content} />
+    </div>
+  )
 }
 
 interface MemoryHit { category: string; title: string; snippet: string }
@@ -108,9 +129,9 @@ export default function ToolCallCard({ content }: { content: string }) {
                 <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1">
                   {t('toolCalls.args')}
                 </div>
-                <pre className="text-[11px] leading-relaxed text-slate-600 bg-white border border-slate-200/70 rounded-lg p-2 overflow-x-auto whitespace-pre-wrap break-words">
-                  {JSON.stringify(p.args, null, 2)}
-                </pre>
+                <CardMarkdown
+                  content={'```json\n' + JSON.stringify(p.args, null, 2) + '\n```'}
+                />
               </div>
             )}
             {p.result && (
@@ -140,9 +161,9 @@ export default function ToolCallCard({ content }: { content: string }) {
                     ))}
                   </ul>
                 ) : (
-                  <pre className="text-[11px] leading-relaxed text-slate-600 bg-white border border-slate-200/70 rounded-lg p-2 overflow-x-auto whitespace-pre-wrap break-words">
-                    {p.result}
-                  </pre>
+                  // read_memory_page returns a memory page's raw markdown, and
+                  // the calendar/artifact results are markdown-ish too.
+                  <CardMarkdown content={p.result} />
                 )}
               </div>
             )}
