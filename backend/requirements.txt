@@ -14,3 +14,4 @@ python-jose[cryptography]==3.3.0
 python-multipart==0.0.14
 aiosmtplib==3.0.1
 aiosqlite
+jinja2			# system-prompt templates (backend/prompts/)

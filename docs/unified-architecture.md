@@ -390,8 +390,9 @@ configured**, and lights up memory + autonomy once the user picks one.
 - **Gating (frontend):** `hypogumEnabled = (hypogum_base_url is non-empty)`. When off,
   only the **Chat** tab is shown (`visibleTabs`), the active tab snaps back to Chat,
   and the proactive-tip poller is disabled. When on, all memory tabs appear.
-- **Gating (backend `bot.py`):** the system prompt is split — `SYSTEM_PROMPT_BASE`
-  (persona/style, always on) + `SYSTEM_PROMPT_MEMORY` (added only with hypogum). The
+- **Gating (backend `prompts/system_prompt.md`):** the system prompt is a Jinja
+  template whose memory/autonomy half sits behind `{% if memory_enabled %}`, so a
+  Molly with no hypogum is never told about tools she does not have. The
   `search_memory` / `add_memory` / `run_task` tools are registered **only when a
   hypogum URL is set**; otherwise the voice/chat LLM runs tool-free. `hypogum_base_url`
   is a pipeline-restart key, so toggling it rebuilds the pipeline (tools + prompt).
