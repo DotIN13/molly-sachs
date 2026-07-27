@@ -4,6 +4,7 @@ import { AlertTriangle } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import ModelPicker from './ModelPicker'
 import CosyVoicePicker from './CosyVoicePicker'
+import SpeakerEnroll from './SpeakerEnroll'
 import { fetchHypogumSettings, patchHypogumSettings, hypogumHealthy, setHypogumUrl } from '../hypogum'
 
 const TIMEZONES: { value: string; label: string }[] = (() => {
@@ -48,6 +49,16 @@ const COSYVOICE_MODELS = [
 const COSYVOICE_BEIJING_WS = 'wss://dashscope.aliyuncs.com/api-ws/v1/inference'
 const needsClonedVoice = (m: string) => m.startsWith('cosyvoice-v3.5')
 
+// One tab per thing being configured. Keys live with what they authenticate
+// rather than in a tab of their own, so setting a provider up is one stop.
+const TABS = [
+  { id: 'general', key: 'settings.general' },
+  { id: 'llm', key: 'settings.tabLlm' },
+  { id: 'stt', key: 'settings.tabStt' },
+  { id: 'tts', key: 'settings.tabTts' },
+  { id: 'memory', key: 'settings.tabMemory' },
+]
+
 const EMOTIONS = ['calm', 'happy', 'excited', 'enthusiastic', 'curious', 'content', 'peaceful', 'serene', 'grateful', 'affectionate', 'flirtatious', 'sarcastic', 'sad', 'wistful', 'apologetic', 'confident', 'neutral']
 
 export interface SettingsData {
@@ -78,6 +89,9 @@ export interface SettingsData {
   cosyvoiceModel: string
   cosyvoiceVoice: string
   cosyvoiceBaseUrl: string
+  speakerGateEnabled: boolean
+  speakerEnrolled: boolean
+  speakerThreshold: number
   observerScreenActive: boolean
   observerCameraActive: boolean
   observerScreenInterval: number
@@ -129,7 +143,7 @@ export default function SettingsModal({ isOpen, onClose, onSave, settings, onCha
   }
 
   useEffect(() => {
-    if (isOpen && settings.settingsTab === 'hypogum' && !hgLoaded) {
+    if (isOpen && settings.settingsTab === 'memory' && !hgLoaded) {
       setHgLoaded(true)
       refreshHypogum(settings.hypogumBaseUrl || 'http://localhost:8056')
     }
@@ -162,6 +176,11 @@ export default function SettingsModal({ isOpen, onClose, onSave, settings, onCha
   }
   const llmKey = LLM_KEY_FIELDS[settings.llmProvider] || LLM_KEY_FIELDS.google
 
+  // Either already stored, or typed just now and about to be. The CosyVoice
+  // knobs below the key are all fetched with it, so they stay hidden until
+  // there is one — a model picker that 401s teaches nothing.
+  const hasDashscopeKey = settings.dashscopeKeyConfigured || !!settings.dashscopeKey.trim()
+
   if (!isOpen) return null
 
   const handleClose = () => {
@@ -174,13 +193,28 @@ export default function SettingsModal({ isOpen, onClose, onSave, settings, onCha
       <div className="w-full max-w-2xl bg-white rounded-xl overflow-hidden shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-slate-100 animate-in zoom-in-95 flex flex-col h-[480px] max-h-[90vh]" onClick={e => e.stopPropagation()}>
         <div className="flex flex-1 overflow-hidden flex-col lg:flex-row">
           <div className="flex-shrink-0 bg-slate-50 border-b border-slate-100 lg:border-b-0 lg:border-r lg:w-48 px-3 py-2 lg:py-8 flex flex-row lg:flex-col gap-1 overflow-x-auto lg:overflow-y-auto">
-            <button onClick={() => onChange('settingsTab', 'general')} className={`text-left px-3 py-2 rounded-md text-xs font-medium transition-colors whitespace-nowrap ${settings.settingsTab === 'general' ? 'bg-white text-slate-900 shadow-sm border border-slate-200' : 'text-slate-600 hover:bg-slate-100'}`}>{t('settings.general')}</button>
-            <button onClick={() => onChange('settingsTab', 'speech')} className={`text-left px-3 py-2 rounded-md text-xs font-medium transition-colors whitespace-nowrap ${settings.settingsTab === 'speech' ? 'bg-white text-slate-900 shadow-sm border border-slate-200' : 'text-slate-600 hover:bg-slate-100'}`}>{t('settings.speech')}</button>
-            <button onClick={() => onChange('settingsTab', 'api')} className={`text-left px-3 py-2 rounded-md text-xs font-medium transition-colors whitespace-nowrap ${settings.settingsTab === 'api' ? 'bg-white text-slate-900 shadow-sm border border-slate-200' : 'text-slate-600 hover:bg-slate-100'}`}>{t('settings.apiConfig')}</button>
-            <button onClick={() => onChange('settingsTab', 'hypogum')} className={`text-left px-3 py-2 rounded-md text-xs font-medium transition-colors whitespace-nowrap ${settings.settingsTab === 'hypogum' ? 'bg-white text-slate-900 shadow-sm border border-slate-200' : 'text-slate-600 hover:bg-slate-100'}`}>{t('settings.hypogum')}</button>
+            {TABS.map(tab => (
+              <button key={tab.id} onClick={() => onChange('settingsTab', tab.id)}
+                className={`text-left px-3 py-2 rounded-md text-xs font-medium transition-colors whitespace-nowrap ${settings.settingsTab === tab.id ? 'bg-white text-slate-900 shadow-sm border border-slate-200' : 'text-slate-600 hover:bg-slate-100'}`}>
+                {t(tab.key)}
+              </button>
+            ))}
           </div>
 
           <div className="flex-1 px-4 sm:px-6 py-4 sm:py-10 overflow-y-auto">
+            {/* Above the tabs, not inside one: API keys now live on three of
+                them, and every one of those would otherwise read as "nothing
+                configured" with no explanation. */}
+            {settings.secretsStatus && settings.secretsStatus !== 'ok' && (
+              <div className="flex items-start gap-2 px-3 py-2.5 mb-4 rounded-md bg-amber-50 border border-amber-200">
+                <AlertTriangle className="w-3.5 h-3.5 text-amber-600 flex-shrink-0 mt-0.5" />
+                <p className="text-[11px] text-amber-800 leading-relaxed">
+                  {t(`settings.secretsStatus.${settings.secretsStatus}`, {
+                    defaultValue: t('settings.secretsStatus.unreadable'),
+                  })}
+                </p>
+              </div>
+            )}
             {settings.settingsTab === 'general' && (
               <div className="flex flex-col gap-4">
                 <div className="flex flex-col gap-1.5">
@@ -209,24 +243,8 @@ export default function SettingsModal({ isOpen, onClose, onSave, settings, onCha
                 </div>
               </div>
             )}
-            {settings.settingsTab === 'api' && (
+            {settings.settingsTab === 'llm' && (
               <div className="flex flex-col gap-4">
-                {/* Stored keys exist but the backend cannot decrypt them — without
-                    this the whole tab just reads as "nothing configured". */}
-                {settings.secretsStatus && settings.secretsStatus !== 'ok' && (
-                  <div className="flex items-start gap-2 px-3 py-2.5 rounded-md bg-amber-50 border border-amber-200">
-                    <AlertTriangle className="w-3.5 h-3.5 text-amber-600 flex-shrink-0 mt-0.5" />
-                    <p className="text-[11px] text-amber-800 leading-relaxed">
-                      {t(`settings.secretsStatus.${settings.secretsStatus}`, {
-                        defaultValue: t('settings.secretsStatus.unreadable'),
-                      })}
-                    </p>
-                  </div>
-                )}
-                {/* Chat LLM: provider + model + provider-specific key */}
-                <div className="pb-1 border-b border-slate-100">
-                  <h4 className="text-[11px] font-bold uppercase tracking-wider text-slate-400">{t('settings.llmSection')}</h4>
-                </div>
                 <div className="flex flex-col gap-1.5">
                   <label className="text-xs font-medium text-slate-700">{t('settings.llmProvider')}</label>
                   <select
@@ -261,39 +279,13 @@ export default function SettingsModal({ isOpen, onClose, onSave, settings, onCha
                     )}
                   </div>
                 </div>
-
-                {/* Speech service keys */}
-                <div className="pt-2 pb-1 border-b border-slate-100">
-                  <h4 className="text-[11px] font-bold uppercase tracking-wider text-slate-400">{t('settings.speechKeys')}</h4>
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-medium text-slate-700">{t('settings.cartesiaApiKey')}</label>
-                  <div className="relative">
-                    <Input type="password" value={settings.cartesiaKey} onChange={e => onChange('cartesiaKey', e.target.value)} className="bg-[#f9f9f9] border-slate-200 text-sm focus-visible:ring-slate-300" placeholder={t('settings.placeholderCartesia')} />
-                    {settings.cartesiaKeyConfigured && (
-                      <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100 pointer-events-none">{t('settings.configured')}</span>
-                    )}
-                  </div>
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-medium text-slate-700">{t('settings.sonioxApiKey')}</label>
-                  <div className="relative">
-                    <Input type="password" value={settings.sonioxKey} onChange={e => onChange('sonioxKey', e.target.value)} className="bg-[#f9f9f9] border-slate-200 text-sm focus-visible:ring-slate-300" placeholder={t('settings.placeholderSoniox')} />
-                    {settings.sonioxKeyConfigured && (
-                      <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100 pointer-events-none">{t('settings.configured')}</span>
-                    )}
-                  </div>
-                </div>
               </div>
             )}
 
-            {settings.settingsTab === 'speech' && (
+            {settings.settingsTab === 'tts' && (
               <div className="flex flex-col gap-4">
-                <div className="pt-1 pb-2 border-b border-slate-100">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{t('settings.ttsSection')}</span>
-                </div>
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-medium text-slate-700">{t('settings.ttsProvider')}</label>
+                  <label className="text-xs font-medium text-slate-700">{t('settings.provider')}</label>
                   <select
                     value={settings.ttsProvider}
                     onChange={e => onChange('ttsProvider', e.target.value)}
@@ -305,22 +297,8 @@ export default function SettingsModal({ isOpen, onClose, onSave, settings, onCha
                 </div>
                 {settings.ttsProvider === 'cosyvoice' && (
                   <>
-                    <div className="flex flex-col gap-1.5">
-                      <label className="text-xs font-medium text-slate-700">{t('settings.cosyvoiceModel')}</label>
-                      <select
-                        value={COSYVOICE_MODELS.includes(settings.cosyvoiceModel) ? settings.cosyvoiceModel : '__custom__'}
-                        onChange={e => onChange('cosyvoiceModel', e.target.value === '__custom__' ? '' : e.target.value)}
-                        className="bg-[#f9f9f9] border border-slate-200 text-sm focus-visible:ring-slate-300 rounded-md h-9 px-3 outline-none"
-                      >
-                        {COSYVOICE_MODELS.map(m => <option key={m} value={m}>{m}</option>)}
-                        <option value="__custom__">{t('settings.customModelId')}</option>
-                      </select>
-                      {!COSYVOICE_MODELS.includes(settings.cosyvoiceModel) && (
-                        <Input value={settings.cosyvoiceModel} onChange={e => onChange('cosyvoiceModel', e.target.value)} className="bg-[#f9f9f9] border-slate-200 text-sm" placeholder="cosyvoice-..." />
-                      )}
-                    </div>
-                    {/* Above the voice picker on purpose: listing and cloning go
-                        through the saved key, so it has to be set up first. */}
+                    {/* Straight under the provider: everything below is either
+                        fetched with this key or useless without it. */}
                     <div className="flex flex-col gap-1.5">
                       <label className="text-xs font-medium text-slate-700">{t('settings.dashscopeApiKey')}</label>
                       <div className="relative">
@@ -330,25 +308,46 @@ export default function SettingsModal({ isOpen, onClose, onSave, settings, onCha
                         )}
                       </div>
                     </div>
-                    <div className="flex flex-col gap-1.5">
-                      <CosyVoicePicker
-                        value={settings.cosyvoiceVoice}
-                        onChange={v => onChange('cosyvoiceVoice', v)}
-                        model={settings.cosyvoiceModel}
-                        requiresClone={needsClonedVoice(settings.cosyvoiceModel)}
-                        onModelChange={m => onChange('cosyvoiceModel', m)}
-                      />
-                      <span className="text-[10px] text-slate-400">
-                        {needsClonedVoice(settings.cosyvoiceModel)
-                          ? t('settings.cosyvoiceVoiceHintCloned')
-                          : t('settings.cosyvoiceVoiceHintSystem')}
-                      </span>
-                    </div>
-                    <div className="flex flex-col gap-1.5">
-                      <label className="text-xs font-medium text-slate-700">{t('settings.cosyvoiceBaseUrl')}</label>
-                      <Input value={settings.cosyvoiceBaseUrl} onChange={e => onChange('cosyvoiceBaseUrl', e.target.value)} className="bg-[#f9f9f9] border-slate-200 text-sm focus-visible:ring-slate-300" placeholder={COSYVOICE_BEIJING_WS} />
-                      <span className="text-[10px] text-slate-400">{t('settings.cosyvoiceBaseUrlHint')}</span>
-                    </div>
+                    {hasDashscopeKey ? (
+                      <>
+                        <div className="flex flex-col gap-1.5">
+                          <label className="text-xs font-medium text-slate-700">{t('settings.cosyvoiceModel')}</label>
+                          <select
+                            value={COSYVOICE_MODELS.includes(settings.cosyvoiceModel) ? settings.cosyvoiceModel : '__custom__'}
+                            onChange={e => onChange('cosyvoiceModel', e.target.value === '__custom__' ? '' : e.target.value)}
+                            className="bg-[#f9f9f9] border border-slate-200 text-sm focus-visible:ring-slate-300 rounded-md h-9 px-3 outline-none"
+                          >
+                            {COSYVOICE_MODELS.map(m => <option key={m} value={m}>{m}</option>)}
+                            <option value="__custom__">{t('settings.customModelId')}</option>
+                          </select>
+                          {!COSYVOICE_MODELS.includes(settings.cosyvoiceModel) && (
+                            <Input value={settings.cosyvoiceModel} onChange={e => onChange('cosyvoiceModel', e.target.value)} className="bg-[#f9f9f9] border-slate-200 text-sm" placeholder="cosyvoice-..." />
+                          )}
+                        </div>
+                        <div className="flex flex-col gap-1.5">
+                          <CosyVoicePicker
+                            value={settings.cosyvoiceVoice}
+                            onChange={v => onChange('cosyvoiceVoice', v)}
+                            model={settings.cosyvoiceModel}
+                            requiresClone={needsClonedVoice(settings.cosyvoiceModel)}
+                            onModelChange={m => onChange('cosyvoiceModel', m)}
+                          />
+                          {/* Only the v3.5 case needs saying: those models ship
+                              no system voices, so a name will not do. */}
+                          {needsClonedVoice(settings.cosyvoiceModel) && (
+                            <span className="text-[10px] text-slate-400">
+                              {t('settings.cosyvoiceVoiceHintCloned')}
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex flex-col gap-1.5">
+                          <label className="text-xs font-medium text-slate-700">{t('settings.cosyvoiceBaseUrl')}</label>
+                          <Input value={settings.cosyvoiceBaseUrl} onChange={e => onChange('cosyvoiceBaseUrl', e.target.value)} className="bg-[#f9f9f9] border-slate-200 text-sm focus-visible:ring-slate-300" placeholder={COSYVOICE_BEIJING_WS} />
+                        </div>
+                      </>
+                    ) : (
+                      <span className="text-[10px] text-slate-400">{t('settings.dashscopeKeyFirst')}</span>
+                    )}
                   </>
                 )}
                 {settings.ttsProvider === 'cartesia' && (
@@ -417,9 +416,26 @@ export default function SettingsModal({ isOpen, onClose, onSave, settings, onCha
                 </div>
 
                 )}
-                <div className="pt-4 pb-2 border-b border-slate-100">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{t('settings.sttSection')}</span>
+                {/* Cartesia's key sits with Cartesia rather than in a tab of
+                    keys, so setting a provider up is one stop. */}
+                {settings.ttsProvider === 'cartesia' && (
+                  <>
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-medium text-slate-700">{t('settings.cartesiaApiKey')}</label>
+                  <div className="relative">
+                    <Input type="password" value={settings.cartesiaKey} onChange={e => onChange('cartesiaKey', e.target.value)} className="bg-[#f9f9f9] border-slate-200 text-sm focus-visible:ring-slate-300" placeholder={t('settings.placeholderCartesia')} />
+                    {settings.cartesiaKeyConfigured && (
+                      <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100 pointer-events-none">{t('settings.configured')}</span>
+                    )}
+                  </div>
                 </div>
+                  </>
+                )}
+              </div>
+            )}
+
+            {settings.settingsTab === 'stt' && (
+              <div className="flex flex-col gap-4">
                 <div className="flex flex-col gap-1.5">
                   <label className="text-xs font-medium text-slate-700">{t('settings.provider')}</label>
                   <select value={settings.sttProvider} onChange={e => onChange('sttProvider', e.target.value)} className="bg-[#f9f9f9] border border-slate-200 text-sm focus-visible:ring-slate-300 rounded-md h-9 px-3 outline-none">
@@ -427,6 +443,31 @@ export default function SettingsModal({ isOpen, onClose, onSave, settings, onCha
                     <option value="cartesia">{t('settings.cartesia')}</option>
                   </select>
                 </div>
+                {settings.sttProvider === 'soniox' ? (
+                  <>
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-medium text-slate-700">{t('settings.sonioxApiKey')}</label>
+                  <div className="relative">
+                    <Input type="password" value={settings.sonioxKey} onChange={e => onChange('sonioxKey', e.target.value)} className="bg-[#f9f9f9] border-slate-200 text-sm focus-visible:ring-slate-300" placeholder={t('settings.placeholderSoniox')} />
+                    {settings.sonioxKeyConfigured && (
+                      <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100 pointer-events-none">{t('settings.configured')}</span>
+                    )}
+                  </div>
+                </div>
+                  </>
+                ) : (
+                  <>
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-medium text-slate-700">{t('settings.cartesiaApiKey')}</label>
+                  <div className="relative">
+                    <Input type="password" value={settings.cartesiaKey} onChange={e => onChange('cartesiaKey', e.target.value)} className="bg-[#f9f9f9] border-slate-200 text-sm focus-visible:ring-slate-300" placeholder={t('settings.placeholderCartesia')} />
+                    {settings.cartesiaKeyConfigured && (
+                      <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100 pointer-events-none">{t('settings.configured')}</span>
+                    )}
+                  </div>
+                </div>
+                  </>
+                )}
                 <div className="flex flex-col gap-1.5">
                   <label className="text-xs font-medium text-slate-700">{t('settings.transcriptionLanguage')}</label>
                   <select value={settings.sttLanguage} onChange={e => onChange('sttLanguage', e.target.value)} className="bg-[#f9f9f9] border border-slate-200 text-sm focus-visible:ring-slate-300 rounded-md h-9 px-3 outline-none">
@@ -435,13 +476,24 @@ export default function SettingsModal({ isOpen, onClose, onSave, settings, onCha
                     ))}
                   </select>
                 </div>
+                <div className="pt-4 pb-2 border-b border-slate-100">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{t('settings.speakerSection')}</span>
+                </div>
+                <SpeakerEnroll
+                  enabled={settings.speakerGateEnabled}
+                  onEnabledChange={v => onChange('speakerGateEnabled', v)}
+                  enrolled={settings.speakerEnrolled}
+                  threshold={settings.speakerThreshold}
+                  onThresholdChange={v => onChange('speakerThreshold', v)}
+                  onEnrolledChange={v => onChange('speakerEnrolled', v)}
+                />
               </div>
             )}
 
-            {settings.settingsTab === 'hypogum' && (
+            {settings.settingsTab === 'memory' && (
               <div className="flex flex-col gap-4">
                 {/* Pick which hypogum backend Molly connects to */}
-                <div className="flex flex-col gap-1.5">
+                <div className="flex flex-col gap-1.5 mb-2">
                   <label className="text-xs font-medium text-slate-700">{t('settings.hgBackendUrl')}</label>
                   <div className="flex items-center gap-2">
                     <div className="relative flex-1">

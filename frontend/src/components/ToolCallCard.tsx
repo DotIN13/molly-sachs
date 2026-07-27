@@ -30,20 +30,12 @@ function parse(content: string): ToolPayload | null {
   return null
 }
 
-// A short one-line summary of the call's arguments, e.g. the search query.
-function argSummary(p: ToolPayload): string {
-  const a = p.args || {}
-  const first = a.query ?? a.pattern ?? a.fact ?? a.path ?? a.task_description ?? a.from_date ?? ''
-  return typeof first === 'string' ? first : ''
-}
-
-// Markdown inside a tool card, scaled down and de-spaced: the shared component
-// is sized for the chat transcript, which is far roomier than this panel.
+/** Markdown inside a tool call: the shared component is sized for the chat
+ *  transcript, which is far roomier than this. */
 function CardMarkdown({ content }: { content: string }) {
   return (
     <div
-      className="text-[11px] leading-relaxed text-slate-600 bg-white border border-slate-200/70
-                 rounded-lg px-2 py-1.5 overflow-x-auto
+      className="text-[11px] leading-relaxed text-slate-500 overflow-x-auto
                  [&_p]:my-1 [&_ul]:my-1 [&_ol]:my-1 [&_ul]:pl-4 [&_ol]:pl-4
                  [&_h1]:text-xs [&_h2]:text-xs [&_h3]:text-[11px]
                  [&_h1]:font-semibold [&_h2]:font-semibold [&_h3]:font-semibold
@@ -94,6 +86,43 @@ function isGrepOutput(result?: string): boolean {
   return lines.some(l => /^\d+[:-]/.test(l)) && lines.some(l => /\.md$/.test(l.trim()))
 }
 
+/** What the model passed in, as something readable.
+ *
+ *  Not a JSON block: these are one or two short strings, and pretty-printing
+ *  them as an object buries the only part that matters in braces and quotes.
+ *  A lone argument is shown on its own — the tool's name already says what it
+ *  is — and several are laid out as labelled rows. */
+function ArgValues({ args }: { args: Record<string, any> }) {
+  const { t } = useTranslation()
+  const entries = Object.entries(args).filter(
+    ([, v]) => v !== null && v !== undefined && v !== '')
+  if (!entries.length) return null
+
+  const text = (v: any) => typeof v === 'string' ? v : JSON.stringify(v)
+
+  if (entries.length === 1) {
+    return (
+      <p className="text-[11px] leading-relaxed text-slate-600 break-words whitespace-pre-wrap">
+        {text(entries[0][1])}
+      </p>
+    )
+  }
+  return (
+    <dl className="flex flex-col gap-1">
+      {entries.map(([key, value]) => (
+        <div key={key} className="flex gap-2 text-[11px] leading-relaxed">
+          <dt className="flex-shrink-0 w-20 text-slate-400">
+            {t(`toolCalls.arg.${key}`, { defaultValue: key })}
+          </dt>
+          <dd className="min-w-0 flex-1 text-slate-600 break-words whitespace-pre-wrap">
+            {text(value)}
+          </dd>
+        </div>
+      ))}
+    </dl>
+  )
+}
+
 export default function ToolCallCard({ content }: { content: string }) {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
@@ -103,85 +132,65 @@ export default function ToolCallCard({ content }: { content: string }) {
   const Icon = TOOL_ICONS[p.name] || Cpu
   const running = p.status === 'running'
   const label = t(`toolCalls.${p.name}`, p.name)
-  const summary = argSummary(p)
-  const hasDetail = (p.args && Object.keys(p.args).length > 0) || !!p.result
+  const args = p.args && Object.keys(p.args).length > 0 ? p.args : null
+  const hasDetail = !!args || !!p.result
   const items = parseMemoryHits(p.result)
 
   return (
-    <div className="w-full max-w-3xl mx-auto">
-      <div className="rounded-xl border border-slate-200/80 bg-slate-50/60 overflow-hidden">
-        <button
-          onClick={() => hasDetail && setOpen(o => !o)}
-          className={`w-full flex items-center gap-2.5 px-3.5 py-2 text-left ${hasDetail ? 'hover:bg-slate-100/70 cursor-pointer' : 'cursor-default'} transition-colors`}
-        >
-          <Icon className="w-3.5 h-3.5 text-slate-500 flex-shrink-0" />
-          <span className="text-[13px] font-medium text-slate-700 flex-shrink-0">{label}</span>
-          {summary && (
-            <span className="text-xs text-slate-400 truncate flex-1 min-w-0">{summary}</span>
-          )}
-          <span className="ml-auto flex items-center gap-2 flex-shrink-0">
-            {/* Only the running state gets an indicator — a completed call is
-                the norm, so a tick on every card is noise the eye has to skip. */}
-            {running && <Loader2 className="w-3.5 h-3.5 text-slate-400 animate-spin" />}
-            {items && !running && (
-              <span className="text-[11px] text-slate-400 tabular-nums">{items.length}</span>
-            )}
-            {hasDetail && (
-              <ChevronRight className={`w-3.5 h-3.5 text-slate-400 transition-transform ${open ? 'rotate-90' : ''}`} />
-            )}
-          </span>
-        </button>
-
-        {open && hasDetail && (
-          <div className="px-3.5 pb-3 pt-1 space-y-2.5 border-t border-slate-200/60">
-            {p.args && Object.keys(p.args).length > 0 && (
-              <div>
-                <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1">
-                  {t('toolCalls.args')}
-                </div>
-                <CardMarkdown
-                  content={'```json\n' + JSON.stringify(p.args, null, 2) + '\n```'}
-                />
-              </div>
-            )}
-            {p.result && (
-              <div>
-                <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1">
-                  {t('toolCalls.result')}
-                </div>
-                {items ? (
-                  <ul className="space-y-1">
-                    {items.map((it, i) => (
-                      <li
-                        key={i}
-                        className="bg-white border border-slate-200/70 rounded-lg px-2 py-1.5 text-[11px] leading-relaxed"
-                      >
-                        <div className="flex items-baseline gap-1.5">
-                          <span className="text-[9px] uppercase tracking-wide text-slate-400 border border-slate-200 rounded px-1 py-px flex-shrink-0">
-                            {it.category}
-                          </span>
-                          {it.title && (
-                            <span className="font-medium text-slate-700 break-words">{it.title}</span>
-                          )}
-                        </div>
-                        {it.snippet && (
-                          <p className="text-slate-600 mt-0.5 break-words">{it.snippet}</p>
-                        )}
-                      </li>
-                    ))}
-                  </ul>
-                ) : isGrepOutput(p.result) ? (
-                  <CardMarkdown content={'```text\n' + p.result + '\n```'} />
-                ) : (
-                  // read_memory_page returns a memory page's raw markdown, and
-                  // the calendar/artifact results are markdown-ish too.
-                  <CardMarkdown content={p.result} />
-                )}
-              </div>
-            )}
-          </div>
+    /* px-4 to match the horizontal padding on the chat bubbles, so this line
+       starts exactly where the assistant's text does. The transcript already
+       centres and width-limits its children, so no wrapper for that here. */
+    <div className="px-4">
+      {/* One quiet line, no frame. The transcript around it is the content;
+          this is a footnote about how it was found. */}
+      <button
+        onClick={() => hasDetail && setOpen(o => !o)}
+        className={`flex items-center gap-1.5 text-[12px] text-slate-400 transition-colors
+                    ${hasDetail ? 'hover:text-slate-600 cursor-pointer' : 'cursor-default'}`}
+      >
+        <Icon className="w-3 h-3 flex-shrink-0" />
+        <span>{label}</span>
+        {running && <Loader2 className="w-3 h-3 animate-spin" />}
+        {hasDetail && (
+          <ChevronRight className={`w-3 h-3 transition-transform ${open ? 'rotate-90' : ''}`} />
         )}
-      </div>
+      </button>
+
+      {open && hasDetail && (
+        /* A rule down the left instead of a box: it groups the detail with the
+           line that opened it without drawing another container. */
+        <div className="mt-2 ml-1.5 pl-3 border-l border-slate-200 flex flex-col gap-2.5">
+          {args && <ArgValues args={args} />}
+
+          {p.result && (
+            items ? (
+              <ul className="flex flex-col gap-1.5">
+                {items.map((it, i) => (
+                  <li key={i} className="text-[11px] leading-relaxed">
+                    <div className="flex items-baseline gap-1.5">
+                      <span className="text-[9px] uppercase tracking-wide text-slate-400 flex-shrink-0">
+                        {it.category}
+                      </span>
+                      {it.title && (
+                        <span className="font-medium text-slate-600 break-words">{it.title}</span>
+                      )}
+                    </div>
+                    {it.snippet && (
+                      <p className="text-slate-500 break-words">{it.snippet}</p>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            ) : isGrepOutput(p.result) ? (
+              <CardMarkdown content={'```text\n' + p.result + '\n```'} />
+            ) : (
+              // read_memory_page returns a memory page's raw markdown, and
+              // the calendar/artifact results are markdown-ish too.
+              <CardMarkdown content={p.result} />
+            )
+          )}
+        </div>
+      )}
     </div>
   )
 }

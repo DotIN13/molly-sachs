@@ -65,6 +65,9 @@ export default function App() {
   const [cosyvoiceModel, setCosyvoiceModel] = useState('cosyvoice-v3.5-flash')
   const [cosyvoiceVoice, setCosyvoiceVoice] = useState('')
   const [cosyvoiceBaseUrl, setCosyvoiceBaseUrl] = useState('')
+  const [speakerGateEnabled, setSpeakerGateEnabled] = useState(false)
+  const [speakerEnrolled, setSpeakerEnrolled] = useState(false)
+  const [speakerThreshold, setSpeakerThreshold] = useState(0.5)
   const [openaiKey, setOpenaiKey] = useState('')
   const [anthropicKey, setAnthropicKey] = useState('')
   const [deepseekKey, setDeepseekKey] = useState('')
@@ -223,6 +226,9 @@ export default function App() {
           cosyvoiceModel: data.cosyvoice_model || 'cosyvoice-v3.5-flash',
           cosyvoiceVoice: data.cosyvoice_voice || '',
           cosyvoiceBaseUrl: data.cosyvoice_base_url || '',
+          speakerGateEnabled: !!data.speaker_gate_enabled,
+          speakerEnrolled: !!data.speaker_enrolled,
+          speakerThreshold: data.speaker_threshold ?? 0.5,
         }
 
         // Load Observers settings
@@ -422,6 +428,8 @@ export default function App() {
       body.cosyvoice_model = cosyvoiceModel
       body.cosyvoice_voice = cosyvoiceVoice
       body.cosyvoice_base_url = cosyvoiceBaseUrl
+      body.speaker_gate_enabled = speakerGateEnabled
+      body.speaker_threshold = speakerThreshold
       if (dashscopeKey) body.dashscope_api_key = dashscopeKey
       if (openaiKey) body.openai_api_key = openaiKey
       if (anthropicKey) body.anthropic_api_key = anthropicKey
@@ -447,6 +455,8 @@ export default function App() {
         llmProvider, llmModel,
         openaiKey, anthropicKey, deepseekKey,
         ttsProvider, cosyvoiceModel, cosyvoiceVoice, cosyvoiceBaseUrl, dashscopeKey,
+        // Adding or removing the speaker gate changes the pipeline itself.
+        speakerGateEnabled,
       }
       const pipelineChanged = hasPipelineChanged(curr)
       if (pipelineChanged) {
@@ -582,6 +592,9 @@ export default function App() {
       cosyvoiceModel: setCosyvoiceModel,
       cosyvoiceVoice: setCosyvoiceVoice,
       cosyvoiceBaseUrl: setCosyvoiceBaseUrl,
+      speakerGateEnabled: setSpeakerGateEnabled,
+      speakerEnrolled: setSpeakerEnrolled,
+      speakerThreshold: setSpeakerThreshold,
       secretsStatus: setSecretsStatus,
     }
     setters[key]?.(value)
@@ -600,6 +613,7 @@ export default function App() {
     settingsTab, debugMode, timezone, hypogumBaseUrl, secretsStatus,
     ttsProvider, dashscopeKey, dashscopeKeyConfigured,
     cosyvoiceModel, cosyvoiceVoice, cosyvoiceBaseUrl,
+    speakerGateEnabled, speakerEnrolled, speakerThreshold,
   }
 
   // Memory features (all tabs except Chat, and the chat memory/run tools) light
