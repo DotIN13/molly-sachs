@@ -172,7 +172,7 @@ export default function SettingsModal({ isOpen, onClose, onSave, settings, onCha
     deepseek: { label: 'settings.deepseekApiKey', field: 'deepseekKey', configured: 'deepseekKeyConfigured', placeholder: 'settings.placeholderDeepseek' },
   }
   const LLM_MODEL_PLACEHOLDER: Record<string, string> = {
-    google: 'gemini-3.1-flash-lite', openai: 'gpt-4.1', anthropic: 'claude-sonnet-4-6', deepseek: 'deepseek-chat',
+    google: 'gemini-3.6-flash', openai: 'gpt-5.4-mini', anthropic: 'claude-sonnet-5', deepseek: 'deepseek-v4-flash',
   }
   const llmKey = LLM_KEY_FIELDS[settings.llmProvider] || LLM_KEY_FIELDS.google
 

@@ -104,12 +104,16 @@ class PipelineRestartRequested(Exception):
         self.changes = changes
 
 
-# Provider default models when the user leaves the model field blank.
+# Provider default models when the user leaves the model field blank. Checked
+# against each provider's live catalogue rather than written from memory —
+# `deepseek-chat` had already stopped being served, so the old default was an id
+# the API would refuse. Flash-tier models on purpose: this is a voice pipeline,
+# where time to first token is felt directly.
 _LLM_DEFAULT_MODELS = {
-    "google": "gemini-3.1-flash-lite",
-    "openai": "gpt-4.1",
-    "anthropic": "claude-sonnet-4-6",
-    "deepseek": "deepseek-chat",
+    "google": "gemini-3.6-flash",
+    "openai": "gpt-5.4-mini",
+    "anthropic": "claude-sonnet-5",
+    "deepseek": "deepseek-v4-flash",
 }
 
 

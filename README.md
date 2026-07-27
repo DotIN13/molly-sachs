@@ -86,10 +86,10 @@ Pick the chat provider and model in **Settings → API Config**:
 
 | Provider | Default model | Key |
 |----------|---------------|-----|
-| Google Gemini | `gemini-3.1-flash-lite` | `gemini_api_key` |
-| OpenAI | `gpt-4.1` | `openai_api_key` |
-| Anthropic Claude | `claude-sonnet-4-6` | `anthropic_api_key` |
-| DeepSeek | `deepseek-chat` | `deepseek_api_key` |
+| Google Gemini | `gemini-3.6-flash` | `gemini_api_key` |
+| OpenAI | `gpt-5.4-mini` | `openai_api_key` |
+| Anthropic Claude | `claude-sonnet-5` | `anthropic_api_key` |
+| DeepSeek | `deepseek-v4-flash` | `deepseek_api_key` |
 
 Leave the model field blank to use the provider default. Changing provider/model/key
 rebuilds the pipeline transparently.
