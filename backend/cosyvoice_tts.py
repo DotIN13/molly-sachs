@@ -225,14 +225,30 @@ class CosyVoiceTTSService(TTSService):
         )
         self._synthesizer = synthesizer
 
-        # streaming_call returns immediately; audio arrives via the callback.
+        # streaming_call returns as soon as the text is on the wire; audio then
+        # arrives on the callback thread. streaming_complete() blocks until the
+        # *last* frame of it, so it has to run alongside the drain below rather
+        # than before it — awaiting it first turned this into a synthesize-the
+        # -whole-sentence-then-emit service, which is what made speech arrive a
+        # sentence at a time with a long silence in front of each one.
         await asyncio.to_thread(synthesizer.streaming_call, text)
-        await asyncio.to_thread(synthesizer.streaming_complete)
+        finishing = asyncio.create_task(asyncio.to_thread(synthesizer.streaming_complete))
 
-        while True:
-            item = await queue.get()
-            if item is None:
-                break
-            if isinstance(item, Exception):
-                raise item
-            yield item
+        try:
+            while True:
+                item = await queue.get()
+                if item is None:
+                    break
+                if isinstance(item, Exception):
+                    raise item
+                yield item
+        finally:
+            # The end-of-stream marker means the SDK is done, so this is already
+            # settled on the normal path. It is still pending when the caller
+            # stops early (an interruption closes the generator), and a task
+            # left dangling would surface its exception with nobody to catch it.
+            finishing.cancel()
+            try:
+                await finishing
+            except (asyncio.CancelledError, Exception):
+                pass
