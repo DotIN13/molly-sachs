@@ -137,10 +137,90 @@ class CosyVoiceTTSService(TTSService):
         self._base_url = base_url
         # Set per synthesis so an interruption can cancel the in-flight task.
         self._synthesizer = None
+        # The reused connection. One per service instance — see _prepare().
+        self._session = None
+        self._reuse = True
 
     def can_generate_metrics(self) -> bool:
         """This service reports TTFB and usage metrics."""
         return True
+
+    async def start(self, frame):
+        """Open the WebSocket before the first thing she says needs it."""
+        await super().start(frame)
+        try:
+            await asyncio.to_thread(self._prepare, None)
+            logger.debug(f"{self}: CosyVoice connection pre-warmed")
+        except Exception as e:
+            # Not fatal — _prepare runs again per utterance and will retry.
+            logger.warning(f"{self}: CosyVoice pre-warm failed: {e}")
+
+    def _prepare(self, callback):
+        """Return a connected synthesizer, armed for one task. Blocking.
+
+        DashScope models one synthesis as one task, and the SDK opens the
+        socket lazily inside the first ``streaming_call`` — so a synthesizer
+        per utterance means a WebSocket handshake per sentence, measured at
+        1.6–3.0s here and heard as a gap in front of every sentence. The
+        protocol explicitly allows many sequential tasks on one connection, and
+        the SDK reaches that by resetting a synthesizer and handing it a fresh
+        task id rather than by exposing an API for it: ``__reset`` clears the
+        task state but leaves ``self.ws`` alone, ``__update_params`` builds a
+        new request (new task id), and ``__start_stream`` only dials when
+        ``self.ws is None``. Those private calls are how the SDK's own
+        ``SpeechSynthesizerObjectPool`` does it.
+
+        That pool is not used here because it is a process-wide singleton whose
+        connections are authenticated with whichever user's key was global when
+        they were dialled — fine for one-user scripts, a cross-account mix-up in
+        a backend where every user brings their own key. One session per service
+        instance is one per user, which is the boundary that matters.
+        """
+        import dashscope
+        from dashscope.audio.tts_v2 import AudioFormat, SpeechSynthesizer
+
+        dashscope.api_key = self._api_key   # read by __update_params below
+        fmt = AudioFormat.PCM_24000HZ_MONO_16BIT
+
+        synth = self._session
+        if synth is not None and self._reuse:
+            try:
+                if synth._SpeechSynthesizer__is_connected():
+                    synth._SpeechSynthesizer__reset()
+                    synth._SpeechSynthesizer__update_params(
+                        model=self._model, voice=self._voice, format=fmt,
+                        volume=self._volume, speech_rate=self._speech_rate,
+                        pitch_rate=self._pitch_rate, callback=callback,
+                        url=self._base_url, close_ws_after_use=False,
+                    )
+                    return synth
+            except AttributeError:
+                # A future SDK could rename these. Fall back to a fresh
+                # connection per utterance rather than failing to speak.
+                logger.warning(f"{self}: SDK internals changed; connection reuse off")
+                self._reuse = False
+            self._session = None
+
+        synth = SpeechSynthesizer(
+            model=self._model,
+            voice=self._voice,
+            format=fmt,
+            speech_rate=self._speech_rate,
+            pitch_rate=self._pitch_rate,
+            volume=self._volume,
+            callback=callback,
+            **({"url": self._base_url} if self._base_url else {}),
+        )
+        if self._reuse:
+            # Otherwise streaming_complete() closes the socket it just used.
+            synth._close_ws_after_use = False
+            try:
+                synth._SpeechSynthesizer__connect(5)
+            except AttributeError:
+                self._reuse = False
+                synth._close_ws_after_use = True
+        self._session = synth if self._reuse else None
+        return synth
 
     async def stop(self, frame):
         """Cancel any synthesis still running when the pipeline stops."""
@@ -154,8 +234,13 @@ class CosyVoiceTTSService(TTSService):
 
     async def _cancel_synthesis(self) -> None:
         synth, self._synthesizer = self._synthesizer, None
+        # streaming_cancel closes the socket, so this one is not reusable; the
+        # next utterance dials a fresh one.
+        if self._session is synth:
+            self._session = None
         if synth is None:
             return
+
         def _cancel() -> None:
             try:
                 # streaming_cancel exists on v2 and later; older models raise.
@@ -185,6 +270,10 @@ class CosyVoiceTTSService(TTSService):
                 yield frame
         except Exception as e:
             logger.error(f"{self} exception: {e}")
+            # A failed task leaves the socket's state unknown — half a task in
+            # flight, or a server-side close we have not seen yet. Reusing it
+            # would turn one bad utterance into every later one.
+            self._session = None
             yield ErrorFrame(error=f"CosyVoice synthesis failed: {e}")
         finally:
             self._synthesizer = None
@@ -202,8 +291,7 @@ class CosyVoiceTTSService(TTSService):
         """
         # Imported lazily so the backend still boots without the optional
         # dependency when the user is on Cartesia.
-        import dashscope
-        from dashscope.audio.tts_v2 import AudioFormat, ResultCallback, SpeechSynthesizer
+        from dashscope.audio.tts_v2 import ResultCallback
 
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue = asyncio.Queue()
@@ -226,17 +314,8 @@ class CosyVoiceTTSService(TTSService):
                 # drops without on_complete or on_error.
                 emit(None)
 
-        dashscope.api_key = self._api_key
-        synthesizer = SpeechSynthesizer(
-            model=self._model,
-            voice=self._voice,
-            format=AudioFormat.PCM_24000HZ_MONO_16BIT,
-            speech_rate=self._speech_rate,
-            pitch_rate=self._pitch_rate,
-            volume=self._volume,
-            callback=_Callback(),
-            **({"url": self._base_url} if self._base_url else {}),
-        )
+        # Reuses the open socket when there is one; dials only when there isn't.
+        synthesizer = await asyncio.to_thread(self._prepare, _Callback())
         self._synthesizer = synthesizer
 
         # streaming_call returns as soon as the text is on the wire; audio then
