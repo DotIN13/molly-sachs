@@ -131,8 +131,20 @@ def _build_llm(prefs: dict):
     )
 
 
+async def _fetch_persona(hypogum_url: str | None) -> str:
+    """Molly's persona, read live from the user's hypogum instance.
+
+    Kept out of this repo on purpose — it's the user's own writing about their
+    own companion. Returns "" (→ the bundled default persona) when no hypogum
+    is configured, none is written, or the instance is down.
+    """
+    if not hypogum_url:
+        return ""
+    return await hypogum_client.fetch_prompt("persona", base_url=hypogum_url)
+
+
 def _build_messages(past_messages: list, timezone: str | None = None,
-                    memory_enabled: bool = True) -> list:
+                    memory_enabled: bool = True, persona: str = "") -> list:
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S %A")
     if timezone:
         try:
@@ -142,6 +154,7 @@ def _build_messages(past_messages: list, timezone: str | None = None,
             pass
     system_prompt = render_prompt(
         "system_prompt.md", memory_enabled=memory_enabled, now=now_str,
+        persona=persona.strip(),
     )
     result = [{"role": "system", "content": system_prompt}]
     for msg in past_messages:
@@ -225,6 +238,54 @@ def make_search_memory(user_id: str, hypogum_url: str | None, send_fn=None):
     return search_memory
 
 
+def make_grep_memory(hypogum_url: str | None, send_fn=None):
+    """Factory for the `grep_memory` tool — literal search over memory pages.
+
+    The complement to `search_memory`: embeddings blur exact strings (a name, a
+    date, a URL, a project slug), grep nails them. Deliberately shaped like the
+    grep every coding agent knows — arg named `pattern`, results printed with
+    ripgrep's path heading and `12:`/`13-` line prefixes — so the model reaches
+    for it with the habits it already has, including the natural follow-up of
+    `read_memory_page` on a promising path."""
+
+    async def grep_memory(params: FunctionCallParams, pattern: str):
+        """Search memory for an exact string or regex, with surrounding lines.
+
+        Use this when you know the literal text to look for and want precision:
+        a person's name, a project or tool name, a date like "2026-03", a URL,
+        a filename. Also use it as a second pass when `search_memory` returned
+        something close but not the exact page you need.
+
+        Use `search_memory` instead when the question is fuzzy ("what sports
+        does he like") — that one matches by meaning, this one by characters.
+
+        Results come back grep-style: the page path on its own line, then its
+        lines as `12: text` where the match is and `13- text` for surrounding
+        context. If a page looks relevant but the excerpt is cut off, read it
+        in full with `read_memory_page(path)`.
+
+        Args:
+            pattern: Literal text or a regular expression (case-insensitive).
+        """
+        try:
+            blocks = await hypogum_client.grep_memory(pattern, limit=8, base_url=hypogum_url)
+
+            logger.info("grep-memory \"{}\" → {} pages: {}", pattern[:100], len(blocks),
+                        ", ".join(b.get("file", "") for b in blocks[:5]))
+
+            if not blocks:
+                await params.result_callback(f"No memory line matches \"{pattern}\".")
+                return
+            await params.result_callback(
+                "\n\n".join(f"{b.get('file', '')}\n{b.get('block', '')}"
+                            for b in blocks).strip()
+            )
+        except Exception as e:
+            await params.result_callback(f"Error grepping memory: {e!s}")
+
+    return grep_memory
+
+
 def make_add_memory(user_id: str, hypogum_url: str | None, send_fn=None):
     """Factory returning an add_memory callable.
 
@@ -244,6 +305,11 @@ def make_add_memory(user_id: str, hypogum_url: str | None, send_fn=None):
         Be proactive: call this whenever the user shares something about
         themselves, their preferences, plans, work, or life — better to record
         than to forget.
+
+        Only ever record facts about the *user*. Never record anything about
+        yourself — your own life, work, past or feelings are part of who you
+        are, not something this store holds. Writing them here would corrupt a
+        record of real facts about a real person with invented ones.
 
         Args:
             fact: A concise, self-contained sentence capturing what the user said.
@@ -382,13 +448,13 @@ def make_read_memory_page(hypogum_url: str | None, send_fn=None):
     async def read_memory_page(params: FunctionCallParams, path: str):
         """Read the full content of a specific memory page.
 
-        Use after `search_memory` returns a page path whose details you need, or
-        when the user asks about a specific remembered topic. Returns the page's
-        title and body text.
+        Use after `search_memory` or `grep_memory` surfaces a page whose full
+        details you need, or when the user asks about a specific remembered
+        topic. Returns the page's title and body text.
 
         Args:
             path: The memory page path (e.g. "goals/learn_trading.md"), as
-                returned in `search_memory` results.
+                returned by `search_memory` or `grep_memory`.
         """
         try:
             page = await hypogum_client.read_memory_page(path, base_url=hypogum_url)
@@ -678,6 +744,7 @@ async def start_pipecat_session(
                 OutputTransportMessageFrame(message=msg))
             tools = [
                 make_search_memory(user_id, hypogum_url, send_fn=_send),
+                make_grep_memory(hypogum_url, send_fn=_send),
                 make_add_memory(user_id, hypogum_url, send_fn=_send),
                 make_read_memory_page(hypogum_url, send_fn=_send),
                 make_fetch_calendar(hypogum_url, send_fn=_send),
@@ -740,7 +807,9 @@ async def start_pipecat_session(
             raise ValueError(f"Unknown tts_provider: {tts_provider!r}")
 
         past_messages = await database.app.get_messages(conv_id, user_id)
-        formatted_messages = _build_messages(past_messages, prefs.get("timezone"), memory_enabled)
+        formatted_messages = _build_messages(
+            past_messages, prefs.get("timezone"), memory_enabled,
+            await _fetch_persona(hypogum_url))
 
         context = LLMContext(messages=formatted_messages, tools=tools)
         vad_params = VADParams(
@@ -825,7 +894,9 @@ async def start_pipecat_session(
                     user_broadcaster.set_conversation_id(new_id)
                     assistant_broadcaster.set_conversation_id(new_id)
                     msgs = await database.app.get_messages(new_id, user_id)
-                    formatted = _build_messages(msgs, session.prefs.get("timezone"), memory_enabled)
+                    formatted = _build_messages(
+                        msgs, session.prefs.get("timezone"), memory_enabled,
+                        await _fetch_persona(hypogum_url))
                     await task.queue_frames([
                         InterruptionFrame(),
                         LLMMessagesUpdateFrame(messages=formatted, run_llm=False),
@@ -849,7 +920,9 @@ async def start_pipecat_session(
                 if "timezone" in changes:
                     session.prefs["timezone"] = str(changes["timezone"])
                     msgs = await database.app.get_messages(conv_id, user_id)
-                    formatted = _build_messages(msgs, session.prefs.get("timezone"), memory_enabled)
+                    formatted = _build_messages(
+                        msgs, session.prefs.get("timezone"), memory_enabled,
+                        await _fetch_persona(hypogum_url))
                     await task.queue_frames([
                         LLMMessagesUpdateFrame(messages=formatted, run_llm=False),
                     ])

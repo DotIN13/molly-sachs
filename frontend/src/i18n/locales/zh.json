@@ -38,6 +38,7 @@
     "args": "输入",
     "result": "结果",
     "search_memory": "检索了记忆",
+    "grep_memory": "翻查了记忆",
     "add_memory": "存入了记忆",
     "read_memory_page": "读取了记忆页",
     "fetch_calendar": "查看了日程",
@@ -267,7 +268,27 @@
     "cosyvoiceVoiceHintSystem": "系统音色名(如 longanyang),或复刻音色 ID。",
     "dashscopeApiKey": "DashScope API 密钥",
     "cosyvoiceBaseUrl": "WebSocket 接入点",
-    "cosyvoiceBaseUrlHint": "留空使用北京(默认)。v3.5 仅北京地域提供;其他地域需改用 v3 模型。"
+    "cosyvoiceBaseUrlHint": "留空使用北京(默认)。v3.5 仅北京地域提供;其他地域需改用 v3 模型。",
+    "cosyvoiceVoiceIdPlaceholder": "声音复刻或声音设计生成的音色 ID",
+    "voiceRefresh": "刷新",
+    "voiceNone": "该账号下还没有复刻音色。",
+    "voiceDelete": "删除此音色",
+    "voiceClone": "复刻新音色",
+    "voiceCloneHint": "10–20 秒的样本效果最好(最长 60 秒,不超过 10MB)。支持 WAV、MP3、M4A。",
+    "voicePrefix": "前缀",
+    "voicePrefixHint": "小写字母和数字,不超过 9 个字符。它会成为音色 ID 的一部分。",
+    "voiceSampleUrl": "…或填一个服务端能访问的音频 URL",
+    "voiceCloneSubmit": "创建音色",
+    "voiceCancel": "取消",
+    "voiceError": {
+      "no_key": "请先在上方填入 DashScope API 密钥并保存,然后重试。",
+      "bad_prefix": "前缀必须是 1–9 位小写字母或数字。",
+      "no_audio": "请选择音频文件或填入 URL。",
+      "too_large": "样本超过 10MB 上限。",
+      "bad_format": "格式不支持,请用 WAV、MP3 或 M4A。",
+      "upstream": "百炼拒绝了这次请求。如果你上传的是文件,可以改成先自行托管再填 URL。",
+      "network": "无法连接到 Molly 后端。"
+    }
   },
   "login": {
     "title": "Molly Sachs",

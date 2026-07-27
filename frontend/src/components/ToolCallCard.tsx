@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
-  ChevronRight, Search, PenSquare, FileText, Calendar, Package, Cpu, Loader2,
+  ChevronRight, Search, TextSearch, PenSquare, FileText, Calendar, Package, Cpu, Loader2,
 } from 'lucide-react'
 import Markdown from './Markdown'
 
@@ -14,6 +14,7 @@ interface ToolPayload {
 
 const TOOL_ICONS: Record<string, any> = {
   search_memory: Search,
+  grep_memory: TextSearch,
   add_memory: PenSquare,
   read_memory_page: FileText,
   fetch_calendar: Calendar,
@@ -32,7 +33,7 @@ function parse(content: string): ToolPayload | null {
 // A short one-line summary of the call's arguments, e.g. the search query.
 function argSummary(p: ToolPayload): string {
   const a = p.args || {}
-  const first = a.query ?? a.fact ?? a.path ?? a.task_description ?? a.from_date ?? ''
+  const first = a.query ?? a.pattern ?? a.fact ?? a.path ?? a.task_description ?? a.from_date ?? ''
   return typeof first === 'string' ? first : ''
 }
 
@@ -82,6 +83,15 @@ function parseMemoryHits(result?: string): MemoryHit[] | null {
     })
   }
   return hits.length ? hits : null
+}
+
+/** True when the result is grep output — a page path on its own line followed
+ *  by `12: text` matches and `13- text` context lines. Rendered as a code block
+ *  so the line breaks and line numbers survive the markdown pass. */
+function isGrepOutput(result?: string): boolean {
+  if (!result) return false
+  const lines = result.split('\n')
+  return lines.some(l => /^\d+[:-]/.test(l)) && lines.some(l => /\.md$/.test(l.trim()))
 }
 
 export default function ToolCallCard({ content }: { content: string }) {
@@ -160,6 +170,8 @@ export default function ToolCallCard({ content }: { content: string }) {
                       </li>
                     ))}
                   </ul>
+                ) : isGrepOutput(p.result) ? (
+                  <CardMarkdown content={'```text\n' + p.result + '\n```'} />
                 ) : (
                   // read_memory_page returns a memory page's raw markdown, and
                   // the calendar/artifact results are markdown-ish too.

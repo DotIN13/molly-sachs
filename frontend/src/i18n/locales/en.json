@@ -38,6 +38,7 @@
     "args": "Input",
     "result": "Result",
     "search_memory": "Searched memory",
+    "grep_memory": "Grepped memory",
     "add_memory": "Saved to memory",
     "read_memory_page": "Read memory page",
     "fetch_calendar": "Checked calendar",
@@ -269,7 +270,27 @@
     "cosyvoiceVoiceHintSystem": "A system voice name, e.g. longanyang, or a cloned voice id.",
     "dashscopeApiKey": "DashScope API Key",
     "cosyvoiceBaseUrl": "WebSocket endpoint",
-    "cosyvoiceBaseUrlHint": "Leave blank for Beijing (the default). v3.5 is Beijing-only; other regions need a v3 model."
+    "cosyvoiceBaseUrlHint": "Leave blank for Beijing (the default). v3.5 is Beijing-only; other regions need a v3 model.",
+    "cosyvoiceVoiceIdPlaceholder": "voice id from cloning or voice design",
+    "voiceRefresh": "Refresh",
+    "voiceNone": "No cloned voices on this account yet.",
+    "voiceDelete": "Delete this voice",
+    "voiceClone": "Clone a new voice",
+    "voiceCloneHint": "A 10–20 second sample works best (60s max, 10MB max). WAV, MP3 or M4A.",
+    "voicePrefix": "prefix",
+    "voicePrefixHint": "Lowercase letters and digits, under 10 characters. It becomes part of the voice id.",
+    "voiceSampleUrl": "…or a URL the service can fetch",
+    "voiceCloneSubmit": "Create voice",
+    "voiceCancel": "Cancel",
+    "voiceError": {
+      "no_key": "Enter your DashScope API key above and save, then try again.",
+      "bad_prefix": "The prefix must be 1–9 lowercase letters or digits.",
+      "no_audio": "Choose an audio file or paste a URL.",
+      "too_large": "The sample is over the 10MB limit.",
+      "bad_format": "Unsupported format — use WAV, MP3 or M4A.",
+      "upstream": "Model Studio rejected the request. If you uploaded a file, try hosting it and pasting the URL instead.",
+      "network": "Couldn't reach the Molly backend."
+    }
   },
   "login": {
     "title": "Molly Sachs",

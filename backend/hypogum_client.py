@@ -64,6 +64,47 @@ async def search_memory(query: str, limit: int = 8,
         return r.json().get("results", [])
 
 
+async def fetch_prompt(name: str, base_url: str | None = None,
+                       timeout: float = 5.0) -> str:
+    """Read a hand-authored prompt out of hypogum's ``data/prompts``.
+
+    Molly's persona lives there rather than in this repo — it's the user's own
+    writing about their own companion, so it belongs with their memory store.
+    Fetched on every context build so an edit lands on the next reply.
+
+    Returns "" when the prompt doesn't exist or hypogum can't be reached; the
+    caller falls back to the bundled default. A missing persona must never take
+    the chat down with it.
+    """
+    url = resolve_base_url(base_url)
+    try:
+        async with httpx.AsyncClient(base_url=url, timeout=timeout) as client:
+            r = await client.get(f"/api/v1/prompts/{name}")
+            if r.status_code == 404:
+                return ""
+            r.raise_for_status()
+            return r.json().get("content", "")
+    except Exception as e:
+        logger.warning("[hypogum] prompt {!r} unavailable, using default: {}", name, e)
+        return ""
+
+
+async def grep_memory(pattern: str, limit: int = 8, context: int = 1,
+                      base_url: str | None = None,
+                      timeout: float = 20.0) -> list[dict]:
+    """Literal/regex search over memory pages, with surrounding lines. Returns
+    a list of ``{file, block}`` where ``block`` is grep-style text: ``12:`` for
+    a matched line, ``13-`` for context, ``--`` between runs."""
+    url = resolve_base_url(base_url)
+    async with httpx.AsyncClient(base_url=url, timeout=timeout) as client:
+        r = await client.get(
+            "/api/v1/memory/grep",
+            params={"pattern": pattern, "limit": limit, "context": context},
+        )
+        r.raise_for_status()
+        return r.json().get("blocks", [])
+
+
 async def submit_run(prompt: str, base_url: str | None = None,
                      timeout: float = 30.0) -> dict:
     """Queue a freeform agent run in hypogum. Returns the run meta (incl. id)."""
