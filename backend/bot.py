@@ -21,6 +21,7 @@ from pipecat.services.llm_service import FunctionCallParams
 
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
+from pipecat.processors.audio.vad_processor import VADProcessor
 from pipecat.transports.base_transport import TransportParams
 from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
 from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
@@ -46,11 +47,17 @@ from pipecat.frames.frames import (
     OutputTransportMessageFrame,
     InterruptionFrame,
     BotStartedSpeakingFrame,
-    BotStoppedSpeakingFrame
+    BotStoppedSpeakingFrame,
+    InputAudioRawFrame,
+    InterimTranscriptionFrame,
+    UserSpeakingFrame,
+    VADUserStartedSpeakingFrame,
+    VADUserStoppedSpeakingFrame,
 )
 
 import database
 import hypogum_client
+import speaker_id
 from prompts import render_prompt
 
 # Settings that require tearing down and rebuilding the pipeline
@@ -60,6 +67,9 @@ _RESTART_KEYS = {
     "openai_api_key", "anthropic_api_key", "deepseek_api_key",
     "stt_provider", "stt_language",
     "tts_provider", "tts_voice", "tts_volume", "tts_speed", "tts_emotion", "tts_language",
+    # The speaker gate is a pipeline member, so switching it on or off means
+    # rebuilding rather than flipping a flag on a live session.
+    "speaker_gate_enabled",
     # Toggling the hypogum backend adds/removes the memory + run tools and
     # swaps the system prompt, so the pipeline must rebuild.
     "hypogum_base_url",
@@ -542,6 +552,164 @@ class MicFilterProcessor(FrameProcessor):
         await self.push_frame(frame, direction)
 
 
+class SpeakerGateProcessor(FrameProcessor):
+    """Keeps speech that is not the enrolled voice out of the rest of the pipeline.
+
+    Sits *before* the STT service, with the VAD ahead of it, so a television has
+    three fewer ways to matter: its audio is never transcribed (no bill), never
+    reaches the aggregator (no interruption, no reply), and never lands in the
+    chat log or in memory.
+
+    **Audio is withheld, not dropped.** Dropping while undecided would eat the
+    first second of your own sentence and STT would never hear those words. So
+    audio is buffered until there is a verdict, then either replayed to STT in
+    order or discarded wholesale. The replay is one burst, which a streaming STT
+    absorbs before catching up live, so the delay lands on the front of the
+    utterance rather than on the answer.
+
+    **VAD frames are released at once while she is silent, withheld while she is
+    speaking.** Silent, there is nothing to protect and a turn should start the
+    instant you speak. Speaking, withholding them until the verdict is what
+    stops a television from cutting her off, at the cost of your own barge-in
+    arriving a fraction of a second later.
+
+    Whichever way it is unsure — too little audio, no model, a scoring error —
+    it lets speech through. Refusing to listen is the worse failure.
+    """
+
+    # Enough speech to judge on. This doubles as how long barge-in is delayed
+    # while she is speaking, so it wants to be the shortest window that still
+    # separates voices rather than the most confident one — but not shorter.
+    # Measured against the default 0.5 threshold, scores fall as the window
+    # narrows even though the separation holds: at 0.6s the enrolled voice
+    # scored as low as 0.499, which would have rejected its owner. At 0.8s the
+    # floor was 0.605 while another voice peaked at 0.331, leaving room on both
+    # sides. Matches speaker_id.MIN_SECONDS so anything too short to judge is
+    # never judged at all.
+    _DECIDE_AFTER = 0.8
+
+    def __init__(self, reference, threshold: float, sample_rate: int = 16000,
+                 send_fn=None):
+        super().__init__()
+        self._reference = reference
+        self._threshold = threshold
+        self._rate = sample_rate
+        self._send_fn = send_fn
+        self._bot_speaking = False
+        self._reset()
+
+    def _reset(self) -> None:
+        """Start a fresh stretch of speech with no verdict and nothing held."""
+        self._scored = bytearray()      # audio measured for the verdict
+        self._withheld: list[Frame] = []  # frames waiting on it, in order
+        self._verdict: bool | None = None
+        # Whether the start of this stretch already reached the aggregator. If
+        # it did, its stop has to reach it as well even on a rejection, or the
+        # turn it opened never closes.
+        self._start_forwarded = False
+
+    @property
+    def _withholding(self) -> bool:
+        """True while VAD frames should wait for a verdict."""
+        return self._bot_speaking
+
+    async def _release(self) -> None:
+        """Forward everything held back, in the order it arrived."""
+        held, self._withheld = self._withheld, []
+        for frame in held:
+            if isinstance(frame, VADUserStartedSpeakingFrame):
+                self._start_forwarded = True
+            await self.push_frame(frame, FrameDirection.DOWNSTREAM)
+
+    async def _settle(self) -> None:
+        """Score what has been heard, then release or discard what is held."""
+        await self._decide()
+        if self._verdict:
+            await self._release()
+        else:
+            self._withheld.clear()
+
+    async def _decide(self) -> None:
+        """Score the speech heard so far. Sets a verdict; never raises."""
+        try:
+            emb = await asyncio.to_thread(
+                speaker_id.embed, speaker_id.pcm_to_float(bytes(self._scored)), self._rate)
+        except Exception as e:
+            logger.warning("speaker gate: scoring failed, letting it through: {}", e)
+            self._verdict = True
+            return
+
+        if emb is None:
+            self._verdict = True        # no opinion is not a rejection
+            return
+
+        score = speaker_id.similarity(self._reference, emb)
+        self._verdict = score >= self._threshold
+        logger.info("speaker gate: {:.3f} vs {:.2f} → {}", score, self._threshold,
+                    "accept" if self._verdict else "reject")
+        if self._send_fn and not self._verdict:
+            try:
+                await self._send_fn({"type": "speech_rejected", "score": round(score, 3)})
+            except Exception:
+                pass
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+
+        if isinstance(frame, BotStartedSpeakingFrame):
+            self._bot_speaking = True
+        elif isinstance(frame, BotStoppedSpeakingFrame):
+            self._bot_speaking = False
+            # She has stopped, so nothing is being protected any more; anything
+            # still waiting on a verdict may as well go now.
+            if self._verdict is None:
+                await self._release()
+
+        elif isinstance(frame, VADUserStartedSpeakingFrame):
+            self._reset()
+            if self._withholding:
+                self._withheld.append(frame)
+                return
+            self._start_forwarded = True
+
+        elif isinstance(frame, VADUserStoppedSpeakingFrame):
+            # Speech ended before the window filled: judge on what there is,
+            # because a short "嗯" still deserves an answer.
+            if self._verdict is None and self._scored:
+                await self._settle()
+            # A rejection still has to close a turn it was allowed to open.
+            if self._verdict is False and not self._start_forwarded:
+                return
+
+        elif isinstance(frame, UserSpeakingFrame):
+            if self._verdict is None and self._withholding:
+                self._withheld.append(frame)
+                return
+            if self._verdict is False:
+                return
+
+        elif isinstance(frame, InputAudioRawFrame) and direction == FrameDirection.DOWNSTREAM:
+            if self._verdict is False:
+                return                  # someone else; STT never sees it
+            if self._verdict is None:
+                self._scored.extend(frame.audio)
+                self._withheld.append(frame)
+                # The verdict lands as soon as there is enough to judge on, so
+                # what is held can never exceed one window's worth of audio.
+                if len(self._scored) >= int(self._DECIDE_AFTER * self._rate) * 2:
+                    await self._settle()
+                return
+
+        elif isinstance(frame, (TranscriptionFrame, InterimTranscriptionFrame)):
+            # A second net: while she is silent the VAD frames and the leading
+            # audio go straight through, so STT can already have produced words
+            # for a voice that is then rejected.
+            if self._verdict is False:
+                return
+
+        await self.push_frame(frame, direction)
+
+
 class AudioLevelProcessor(FrameProcessor):
     """Calculates microphone audio level, sends to frontend (~10 msg/sec), and gates noise when bot is speaking."""
     def __init__(self, transport: SmallWebRTCTransport):
@@ -738,10 +906,12 @@ async def start_pipecat_session(
         # Without one, Molly is a plain chat client (no tools, base prompt).
         memory_enabled = bool(hypogum_url)
         task_holder: dict = {}  # lets the run_task narrator reach the PipelineTask
+        # Used by the tools and by the speaker gate, so it cannot live inside
+        # the memory branch.
+        _send = lambda msg: transport._client.send_message(
+            OutputTransportMessageFrame(message=msg))
         tools = []
         if memory_enabled:
-            _send = lambda msg: transport._client.send_message(
-                OutputTransportMessageFrame(message=msg))
             tools = [
                 make_search_memory(user_id, hypogum_url, send_fn=_send),
                 make_grep_memory(hypogum_url, send_fn=_send),
@@ -818,7 +988,12 @@ async def start_pipecat_session(
         user_aggregator, assistant_aggregator = LLMContextAggregatorPair(
             context,
             user_params=LLMUserAggregatorParams(
-                vad_analyzer=SileroVADAnalyzer(params=vad_params),
+                # No vad_analyzer: the VAD now runs as its own processor ahead
+                # of the speaker gate and STT, so nothing this side of it ever
+                # sees audio from a voice that was rejected. The turn strategy
+                # is unchanged — it reacts to VAD frames either way, and the
+                # aggregator hands every frame to the turn controller
+                # regardless of whether it owns a VAD.
                 user_turn_strategies=UserTurnStrategies(
                     start=[VADUserTurnStartStrategy()],
                 ),
@@ -826,16 +1001,39 @@ async def start_pipecat_session(
         )
 
         mic_filter = MicFilterProcessor(session)
+        # Ahead of the speaker gate on purpose: the gate needs speech
+        # boundaries to score against, and it must keep receiving them even
+        # for the audio it withholds. A VAD downstream of the gate would be
+        # starved by exactly the frames the gate is deciding about.
+        vad = VADProcessor(vad_analyzer=SileroVADAnalyzer(params=vad_params))
         tts_filter = TTSFilterProcessor(session)
         user_broadcaster = UserBroadcaster(transport, conv_id, user_id)
         assistant_broadcaster = AssistantBroadcaster(transport, conv_id, user_id)
         tool_broadcaster = ToolCallBroadcaster(transport, session)
         audio_level = AudioLevelProcessor(transport)
 
+        # Three things have to line up, and all three are reasons to stay out of
+        # the path entirely rather than to sit in it doing nothing: the user has
+        # to have asked for it, there has to be a voice to compare against, and
+        # the model has to be on disk.
+        speaker_gate = None
+        gate_wanted = prefs.get("speaker_gate_enabled", "false").lower() == "true"
+        reference = speaker_id.decode(prefs.get("speaker_reference", ""))
+        if gate_wanted and reference is not None and speaker_id.available():
+            speaker_gate = SpeakerGateProcessor(
+                reference,
+                threshold=float(prefs.get("speaker_threshold", "0.5")),
+                send_fn=_send,
+            )
+            logger.info("Speaker gate active (threshold {})",
+                        prefs.get("speaker_threshold", "0.5"))
+
         pipeline = Pipeline([
             transport.input(),
             audio_level,
             mic_filter,
+            vad,
+            *([speaker_gate] if speaker_gate else []),
             stt,
             user_broadcaster,
             user_aggregator,

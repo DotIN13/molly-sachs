@@ -51,6 +51,16 @@ _DEFAULTS: dict[str, str] = {
     # Base URL of this user's hypogum instance (memory brain). Empty → fall
     # back to config.hypogum_base_url() (env HYPOGUM_BASE_URL or localhost).
     "hypogum_base_url": "",
+    # Speaker verification. Off by default — it decides what the microphone is
+    # allowed to hear, which is not a thing to switch on behind someone's back.
+    # `speaker_reference` is a base64 embedding of the user's enrolled voice;
+    # without one the gate stays out of the pipeline whatever the toggle says.
+    # The threshold is cosine similarity — measured separation between one
+    # voice and another was 0.87–0.91 against 0.18, but a real room is noisier
+    # than that, so it is a setting rather than a constant.
+    "speaker_gate_enabled": "false",
+    "speaker_reference": "",
+    "speaker_threshold": "0.5",
 }
 
 DEFAULT_TTL = 5.0

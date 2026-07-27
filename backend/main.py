@@ -1,3 +1,4 @@
+import io
 import os
 import sys
 import uuid
@@ -5,7 +6,9 @@ import secrets
 import logging
 import datetime
 from datetime import timedelta, timezone
+import anyio
 import httpx
+import soundfile as sf
 from loguru import logger
 from fastapi import (
     FastAPI, BackgroundTasks, HTTPException, Depends, Query, UploadFile, File, Form,
@@ -27,6 +30,7 @@ import config
 import llm_models
 import cosyvoice_tts
 import cosyvoice_voices
+import speaker_id
 from db import settings as db_settings
 from db.settings import Settings
 import auth
@@ -113,6 +117,8 @@ class SettingsReq(BaseModel):
     cosyvoice_model: str | None = None
     cosyvoice_voice: str | None = None
     cosyvoice_base_url: str | None = None
+    speaker_gate_enabled: bool | None = None
+    speaker_threshold: float | None = None
     observer_screen_active: bool | None = None
     observer_camera_active: bool | None = None
     observer_screen_interval: int | None = None
@@ -328,6 +334,10 @@ async def save_settings(req: SettingsReq,
         data["cosyvoice_voice"] = req.cosyvoice_voice
     if req.cosyvoice_base_url is not None:
         data["cosyvoice_base_url"] = req.cosyvoice_base_url
+    if req.speaker_gate_enabled is not None:
+        data["speaker_gate_enabled"] = "true" if req.speaker_gate_enabled else "false"
+    if req.speaker_threshold is not None:
+        data["speaker_threshold"] = str(max(0.0, min(1.0, req.speaker_threshold)))
     if req.observer_screen_active is not None:
         data["observer_screen_active"] = "true" if req.observer_screen_active else "false"
     if req.observer_camera_active is not None:
@@ -383,6 +393,13 @@ async def get_settings(current_user: dict = Depends(auth.get_current_user)):
         "timezone": s.get("timezone", ""),
         "speak_text": s.get("speak_text", "true").lower() == "true",
         "hypogum_base_url": s.get("hypogum_base_url", ""),
+        # The embedding itself is never sent back — the UI only needs to know
+        # whether a voice is on file, and whether the model to compare it
+        # against is even installed.
+        "speaker_gate_enabled": s.get("speaker_gate_enabled", "false").lower() == "true",
+        "speaker_enrolled": bool(s.get("speaker_reference", "")),
+        "speaker_available": speaker_id.available(),
+        "speaker_threshold": float(s.get("speaker_threshold", "0.5")),
         # "ok" | "unreadable" | "no_cipher" — lets the UI explain why every key
         # suddenly reads as unconfigured instead of leaving the user guessing.
         "secrets_status": db_settings.secrets_status(current_user["id"]),
@@ -475,6 +492,59 @@ async def create_cosyvoice_voice(
     except cosyvoice_voices.VoiceError as e:
         raise _voice_error(e)
     return {"voice_id": voice_id}
+
+
+@app.post("/api/speaker/enroll", summary="Learn the user's voice from a recording")
+async def enroll_speaker(
+    sample: UploadFile = File(...),
+    current_user: dict = Depends(auth.get_current_user),
+):
+    """Store a speaker embedding so live mode can tell the user from the room.
+
+    The recording never touches disk and is not kept — only the embedding is,
+    a 192-float vector from which no audio can be recovered.
+
+    The model is fetched here, on the first enrollment, rather than at startup:
+    this is the earliest moment it is actually needed, and an install where
+    nobody ever enrols should never pay for the download. It costs a few seconds
+    once, inside a request the user is already waiting on.
+    """
+    if not await anyio.to_thread.run_sync(speaker_id.ensure_model):
+        raise HTTPException(503, "speaker_model_download_failed")
+    if not speaker_id.available():
+        raise HTTPException(503, "speaker_model_missing")
+
+    raw = await sample.read()
+    try:
+        samples, rate = sf.read(io.BytesIO(raw), dtype="float32", always_2d=True)
+    except Exception:
+        raise HTTPException(400, "unreadable_audio") from None
+    mono = samples.mean(axis=1)          # the model wants one channel
+
+    seconds = len(mono) / rate if rate else 0
+    if seconds < speaker_id.MIN_SECONDS:
+        raise HTTPException(400, "too_short")
+
+    # Enroll from consecutive slices rather than one long clip: averaging
+    # several embeddings keeps what is constant between them, which is the
+    # voice, and dilutes the particular words of any one slice.
+    step = int(rate * 3)
+    clips = [(mono[i:i + step], int(rate)) for i in range(0, len(mono), step)
+             if len(mono[i:i + step]) >= int(rate * speaker_id.MIN_SECONDS)]
+    ref = await anyio.to_thread.run_sync(speaker_id.enroll, clips)
+    if ref is None:
+        raise HTTPException(400, "enrollment_failed")
+
+    await Settings(current_user["id"]).save({"speaker_reference": speaker_id.encode(ref)})
+    logger.info("[speaker] enrolled user {} from {:.1f}s over {} slices",
+                current_user["id"], seconds, len(clips))
+    return {"status": "ok", "seconds": round(seconds, 1), "slices": len(clips)}
+
+
+@app.delete("/api/speaker/enroll", summary="Forget the enrolled voice")
+async def clear_speaker(current_user: dict = Depends(auth.get_current_user)):
+    await Settings(current_user["id"]).save({"speaker_reference": ""})
+    return {"status": "ok"}
 
 
 @app.delete("/api/tts/cosyvoice/voices/{voice_id}", summary="Delete a cloned voice")

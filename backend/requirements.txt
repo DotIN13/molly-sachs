@@ -16,3 +16,5 @@ aiosmtplib==3.0.1
 aiosqlite
 jinja2			# system-prompt templates (backend/prompts/)
 dashscope		# CosyVoice TTS (Aliyun Model Studio); optional, only for tts_provider=cosyvoice
+sherpa-onnx>=1.13.4	# speaker verification; brings Kaldi fbank + the ONNX runner, no torch
+soundfile		# decodes the enrollment recording (sherpa-onnx wants samples, not a file)
