@@ -58,6 +58,7 @@ from pipecat.frames.frames import (
 import database
 import hypogum_client
 import speaker_id
+from deepseek_llm import DeepSeekReasoningLLMService
 from prompts import render_prompt
 
 # Settings that require tearing down and rebuilding the pipeline
@@ -131,7 +132,9 @@ def _build_llm(prefs: dict):
             settings=AnthropicLLMService.Settings(model=model),
         )
     if provider == "deepseek":
-        return DeepSeekLLMService(
+        # Thinking mode stays on; the subclass is what makes it survive a tool
+        # call, by carrying each call's reasoning back as the API requires.
+        return DeepSeekReasoningLLMService(
             api_key=prefs.get("deepseek_api_key", ""),
             settings=DeepSeekLLMService.Settings(model=model),
         )
