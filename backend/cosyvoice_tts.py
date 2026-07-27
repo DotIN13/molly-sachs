@@ -36,6 +36,10 @@ COSYVOICE_SAMPLE_RATE = 24000
 
 DEFAULT_MODEL = "cosyvoice-v3.5-flash"
 
+# Holds references to the fire-and-forget cancels below, so they aren't garbage
+# collected mid-flight (see asyncio.create_task docs).
+_CANCEL_TASKS: set[asyncio.Task] = set()
+
 # Models that only accept a cloned or designed voice id.
 _NO_SYSTEM_VOICE_MODELS = ("cosyvoice-v3.5",)
 
@@ -152,11 +156,21 @@ class CosyVoiceTTSService(TTSService):
         synth, self._synthesizer = self._synthesizer, None
         if synth is None:
             return
-        try:
-            # streaming_cancel exists on v2 and later; older models would raise.
-            await asyncio.to_thread(synth.streaming_cancel)
-        except Exception as e:
-            logger.debug(f"{self}: cancel ignored: {e}")
+        def _cancel() -> None:
+            try:
+                # streaming_cancel exists on v2 and later; older models raise.
+                synth.streaming_cancel()
+            except Exception as e:
+                logger.debug(f"{self}: cancel ignored: {e}")
+
+        # Deliberately not awaited: streaming_cancel round-trips to the server
+        # and measured ~3s here, and this runs on the barge-in path, where the
+        # user has started talking and everything else is trying to stop now.
+        # Nothing downstream needs the acknowledgement — the audio already
+        # stopped when the generator closed.
+        task = asyncio.create_task(asyncio.to_thread(_cancel))
+        _CANCEL_TASKS.add(task)
+        task.add_done_callback(_CANCEL_TASKS.discard)
 
     async def run_tts(self, text: str, context_id: str) -> AsyncGenerator[Frame | None, None]:
         """Synthesize *text*, yielding audio frames as the model produces them."""
