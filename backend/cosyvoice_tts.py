@@ -52,6 +52,23 @@ _CLONED_VOICE_RE = re.compile(
 )
 
 
+# Han characters plus ASCII letters and digits — what these voices actually
+# read. Not `str.isalnum()`: by Unicode class a kaomoji like `(｡･ω･｡)ﾉ♡` is full
+# of letters (Greek omega, halfwidth katakana), so that test calls it speakable
+# and the request fails anyway.
+_SPEAKABLE_RE = re.compile(r"[0-9A-Za-z㐀-䶿一-鿿豈-﫿]")
+
+
+def is_speakable(text: str) -> bool:
+    """True if there is anything in *text* one of these voices could read.
+
+    Emoji, kaomoji, punctuation and whitespace alone are not. Text in a script
+    outside Chinese and English reads as unspeakable too, which costs a skipped
+    utterance rather than the failed request and dropped socket it replaces.
+    """
+    return bool(_SPEAKABLE_RE.search(text or ""))
+
+
 def model_needs_custom_voice(model: str) -> bool:
     """True when *model* rejects system voice names (the v3.5 family)."""
     return any(model.startswith(p) for p in _NO_SYSTEM_VOICE_MODELS)
@@ -259,6 +276,13 @@ class CosyVoiceTTSService(TTSService):
 
     async def run_tts(self, text: str, context_id: str) -> AsyncGenerator[Frame | None, None]:
         """Synthesize *text*, yielding audio frames as the model produces them."""
+        if not is_speakable(text):
+            # CosyVoice rejects text with nothing to read aloud — a lone emoji
+            # or kaomoji, stray punctuation — with "Please ensure input text is
+            # valid", and closes the socket doing it, so the next utterance also
+            # pays for a reconnect. There is no sound to make here anyway.
+            logger.debug(f"{self}: nothing speakable in {text!r}, skipping")
+            return
         try:
             await self.start_tts_usage_metrics(text)
             async for frame in self._stream_audio_frames_from_iterator(

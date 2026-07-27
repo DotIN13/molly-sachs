@@ -59,6 +59,7 @@ import database
 import hypogum_client
 import speaker_id
 from deepseek_llm import DeepSeekReasoningLLMService
+from tts_text import EagerSentenceAggregator
 from prompts import render_prompt
 
 # Settings that require tearing down and rebuilding the pipeline
@@ -978,6 +979,12 @@ async def start_pipecat_session(
             )
         else:
             raise ValueError(f"Unknown tts_provider: {tts_provider!r}")
+
+        # Both providers otherwise wait for a character after the final "。"
+        # that a one-sentence reply never sends, which held speech back until
+        # the whole reply had finished generating. See tts_text.
+        tts._text_aggregator = EagerSentenceAggregator(
+            aggregation_type=tts._text_aggregation_mode)
 
         past_messages = await database.app.get_messages(conv_id, user_id)
         formatted_messages = _build_messages(
