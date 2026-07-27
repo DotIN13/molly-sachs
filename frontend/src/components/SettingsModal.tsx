@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { AlertTriangle } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import ModelPicker from './ModelPicker'
+import CosyVoicePicker from './CosyVoicePicker'
 import { fetchHypogumSettings, patchHypogumSettings, hypogumHealthy, setHypogumUrl } from '../hypogum'
 
 const TIMEZONES: { value: string; label: string }[] = (() => {
@@ -318,20 +319,8 @@ export default function SettingsModal({ isOpen, onClose, onSave, settings, onCha
                         <Input value={settings.cosyvoiceModel} onChange={e => onChange('cosyvoiceModel', e.target.value)} className="bg-[#f9f9f9] border-slate-200 text-sm" placeholder="cosyvoice-..." />
                       )}
                     </div>
-                    <div className="flex flex-col gap-1.5">
-                      <label className="text-xs font-medium text-slate-700">{t('settings.cosyvoiceVoice')}</label>
-                      <Input
-                        value={settings.cosyvoiceVoice}
-                        onChange={e => onChange('cosyvoiceVoice', e.target.value)}
-                        className="bg-[#f9f9f9] border-slate-200 text-sm focus-visible:ring-slate-300"
-                        placeholder={needsClonedVoice(settings.cosyvoiceModel) ? 'cosyvoice-v3.5-xxxx-...' : 'longanyang'}
-                      />
-                      <span className="text-[10px] text-slate-400">
-                        {needsClonedVoice(settings.cosyvoiceModel)
-                          ? t('settings.cosyvoiceVoiceHintCloned')
-                          : t('settings.cosyvoiceVoiceHintSystem')}
-                      </span>
-                    </div>
+                    {/* Above the voice picker on purpose: listing and cloning go
+                        through the saved key, so it has to be set up first. */}
                     <div className="flex flex-col gap-1.5">
                       <label className="text-xs font-medium text-slate-700">{t('settings.dashscopeApiKey')}</label>
                       <div className="relative">
@@ -340,6 +329,20 @@ export default function SettingsModal({ isOpen, onClose, onSave, settings, onCha
                           <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100 pointer-events-none">{t('settings.configured')}</span>
                         )}
                       </div>
+                    </div>
+                    <div className="flex flex-col gap-1.5">
+                      <CosyVoicePicker
+                        value={settings.cosyvoiceVoice}
+                        onChange={v => onChange('cosyvoiceVoice', v)}
+                        model={settings.cosyvoiceModel}
+                        requiresClone={needsClonedVoice(settings.cosyvoiceModel)}
+                        onModelChange={m => onChange('cosyvoiceModel', m)}
+                      />
+                      <span className="text-[10px] text-slate-400">
+                        {needsClonedVoice(settings.cosyvoiceModel)
+                          ? t('settings.cosyvoiceVoiceHintCloned')
+                          : t('settings.cosyvoiceVoiceHintSystem')}
+                      </span>
                     </div>
                     <div className="flex flex-col gap-1.5">
                       <label className="text-xs font-medium text-slate-700">{t('settings.cosyvoiceBaseUrl')}</label>

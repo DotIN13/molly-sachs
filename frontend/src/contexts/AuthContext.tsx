@@ -104,7 +104,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (token) {
       headers.set('Authorization', `Bearer ${token}`)
     }
-    headers.set('Content-Type', headers.get('Content-Type') || 'application/json')
+    // FormData has to set its own multipart boundary, so leave it alone.
+    if (!(options.body instanceof FormData)) {
+      headers.set('Content-Type', headers.get('Content-Type') || 'application/json')
+    }
 
     let res = await fetch(url, { ...options, headers })
 

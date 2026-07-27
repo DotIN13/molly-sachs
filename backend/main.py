@@ -7,7 +7,9 @@ import datetime
 from datetime import timedelta, timezone
 import httpx
 from loguru import logger
-from fastapi import FastAPI, BackgroundTasks, HTTPException, Depends, Query
+from fastapi import (
+    FastAPI, BackgroundTasks, HTTPException, Depends, Query, UploadFile, File, Form,
+)
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, field_validator
 from fastapi.middleware.cors import CORSMiddleware
@@ -23,6 +25,8 @@ from bot import start_pipecat_session, SessionState, PipelineRestartRequested
 import database
 import config
 import llm_models
+import cosyvoice_tts
+import cosyvoice_voices
 from db import settings as db_settings
 from db.settings import Settings
 import auth
@@ -414,6 +418,75 @@ async def list_llm_models(provider: str = Query("google"),
         raise HTTPException(status_code=502, detail="upstream_error")
 
     return {"provider": provider, "cached": cached, "models": models}
+
+
+# ── CosyVoice custom voices ─────────────────
+
+def _dashscope_key(prefs: dict) -> str:
+    key = prefs.get("dashscope_api_key", "")
+    if not key:
+        raise HTTPException(status_code=400, detail="no_key")
+    return key
+
+
+def _voice_error(e: cosyvoice_voices.VoiceError) -> HTTPException:
+    """Map a voice failure onto a code the Settings panel can translate."""
+    known = {"no_key", "bad_prefix", "no_audio", "too_large", "bad_format"}
+    code = str(e)
+    return HTTPException(status_code=400 if code in known else 502,
+                         detail=code if code in known else f"upstream: {code}"[:300])
+
+
+@app.get("/api/tts/cosyvoice/voices", summary="List the user's cloned CosyVoice voices")
+async def list_cosyvoice_voices(current_user: dict = Depends(auth.get_current_user)):
+    prefs = await Settings(current_user["id"]).load()
+    try:
+        voices = cosyvoice_voices.list_voices(_dashscope_key(prefs))
+    except cosyvoice_voices.VoiceError as e:
+        raise _voice_error(e)
+    return {"voices": [v.__dict__ for v in voices]}
+
+
+@app.post("/api/tts/cosyvoice/voices", summary="Clone a voice from an audio sample")
+async def create_cosyvoice_voice(
+    prefix: str = Form(...),
+    target_model: str | None = Form(None),
+    url: str | None = Form(None),
+    sample: UploadFile | None = File(None),
+    current_user: dict = Depends(auth.get_current_user),
+):
+    """Create a cloned voice from an uploaded sample or a URL the service can fetch.
+
+    The upload path inlines the audio as a data: URI — see cosyvoice_voices —
+    so the user does not have to host the recording anywhere.
+    """
+    prefs = await Settings(current_user["id"]).load()
+    audio = await sample.read() if sample is not None else None
+    try:
+        voice_id = cosyvoice_voices.clone_voice(
+            _dashscope_key(prefs),
+            target_model=target_model or prefs.get("cosyvoice_model")
+            or cosyvoice_tts.DEFAULT_MODEL,
+            prefix=prefix,
+            url=url or None,
+            audio=audio,
+            filename=(sample.filename or "") if sample is not None else "",
+        )
+    except cosyvoice_voices.VoiceError as e:
+        raise _voice_error(e)
+    return {"voice_id": voice_id}
+
+
+@app.delete("/api/tts/cosyvoice/voices/{voice_id}", summary="Delete a cloned voice")
+async def delete_cosyvoice_voice(voice_id: str,
+                                 current_user: dict = Depends(auth.get_current_user)):
+    prefs = await Settings(current_user["id"]).load()
+    try:
+        cosyvoice_voices.delete_voice(_dashscope_key(prefs), voice_id)
+    except cosyvoice_voices.VoiceError as e:
+        raise _voice_error(e)
+    return {"status": "ok"}
+
 
 # ── Health ──────────────────────────────────
 
