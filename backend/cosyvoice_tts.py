@@ -300,18 +300,35 @@ class CosyVoiceTTSService(TTSService):
             loop.call_soon_threadsafe(queue.put_nowait, item)
 
         class _Callback(ResultCallback):
+            """One task's events. ``on_close`` is the terminator, not
+            ``on_complete``.
+
+            The SDK dispatches every message to whatever callback is installed
+            at that moment, with no task id to match on, and on task-finished it
+            calls ``on_complete()`` and then ``on_close()`` back to back. Ending
+            the drain on the first of those releases this utterance while the
+            second is still to come — and on a reused socket the next utterance
+            has by then installed its own callback, so that trailing close lands
+            on it and ends it before it has produced a byte. A sentence goes
+            missing with no error anywhere, because as far as everything
+            involved is concerned the stream simply finished.
+
+            ``on_close`` is the last callback a task gets (the socket-level one
+            in the SDK is a no-op, so this only ever arrives via task-finished
+            or task-failed). Ending on it means this callback has absorbed
+            everything addressed to it before the next one is installed.
+            """
+
             def on_data(self, data: bytes) -> None:
                 emit(data)
 
             def on_complete(self) -> None:
-                emit(None)
+                pass                      # on_close follows immediately
 
             def on_error(self, message) -> None:
                 emit(RuntimeError(str(message)))
 
             def on_close(self) -> None:
-                # Guarantees the consumer is released even if the connection
-                # drops without on_complete or on_error.
                 emit(None)
 
         # Reuses the open socket when there is one; dials only when there isn't.
@@ -325,23 +342,51 @@ class CosyVoiceTTSService(TTSService):
         # -whole-sentence-then-emit service, which is what made speech arrive a
         # sentence at a time with a long silence in front of each one.
         await asyncio.to_thread(synthesizer.streaming_call, text)
-        finishing = asyncio.create_task(asyncio.to_thread(synthesizer.streaming_complete))
+        finishing = asyncio.create_task(
+            asyncio.to_thread(synthesizer.streaming_complete, 30000))
 
+        def _no_close_event(_task) -> None:
+            """Backstop for a socket that dies without task-finished.
+
+            The SDK's socket-level close handler does nothing, so a dropped
+            connection delivers no callback at all and the drain would wait on
+            a queue nobody will ever fill. Once streaming_complete has returned
+            or given up, a close event is due immediately; if none arrives this
+            utterance ends as an error, which also retires the connection.
+            """
+            loop.call_later(2.0, emit, RuntimeError("stream ended without a close event"))
+
+        finishing.add_done_callback(_no_close_event)
+
+        completed = False
         try:
             while True:
                 item = await queue.get()
                 if item is None:
+                    completed = True
                     break
                 if isinstance(item, Exception):
                     raise item
                 yield item
         finally:
-            # The end-of-stream marker means the SDK is done, so this is already
-            # settled on the normal path. It is still pending when the caller
-            # stops early (an interruption closes the generator), and a task
-            # left dangling would surface its exception with nobody to catch it.
-            finishing.cancel()
-            try:
-                await finishing
-            except (asyncio.CancelledError, Exception):
-                pass
+            if completed:
+                # task-finished has already arrived, so this returns at once —
+                # but it has to be awaited rather than cancelled. On its way out
+                # streaming_complete() clears the synthesizer's task state, and
+                # cancelling only abandons the thread, it cannot stop it. Left
+                # running, it lands that clear *after* the next utterance has
+                # reset the same object for its own task, and that utterance
+                # then dies on "task has stopped" — heard as the second
+                # sentence of a reply going missing.
+                try:
+                    await asyncio.wait_for(finishing, timeout=5)
+                except Exception as e:
+                    logger.warning(f"{self}: completion did not settle: {e}")
+                    self._session = None
+            else:
+                # Closed early: an interruption, or a synthesis error. The
+                # completion thread can only be abandoned, so this socket's task
+                # state is now indeterminate and the next utterance takes a
+                # fresh one rather than racing it.
+                finishing.cancel()
+                self._session = None
