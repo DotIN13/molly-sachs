@@ -21,6 +21,7 @@ for the Singapore region, which cannot serve v3.5.
 """
 
 import asyncio
+import re
 from collections.abc import AsyncGenerator, AsyncIterator
 from dataclasses import dataclass
 
@@ -38,10 +39,30 @@ DEFAULT_MODEL = "cosyvoice-v3.5-flash"
 # Models that only accept a cloned or designed voice id.
 _NO_SYSTEM_VOICE_MODELS = ("cosyvoice-v3.5",)
 
+# A cloned voice id is `<target_model>-<prefix>-<32 hex>`, e.g.
+# `cosyvoice-v3-plus-xianzhe-6b7400bd3e3f4a6bab9a0b817872d167`. The trailing
+# uuid is what makes the split unambiguous — without that anchor the model and
+# the prefix cannot be told apart, since both are lowercase-alphanumeric runs.
+_CLONED_VOICE_RE = re.compile(
+    r"^(?P<model>cosyvoice-[a-z0-9.\-]+?)-(?P<prefix>[a-z0-9]{1,9})-[0-9a-f]{32}$"
+)
+
 
 def model_needs_custom_voice(model: str) -> bool:
     """True when *model* rejects system voice names (the v3.5 family)."""
     return any(model.startswith(p) for p in _NO_SYSTEM_VOICE_MODELS)
+
+
+def model_for_voice(voice: str) -> str | None:
+    """The model a cloned voice was enrolled against, read off its own id.
+
+    A cloned voice is bound to the model it was created for and is rejected by
+    every other one — including a *newer* one, so a v3-plus voice cannot be
+    carried forward to v3.5-plus. Returns None for a system voice name, which
+    carries no such binding.
+    """
+    m = _CLONED_VOICE_RE.match(voice or "")
+    return m.group("model") if m else None
 
 
 @dataclass
@@ -78,6 +99,26 @@ class CosyVoiceTTSService(TTSService):
         sample_rate: int | None = None,
         **kwargs,
     ):
+        # A cloned voice outranks the chosen model. It only ever works on the
+        # model it was enrolled against, whereas the model has other voices it
+        # could speak with — so on a mismatch the voice is the constraint and
+        # the model is the thing to bend. Left alone, this combination fails
+        # deep inside synthesis as an opaque "Engine return error code: 418".
+        enrolled = model_for_voice(voice)
+        if enrolled and enrolled != model:
+            logger.warning(
+                "CosyVoice: voice {} was cloned for {}, not the selected {} — "
+                "using {}, since the voice cannot speak on anything else",
+                voice, enrolled, model, enrolled,
+            )
+            model = enrolled
+        elif not enrolled and model_needs_custom_voice(model):
+            logger.warning(
+                "CosyVoice: {} has no system voices, but {!r} is not a cloned "
+                "voice id — synthesis will fail until a cloned voice is chosen",
+                model, voice,
+            )
+
         super().__init__(
             sample_rate=sample_rate,
             settings=CosyVoiceTTSSettings(model=model, voice=voice, language=None),
